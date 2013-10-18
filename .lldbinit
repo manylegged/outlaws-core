@@ -1,0 +1,33 @@
+#
+# .lldbinit (LLDB aka the LLVM Debugger) configuration file 
+#
+# Causes common types used in my game to be more easily readable in the Xcode debugger
+#
+
+type summary add --summary-string "${var.m_ptr}" lstring
+#type summary add --inline-children --omit-names lstring
+type summary add --summary-string "${var.val}" trit
+type summary add --summary-string "${var.x}, ${var.y}" float2
+type summary add --summary-string "${var.x}, ${var.y}" double2
+type summary add --summary-string "${var.x}, ${var.y}" cpVect
+type summary add --summary-string "${var.x}, ${var.y}" int2
+type summary add --summary-string "${var.x}, ${var.y}, ${var.z}" float3
+type summary add --summary-string "${var.x}, ${var.y}, ${var.z}" double3
+type summary add --inline-children --omit-names float4
+type summary add --inline-children --omit-names double4
+
+type summary add --inline-children --omit-names -x "copy_ptr.*"
+type summary add --inline-children --omit-names -x "watch_ptr.*"
+type summary add --inline-children --omit-names -x "^std::pair<.+>(( )?&)?$"
+type summary add --summary-string "elements=${var.m_elements} ${var.m_cells}" -x "^spacial_hash<.+>(( )?&)?$"
+
+#type summary add --summary-string "{name=${var.name}} ${var.blocks}" SerialCluster
+#type summary add --summary-string "{addr=${var%V} name=${var.name}} ${var.blocks}" BlockCluster
+type summary add --summary-string "{name=${var.name} ident=${var.ident} features=${var.features%x}}" SerialBlock
+type summary add --summary-string "addr=${var%V} ${var.sb}" Block
+# type summary add --inline-children BlockPosition
+
+# type summary add --summary-string "id=${var.m_il} size=${var.m_size}" -x "^GLBuffer<.+>(( )?&)?$"
+# type summary add --summary-string "il=${var.m_il} ibo=${var.m_ibo}" -x "Mesh<.+>(( )?&)?$" 
+# type summary add --inline-children -x "^MeshPair<.+>(( )?&)?$"
+type summary add --summary-string "pos=${var.pos}" -x "^VertexPos.+"
