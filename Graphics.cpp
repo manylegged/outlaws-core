@@ -32,20 +32,12 @@
 
 void SetOpenGLVersion(int major, int minor)
 {
-    if (major < 2)
-    {
-        //gloutlawcreateShader = (MYGLCREATESHADERPROC) glCreateShaderObjectARB;
-    }
-    else
-    {
-        //gloutlawcreateShader = (MYGLCREATESHADERPROC) glCreateShader;
-    }
 }
 
 
-vector<RenderTexture*> RenderTexture::s_bound;
+vector<GLRenderTexture*> GLRenderTexture::s_bound;
 
-void RenderTexture::Generate()
+void GLRenderTexture::Generate()
 {
     ASSERT_MAIN_THREAD();
     glReportError();
@@ -91,7 +83,7 @@ void RenderTexture::Generate()
 }
 
 
-void RenderTexture::clear()
+void GLRenderTexture::clear()
 {
     m_size = int2(0);
     if (m_fbname)
@@ -106,8 +98,9 @@ void RenderTexture::clear()
     glReportError();
 }
 
-void RenderTexture::BindFramebuffer(float2 size)
+void GLRenderTexture::BindFramebuffer(float2 size)
 {
+    ASSERT(!isZero(size));
     if (size != m_size)
         clear();
     m_size = size;
@@ -121,7 +114,7 @@ void RenderTexture::BindFramebuffer(float2 size)
     s_bound.push_back(this);
 }
 
-void RenderTexture::RebindFramebuffer()
+void GLRenderTexture::RebindFramebuffer()
 {
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, m_texname);
@@ -134,7 +127,7 @@ void RenderTexture::RebindFramebuffer()
     glReportFramebufferError();
 }
 
-void RenderTexture::UnbindFramebuffer(float2 vpsize) const
+void GLRenderTexture::UnbindFramebuffer(float2 vpsize) const
 {
     ASSERT(s_bound.size() && s_bound.back() == this);
     s_bound.pop_back();
@@ -150,23 +143,64 @@ void RenderTexture::UnbindFramebuffer(float2 vpsize) const
     }
 }
 
-void RenderTexture::SetTexMagFilter(GLint filter)
+void GLTexture::TexImage2D(int2 size, GLenum format, const uint *data)
+{
+    if (!m_texname)
+        glGenTextures(1, &m_texname);
+    glBindTexture(GL_TEXTURE_2D, m_texname);
+    glTexImage2D(GL_TEXTURE_2D, 0, m_format,
+                 size.x, size.y-1, 0, format, GL_UNSIGNED_INT_8_8_8_8_REV, data);
+    glReportError();
+
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE_SGIS);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE_SGIS);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+
+    glBindTexture(GL_TEXTURE_2D, 0);
+    m_size = float2(size);
+}
+
+void GLTexture::SetTexMagFilter(GLint filter)
 {
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, m_texname);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
 }
 
-void RenderTexture::GenerateMipmap()
+void GLTexture::GenerateMipmap()
 {
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, m_texname);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     glGenerateMipmap(GL_TEXTURE_2D);
+    glReportError();
 }
 
-static void printShaderInfoLog(const char* txt, uint id)
+void GLTexture::loadFile(const char* fname)
+{
+    clear();
+
+    OutlawTexture tex = LoadTexture(fname);
+    ASSERT(tex.texnum);
+    
+    m_texname = tex.texnum;
+    m_size.x  = tex.width;
+    m_size.y  = tex.height;
+    m_format  = GL_RGB;
+}
+
+GLTexture PixImage::uploadTexture() const
+{
+    GLTexture tex;
+    tex.setFormat(GL_RGBA);
+    tex.TexImage2D(m_size, GL_BGRA, &m_data[0]);
+    return tex;
+}
+
+
+static void printShaderInfoLog(const char* txt, GLuint id)
 {
     const uint bufsize = 2048;
     char buf[bufsize];
@@ -180,7 +214,8 @@ static void printShaderInfoLog(const char* txt, uint id)
     }
 }
 
-static void printProgramInfoLog(uint id) {
+static void printProgramInfoLog(GLuint id) 
+{
     const uint bufsize = 2048;
     char buf[bufsize];
     GLsizei length;
@@ -247,15 +282,25 @@ GLenum glReportFramebufferError1(const char *file, uint line, const char *functi
 	return err;
 }
 
+void glReportValidateShaderError1(const char *file, uint line, const char *function, GLuint program)
+{
+    ASSERT_MAIN_THREAD();
+    glValidateProgram(program);
+    printProgramInfoLog(program);
+    glReportError();
+}
+
+
 bool ShaderProgramBase::LoadProgram(const char* shared, const char *vertf, const char *fragf)
 {
     ASSERT_MAIN_THREAD();
-    static const char* vertheader =                  
+    string header = string("#version 120\n") + shared;
+    static const char* vertheader =
         "attribute vec4 Position;\n"
         "uniform mat4 Transform;\n";
     
-    string vertful = string(vertheader) + shared + vertf;
-    string fragful = string(shared) + fragf;
+    string vertful = header + vertheader + vertf;
+    string fragful = header + fragf;
 
     uint vert = createShader(vertful.c_str(), GL_VERTEX_SHADER);
     uint frag = createShader(fragful.c_str(), GL_FRAGMENT_SHADER);
@@ -284,6 +329,39 @@ bool ShaderProgramBase::LoadProgram(const char* shared, const char *vertf, const
     
     m_loaded = true;
     return m_loaded;
+}
+
+void ShaderProgramBase::UseProgramBase(const ShaderState& ss, uint size, const float3* pos) const
+{
+    UseProgramBase(ss);
+    glEnableVertexAttribArray(m_positionSlot);
+    vap1(m_positionSlot, size, pos);
+}
+
+void ShaderProgramBase::UseProgramBase(const ShaderState& ss, uint size, const float2* pos) const
+{
+    UseProgramBase(ss);
+    glEnableVertexAttribArray(m_positionSlot);
+    vap1(m_positionSlot, size, pos);
+}
+
+void ShaderProgramBase::UseProgramBase(const ShaderState& ss) const
+{
+    ASSERT_MAIN_THREAD();
+    glUseProgram(m_programHandle);
+    glUniformMatrix4fv(m_transformUniform, 1, GL_FALSE, &ss.uTransform[0][0]);
+    glReportError();
+}
+
+void ShaderProgramBase::UnuseProgram() const
+{
+    ASSERT_MAIN_THREAD();
+    glReportValidateShaderError(m_programHandle);
+    glDisableVertexAttribArray(m_positionSlot);
+    foreach (GLuint slot, m_enabledAttribs)
+        glDisableVertexAttribArray(slot);
+    m_enabledAttribs.clear();
+    glUseProgram(0);
 }
 
 void ShaderState::DrawElements(uint dt, size_t ic, const ushort* i) const
@@ -377,15 +455,23 @@ void PushButton(TriMesh<VertexPosColor>* triP, LineMesh<VertexPosColor>* lineP, 
     }
 }
 
-void DrawButton(ShaderState *data, float2 r, uint bgColor, uint fgColor, float alpha)
+void DrawButton(ShaderState *data, float2 pos, float2 r, uint bgColor, uint fgColor, float alpha)
 {
     if (alpha < epsilon)
         return;
     TriMesh<VertexPosColor> vpt;
     LineMesh<VertexPosColor> vpl;
-    PushButton(&vpt, &vpl, float2(0), r, bgColor, fgColor, alpha);
+    PushButton(&vpt, &vpl, pos, r, bgColor, fgColor, alpha);
     vpt.Draw(*data, ShaderColor::instance());
     vpl.Draw(*data, ShaderColor::instance());
+}
+
+void DrawBox(ShaderState *ss, float2 pos, float2 size, uint bgColor, uint fgColor, float alpha)
+{
+    ss->color32(bgColor, alpha);
+    ShaderUColor::instance().DrawRect(*ss, pos, size);
+    ss->color32(fgColor,alpha);
+    ShaderUColor::instance().DrawLineRect(*ss, pos, size);
 }
 
 void fadeFullScreen(ShaderState &ss, const View& view, uint color, float alpha)

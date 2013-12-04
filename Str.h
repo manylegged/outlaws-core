@@ -175,7 +175,7 @@ inline std::vector<std::string> str_split(const std::string &s, char delim)
 
 inline std::string str_tostr(float a) { return str_format("%f", a); }
 inline std::string str_tostr(int a)   { return str_format("%d", a); }
-inline std::string str_tostr(uint a)  { return str_format("0x%x", a); }
+inline std::string str_tostr(uint a)  { return a < 10000 ? str_format("%d", a) : str_format("0x%x", a); }
 inline std::string str_tostr(const char *a) { return a ? a : ""; }
 inline std::string str_tostr(const std::string &a) { return a; }
 inline std::string str_tostr(lstring a) { return a.str(); }
@@ -258,5 +258,14 @@ inline std::string str_tolower(const char* str)
     return s;
 }
 
+inline std::string str_tolower(const std::string &str)
+{
+    string s = str;
+    for (uint i=0; i<s.size(); i++)
+        s[i] = std::tolower(s[i]);
+    return s;
+}
+
+long chr_unshift(long chr);
 
 #endif

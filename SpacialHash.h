@@ -98,6 +98,7 @@ public:
                 el.clear();
             m_elements.clear();
         }
+        m_currentQuery = 0;
     }
 
     int   width()     const { return m_width; }

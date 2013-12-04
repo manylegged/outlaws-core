@@ -29,6 +29,7 @@
 
 #include "GLText.h"
 #include "Colors.h"
+#include "Shaders.h"
 #include <cctype>
 
 static const double kDoubleClickTimeout = 0.25f;
@@ -46,18 +47,24 @@ float2 positionBelowLeftAligned(const T& a, const U& b, float pad)
     return pos;
 }
 
-struct ButtonBase {
-    
+struct WidgetBase {
     float2      position;       // center of button
     float2      size;           // width x height in points
-    const char* keys = NULL;
-
     bool        hovered = false;
-    bool        pressed = false;
-    bool        visible = true;
     bool        active  = true;
+    float       alpha   = 1.f;
 
     float2 getSizePoints() const { return size; }
+
+};
+
+struct ButtonBase : public WidgetBase {
+    
+    const char* keys = NULL;
+
+    bool        pressed = false;
+    bool        visible = true;
+    string      tooltip;
 
     bool HandleEvent(const Event* event, bool* isActivate, bool* isPress=NULL)
     {
@@ -86,13 +93,29 @@ struct ButtonBase {
             // && (event->key == 0);
 
             bool wasPressed = pressed;
-            if (active && isActivate && pressed && handled && (event->type == Event::MOUSE_UP))
+            if (active && isActivate && pressed && handled && (event->type == Event::MOUSE_UP)) {
                 *isActivate = true;
-            pressed = handled && (event->type == Event::MOUSE_DOWN);
+                pressed = false;
+            } else if (active && visible && hovered) {
+                if (event->type == Event::MOUSE_DOWN)
+                    pressed = true;
+            } else {
+                pressed = false;
+            }
             if (active && isPress)
                 *isPress = (pressed && !wasPressed);
         }
         return handled;
+    }
+
+    void renderTooltip(const ShaderState &ss, const View& view, uint color) const
+    {
+        if (tooltip.empty() || !hovered || alpha < epsilon)
+            return;
+
+        DrawTextBox(ss, view, position, size, tooltip, 12, 
+                    MultAlphaARGB(color, alpha),
+                    MultAlphaARGB(COLOR_BLACK, 0.5f * alpha));
     }
 };
 
@@ -104,10 +127,9 @@ struct Button : public ButtonBase
     uint   pressedBGColor    = ALPHA(0xb0)|COLOR_BG_GRID;
     uint   defaultLineColor  = ALPHA_OPAQUE|COLOR_ENEMY;
     uint   hoveredLineColor  = ALPHA_OPAQUE|COLOR_ENEMY_HI; 
-    uint   inactiveLineColor = 0xa0a0a0a0;
+    uint   inactiveLineColor = COLOR_INACTIVE;
     uint   textColor         = ALPHA_OPAQUE|COLOR_UI_ACTION;
-    uint   inactiveTextColor = 0xa0a0a0a0;
-    float  alpha             = 1.f;
+    uint   inactiveTextColor = COLOR_INACTIVE;
 
     Button() {}
     Button(const string& str) : text(str) {}
@@ -124,65 +146,72 @@ struct Button : public ButtonBase
     void   setText(const char * t) { text = t; }
     string getText() const         { return text; }
 
-    void render(ShaderState *s_, bool selected=false)
+    uint getBGColor() const { return pressed ? pressedBGColor : defaultBGColor; }
+    uint getFGColor(bool selected) const { return ((!active) ? inactiveLineColor :
+                                                   (hovered||selected) ? hoveredLineColor : defaultLineColor); }
+    
+    void render(const ShaderState *s_, bool selected=false)
     {
         if (!visible)
             return;
         ShaderState s = *s_;
         const GLText* t = GLText::get(GLText::getScaledSize(textSize), text);
-        size.x = max(size.x, t->getSize().x + 2 * kPadDist);
-        size.y = max(size.y, t->getSize().y + 2 * kPadDist);
-        float2 sz = 0.5f * size;
+        size = max(size, t->getSize() + float2(2 * kPadDist));
+        const float2 sz = 0.5f * size;
 
-        s.translate(position);
+        DrawButton(&s, position, sz, getBGColor(), getFGColor(selected), alpha);
 
-        const uint bgColor   = pressed ? pressedBGColor : defaultBGColor;
-        const uint lineColor = (!active) ? inactiveLineColor :
-                               (hovered||selected) ? hoveredLineColor : defaultLineColor;
-        const uint tColor    = (!active) ? inactiveTextColor : textColor;
-
-        DrawButton(&s, sz, bgColor, lineColor, alpha);
+        const uint tcolor = (!active) ? inactiveTextColor : textColor;
+        s.color32(tcolor, alpha);
+        t->render(&s, position -0.5f * t->getSize());
 
         // draw selection triangle next to selected button
         if (selected)
         {
-            float2 p = float2(-sz.x - sz.y, 0);
+            float2 p = position + float2(-sz.x - sz.y, 0);
             s.color32(defaultBGColor, alpha);
             ShaderUColor::instance().DrawTri(s, p + float2(0, sz.y), p + float2(sz.y / 2, 0), p + float2(0, -sz.y));
             s.color32(hoveredLineColor, alpha);
             ShaderUColor::instance().DrawLineTri(s, p + float2(0, sz.y), p + float2(sz.y / 2, 0), p + float2(0, -sz.y));
         }
+    }
 
-        s.translate(-0.5f * t->getSize());
-        s.color32(tColor, alpha);
-        t->render(&s);
+    void renderText(const ShaderState &s_)
+    {
+        if (!visible)
+            return;
+        const uint tcolor = MultAlphaARGB((!active) ? inactiveTextColor : textColor, alpha);
+        size = max(size, GLText::DrawStr(s_, position, GLText::MID_CENTERED, tcolor, textSize, text));
     }
 };
 
 inline bool ButtonHandleEvent(ButtonBase &button, const Event* event, const char* keys, bool* isActivate, bool* isPress=NULL)
 {
-    if (!button.active)
-        return false;
-    //const bool wasPressed = button.pressed;
     const bool wasHovered = button.hovered;
 
     bool handled = false;
-    if ((event->type == Event::KEY_DOWN || event->type == Event::KEY_UP) && 
-        keys && (event->key < 255) && strchr(keys, event->key))
+    if (button.active &&
+        (event->type == Event::KEY_DOWN || event->type == Event::KEY_UP) && 
+        keys && (event->key < 255) && strchr(keys, event->key) &&
+        !globals.keyState[OControlKey] && !globals.keyState[OShiftKey] &&
+        !globals.keyState[OAltKey])
     {
         handled = true;
         bool activate =!button.pressed && (event->type == Event::KEY_DOWN);
         button.pressed = activate;
         if (isActivate)
             *isActivate = activate;
-    } else
+    }
+    else
+    {
         handled = button.HandleEvent(event, isActivate, isPress);
+    }
                          
     if ((isActivate && *isActivate) || (isPress && *isPress))
     {
         globals.sound->OnButtonPress();
     } 
-    else if (!wasHovered && button.hovered)
+    else if (!wasHovered && button.hovered && button.active)
     {
         globals.sound->OnButtonHover();
     }
@@ -190,8 +219,18 @@ inline bool ButtonHandleEvent(ButtonBase &button, const Event* event, const char
     return handled;
 }
 
+inline void ButtonSetPos(ButtonBase& button, float2 pos)
+{
+    if (isZero(button.position)) {
+        button.position = pos;
+    } else {
+        button.position = lerp(button.position, pos,
+                               0.5f * globals.getView().sizePixels.y * globals.frameTime);
+    }
+}
 
-struct TextInputBase {
+
+struct TextInputBase : public WidgetBase {
     float2        position;     // center
     float2        sizePoints;   // width x height
     deque<string> lines;
@@ -540,7 +579,7 @@ struct TextInputCommandLine : public TextInputBase {
         c.data         = data;
         c.description  = desc;
         ASSERT(!commands.count(name));
-        commands[name] = c;
+        commands[str_tolower(name)] = c;
     }
 
     string getLineText() const
@@ -595,8 +634,8 @@ struct TextInputCommandLine : public TextInputBase {
 
     bool doCommand(const string& line)
     {
-        vector<string> expressions = str_split(line, ';');
         pushHistory(line);
+        vector<string> expressions = str_split(str_tolower(line), ';');
         foreach (const string &expr, expressions)
         {
             vector<string> args = str_split(str_strip(expr), ' ');
@@ -986,7 +1025,7 @@ struct OptionButtons {
         {
             bool isActivate = false;
             bool isPress    = false;
-            if (buttons[i].HandleEvent(&ev, &isActivate, &isPress))
+            if (ButtonHandleEvent(buttons[i], &ev, "", &isActivate, &isPress))
             {
                 if (isActivate && butActivate)
                     *butActivate = isActivate;
@@ -1003,7 +1042,7 @@ struct OptionButtons {
         return handled;
     }
 
-    void render(ShaderState *s_)
+    void render(ShaderState *s_, const View& view)
     {
         ShaderState ss = *s_;
         ss.translate(position);
@@ -1020,6 +1059,10 @@ struct OptionButtons {
             but.render(&ss);
         }
 
+        foreach (Button& but, buttons) {
+            but.renderTooltip(ss, view, but.textColor);
+        }
+
 #if 0
         // for debugging - draw the bounding rectangle
         if (buttons.size()) {
@@ -1029,6 +1072,62 @@ struct OptionButtons {
 #endif
     }
     
+};
+
+struct OptionSlider : public WidgetBase {
+    
+    bool        pressed = false;
+
+    int         values  = 11;   // total number of states
+    int         value   = 0;    // current state
+
+    uint   defaultBGColor    = ALPHA(0xa0)|COLOR_TEXT_BG;
+    uint   pressedBGColor    = ALPHA(0xb0)|COLOR_BG_GRID;
+    uint   defaultLineColor  = ALPHA_OPAQUE|COLOR_ENEMY;
+    uint   hoveredLineColor  = ALPHA_OPAQUE|COLOR_ENEMY_HI; 
+    uint   inactiveLineColor = COLOR_INACTIVE;
+
+    float2 getSizePoints() const { return size; }
+    float  getValueFloat() const { return (float) value / (values-1); }
+    void   setValueFloat(float v) { value = clamp((int)round(v * values), 0, values-1); }
+
+    bool HandleEvent(const Event* event, bool *valueChanged)
+    {
+        const float2 sz = 0.5f*size;
+        hovered = intersectPointRectangle(event->pos, position, sz);
+
+        bool handled = hovered && ((event->type == Event::MOUSE_DOWN) ||
+                                   (event->type == Event::MOUSE_UP) ||
+                                   (event->type == Event::MOUSE_DRAGGED));
+
+        pressed = hovered && ((event->type == Event::MOUSE_DOWN) ||
+                              (event->type == Event::MOUSE_DRAGGED));
+
+        if (pressed) {
+            float v = ((event->pos.x - position.x) / size.x) + 0.5f;
+            setValueFloat(v);
+            *valueChanged = true;
+        }
+
+        return handled;
+    }
+
+    uint getBGColor() const { return pressed ? pressedBGColor : defaultBGColor; }
+    uint getFGColor() const { return ((!active) ? inactiveLineColor :
+                                      (hovered) ? hoveredLineColor : defaultLineColor); }
+    
+    void render(const ShaderState &s_)
+    {
+        ShaderState ss = s_;
+        const float2 sz = 0.5f * size;
+
+        ss.color(getFGColor(), alpha);
+        ShaderUColor::instance().DrawLine(ss, position - float2(sz.x, 0.f), 
+                                          position + float2(sz.x, 0.f));
+        const float w = sz.x / values;
+        DrawButton(&ss, position + float2((size.x - w) * (getValueFloat() - 0.5f), 0.f),
+                   float2(w, sz.y), getBGColor(), getFGColor(), alpha);
+    }
 };
 
 

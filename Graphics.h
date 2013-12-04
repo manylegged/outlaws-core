@@ -34,13 +34,16 @@
 
 GLenum glReportError1(const char *file, uint line, const char *function);
 GLenum glReportFramebufferError1(const char *file, uint line, const char *function);
+void   glReportValidateShaderError1(const char* file, uint line, const char* function, GLuint program);
 
 #if DEBUG
 #define glReportError() glReportError1(__FILE__, __LINE__, __func__)
 #define glReportFramebufferError() glReportFramebufferError1(__FILE__, __LINE__, __func__)
+#define glReportValidateShaderError(PROG) glReportValidateShaderError1(__FILE__, __LINE__, __func__, (PROG))
 #else
 #define glReportError()
 #define glReportFramebufferError()
+#define glReportValidateShaderError(PROG)
 #endif
 
 
@@ -56,6 +59,16 @@ class GLBuffer {
 public:
 
     GLBuffer() : m_id(0), m_usage(0), m_size(0) {}
+
+    GLBuffer(const GLBuffer& tex) = delete; // not copyable
+
+    GLBuffer(GLBuffer &&o) : m_id(o.m_id), m_usage(o.m_usage), m_size(o.m_size)
+    {
+        o.m_id    = 0;
+        o.m_usage = 0;
+        o.m_size  = 0;
+    }
+
     ~GLBuffer() { clear(); }
 
     bool empty() const { return m_size == 0; }
@@ -132,35 +145,83 @@ struct IndexBuffer : public GLBuffer<T, GL_ELEMENT_ARRAY_BUFFER>
 {
 };
 
+class GLTexture;
 
-// RIAA for a render target
-class RenderTexture {
+class PixImage {
 
-    float2 m_size;              // in pixels
-    GLuint m_fbname;
-    GLuint m_texname;
-    GLuint m_zrbname;
-    GLint  m_format;
-
-    static vector<RenderTexture*> s_bound;
-
-    void Generate();
+    int2         m_size;
+    vector<uint> m_data;
 
 public:
-    RenderTexture() : m_size(0), m_fbname(0), m_texname(0), m_zrbname(0), m_format(GL_RGB) {}
-    ~RenderTexture() { clear(); }
+
+    PixImage() {}
+    PixImage(int2 size, uint def=0xffffffff) { resize(size, def); }
     
-    void clear();
+    void resize(int2 size, uint def=0xffffffff)
+    {
+        m_size = size;
+        m_data.resize(size.x * (size.y+1), def);
+    }
+
+    void setData(uint* data, int2 size)
+    {
+        resize(size);
+        memcpy(&m_data[0], data, m_data.size() * sizeof(uint));
+    }
+
+    uint&       operator()(int x, int y)       { return m_data[y * m_size.x + x]; }
+    const uint& operator()(int x, int y) const { return m_data[y * m_size.x + x]; }
+    uint&       operator()(int2 p)             { return m_data[p.y * m_size.x + p.x]; }
+    const uint& operator()(int2 p)       const { return m_data[p.y * m_size.x + p.x]; }
+    uint&       operator[](uint i)             { return m_data[i]; }
+    const uint& operator[](uint i)       const { return m_data[i]; }
+
+    int2   size()        const { return m_size; }
+    size_t pixel_count() const { return m_data.size(); }
+    
+    GLTexture uploadTexture() const;
+};
+
+class GLTexture {
+
+protected:
+    float2 m_size;              // in pixels
+    GLuint m_texname = 0;
+    GLint  m_format  = GL_RGB;
+
+public:
+
+    GLTexture(const GLTexture& tex) = delete; // not copyable
+
+    GLTexture() {}
+    GLTexture(GLTexture&& o)
+    {
+        *this = std::move(o);
+    }
+    
+    GLTexture& operator=(GLTexture&& o)
+    {
+        std::swap(m_size, o.m_size);
+        std::swap(m_texname, o.m_texname);
+        std::swap(m_format, o.m_format);
+        return *this;
+    }
+    
+    ~GLTexture() { clear(); }
+
+    void clear()
+    {
+        if (m_texname)
+            glDeleteTextures(1, &m_texname);
+        m_texname = 0;
+    }
+    
     void setFormat(GLint format) { m_format = format; }
+    GLint getFormat() const { return m_format; }
+    float2 size() const { return m_size; }
+    bool  empty() const { return m_texname == 0; } 
 
-    float2 size() const  { return m_size; }
-    bool   empty() const { return !(m_fbname && m_texname && m_zrbname); }
-
-    void BindFramebuffer(float2 sizePixels);
-    void RebindFramebuffer();
-    void UnbindFramebuffer(float2 vpsize) const;
-    void SetTexMagFilter(GLint filter);
-    void GenerateMipmap();
+    void loadFile(const char* fname);
 
     OutlawTexture getTexture() const 
     {
@@ -171,6 +232,46 @@ public:
         return ot;
     }
 
+    void BindTexture(uint tex=0) const
+    {
+        ASSERT(m_texname);
+        glActiveTexture(GL_TEXTURE0 + tex);
+        glBindTexture(GL_TEXTURE_2D, m_texname);
+        glReportError();
+    }
+
+    void UnbindTexture()
+    {
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
+
+    void TexImage2D(int2 size, GLenum format, const uint *data);
+
+    void SetTexMagFilter(GLint filter);
+    void GenerateMipmap();
+};
+
+// RIAA for a render target
+class GLRenderTexture : public GLTexture {
+
+    GLuint m_fbname;
+    GLuint m_zrbname;
+
+    static vector<GLRenderTexture*> s_bound;
+
+    void Generate();
+
+public:
+    GLRenderTexture() : m_fbname(0), m_zrbname(0) {}
+    ~GLRenderTexture() { clear(); }
+    
+    void clear();
+
+    bool   empty() const { return !(m_fbname && m_texname && m_zrbname); }
+
+    void BindFramebuffer(float2 sizePixels);
+    void RebindFramebuffer();
+    void UnbindFramebuffer(float2 vpsize) const;
 };
 
 // encapsulate the projection/modelview matrix and some related state
@@ -179,13 +280,10 @@ struct ShaderState {
     glm::mat4            uTransform;
     uint                 uColor;
     uint                 uColor1;
-    OutlawTexture        texture;
 
     ShaderState()
     {
         uColor = 0xffffffff;
-
-        memset(&texture, 0, sizeof(texture));
     }
     
     void translate(float2 t) { uTransform = glm::translate(uTransform, float3(t.x, t.y, 0)); }
@@ -301,14 +399,15 @@ struct View {
     float  toScreenSizePixels(float  p) const { return (p / scale) * (sizePixels.y / sizePoints.y); }
     float2 toScreenSizePixels(float2 p) const { return (p / scale) * (sizePixels.y / sizePoints.y); }
     
-    float  toWorldSize(float  p) const { return p * scale; }
-    float2 toWorldSize(float2 p) const { return p * scale; }
+    float2 getAspect() const { return float2(sizePoints.x / sizePoints.y, 1.f); }
+
+    float  toWorldSize(float  p, float z=0.f) const { return p * scale - z; }
+    float2 toWorldSize(float2 p, float z=0.f) const { return p * scale - z * getAspect(); }
 
     // get size of screen in world coordinates
     float2 getWorldSize(float z) const 
     { 
-        float  aspect     = sizePoints.x / sizePoints.y;
-        float2 zPlaneSize = (scale * sizePoints) - 2.f * float2(aspect * z, z);
+        float2 zPlaneSize = (scale * sizePoints) - 2.f * z * getAspect();
         return max(zPlaneSize, float2(0));
     }
 
@@ -320,7 +419,7 @@ struct View {
     // intersectX functions are in world coordinates
     bool intersectSegment(float2 a, float2 b, float width=0) const
     {
-        return intersectRectangleSegment(position, scale * sizePoints + width, a, b);
+        return intersectRectangleSegment(position, 0.5f * scale * sizePoints + width, a, b);
     }
 
     bool intersectPoint(const float2 &a) const
@@ -335,8 +434,7 @@ struct View {
 
     bool intersectCircle(const float3 &a, float r) const
     {
-        float  aspect     = sizePoints.x / sizePoints.y;
-        float2 zPlaneSize = (0.5f * scale * sizePoints) - float2(aspect * a.z, a.z);
+        float2 zPlaneSize = (0.5f * scale * sizePoints) - getAspect() * a.z;
         return intersectCircleRectangle(float2(a.x, a.y), r, 
                                         position, zPlaneSize);
     }
@@ -368,8 +466,7 @@ struct View {
     bool intersectRectangle(const float3 &a, const float2 &r) const
     {
         // FIXME take angle into account
-        float  aspect     = sizePoints.x / sizePoints.y;
-        float2 zPlaneSize = (0.5f * scale * sizePoints) - float2(aspect * a.z, a.z);
+        float2 zPlaneSize = (0.5f * scale * sizePoints) - getAspect() * a.z;
         return intersectRectangleRectangle(float2(a.x, a.y), r, 
                                            position, zPlaneSize);
     }
@@ -380,12 +477,12 @@ struct View {
         return intersectCircleRectangle(a, r, 0.5f * sizePoints, 0.5f * sizePoints);
     }
 
-    void setScreenLineWidth(float z) const
+    void setScreenLineWidth(float z, float scl=1.f) const
     {
         const float width     = getScreenPointSizeInPixels(z);
         const float pointSize = sizePixels.x / sizePoints.x;
         const float lineWidth = clamp(width, 0.1f, 1.5f * pointSize);
-        glLineWidth(lineWidth);
+        glLineWidth(lineWidth * scl);
         glReportError();
     }
 
@@ -406,9 +503,9 @@ struct View {
 class ShaderProgramBase {
     
 private:    
-    int m_programHandle;
-    int m_transformUniform;
-    int m_positionSlot;
+    GLuint m_programHandle;
+    GLint m_transformUniform;
+    GLint m_positionSlot;
     
     bool m_loaded;
     mutable vector<GLuint> m_enabledAttribs;
@@ -422,6 +519,8 @@ private:
 protected:
     ShaderProgramBase() : m_loaded(false) {}
     virtual ~ShaderProgramBase(){}
+    
+    GLuint getProgram() const { return m_programHandle; }
     
     bool LoadProgram(const char* shared, const char *vert, const char *frag);
     
@@ -456,39 +555,13 @@ protected:
         UseProgramBase(ss, sizeof(T), (const V*) ((const char*) ptr - (const char*) base));
     }
 
-    void UseProgramBase(const ShaderState& ss, uint size, const float3* pos) const
-    {
-        UseProgramBase(ss);
-        glEnableVertexAttribArray(m_positionSlot);
-        vap1(m_positionSlot, size, pos);
-    }
-
-    void UseProgramBase(const ShaderState& ss, uint size, const float2* pos) const
-    {
-        UseProgramBase(ss);
-        glEnableVertexAttribArray(m_positionSlot);
-        vap1(m_positionSlot, size, pos);
-    }
-
-    void UseProgramBase(const ShaderState& ss) const
-    {
-        ASSERT_MAIN_THREAD();
-        glUseProgram(m_programHandle);
-        glUniformMatrix4fv(m_transformUniform, 1, GL_FALSE, &ss.uTransform[0][0]);
-        glReportError();        
-    }
+    void UseProgramBase(const ShaderState& ss, uint size, const float3* pos) const;
+    void UseProgramBase(const ShaderState& ss, uint size, const float2* pos) const;
+    void UseProgramBase(const ShaderState& ss) const;
 
 public:
 
-    void UnuseProgram() const
-    {
-        ASSERT_MAIN_THREAD();
-        glDisableVertexAttribArray(m_positionSlot);
-        foreach (GLuint slot, m_enabledAttribs)
-            glDisableVertexAttribArray(slot);
-        m_enabledAttribs.clear();
-        glUseProgram(0);
-    }
+    void UnuseProgram() const;
 
     bool Loaded() const { return m_loaded; }
 };
@@ -572,6 +645,24 @@ struct Transform2D {
 
 };
 
+template <uint Verts>
+const float2 &getCircleVertOffset(uint idx)
+{
+    static float2 offsets[Verts];
+    static bool initialized = false;
+    if (!initialized)
+    {
+        for (uint i=0; i<Verts; i++)
+        {
+            const float angle = (float) i * (M_TAOf / (float) Verts);
+            offsets[i] = angleToVector(angle);
+        }
+        initialized = true;
+    }
+    return offsets[idx];
+}
+
+
 struct MeshBase : public Transform2D {
 
     typedef uint IndexType;
@@ -596,6 +687,13 @@ protected:
     IndexVector            m_il;
 
 public:
+
+    size_t getSizeof() const
+    {
+        return sizeof(Vtx) * m_vl.size() + 
+            sizeof(IndexType) * m_il.size() +
+            sizeof(*this);
+    }
 
     struct scope {
         
@@ -680,6 +778,23 @@ public:
         {
             v.pos = m_curVert.pos;
             apply(v.pos, pv[i]);
+            m_vl.push_back(v);
+        }
+        return start;
+    }
+
+    IndexType PushV(const Vtx *pv, size_t vc)
+    {
+        const IndexType start = m_vl.size();
+        if (checkOverflow(start + vc))
+            return start;
+
+        Vtx v;
+        for (uint i=0; i<vc; i++)
+        {
+            v = pv[i];
+            v.pos = m_curVert.pos;
+            apply(v.pos, pv[i].pos);
             m_vl.push_back(v);
         }
         return start;
@@ -862,20 +977,23 @@ struct PrimMesh : public Mesh<Vtx1> {
 template <typename Vtx>
 struct LineMesh : public PrimMesh<Vtx, 2> {
 
+    typedef typename Mesh<Vtx>::IndexType LineIndex;
+
     template <typename Vec>
-    void PushLoop(const Vec *pv, uint c)
+    LineIndex PushLoop(const Vec *pv, uint c)
     {
-        typename Mesh<Vtx>::IndexType start = this->PushV(pv, c);
+        LineIndex start = this->PushV(pv, c);
         for (uint i=0; i<c; i++)
         {
             this->m_il.push_back(start + i);
             this->m_il.push_back(i == (c-1) ? start : (start + i + 1));
         }
+        return start;
     }
 
     void PushStrip(const float2 *pv, uint c)
     {
-        typename Mesh<Vtx>::IndexType start = this->PushV(pv, c);
+        LineIndex start = this->PushV(pv, c);
         for (uint i=1; i<c; i++)
         {
             this->m_il.push_back(start + i - 1);
@@ -883,15 +1001,34 @@ struct LineMesh : public PrimMesh<Vtx, 2> {
         }
     }
 
-    void PushLines(const float2 *pv, uint c)
+    void PushLoopIndexes(LineIndex start, const LineIndex *il, uint ic, uint ls)
     {
-        typename Mesh<Vtx>::IndexType start = this->PushV(pv, c);
-        for (uint i=1; i<c; i++)
-        {
-            this->m_il.push_back(i + start - 1);
-            this->m_il.push_back(i + start);
+        ASSERT(ic % ls == 0);
+        for (int i=1; i<=ic; i++) {
+            this->m_il.push_back(start + il[(i % ls == 0) ? i - ls : i]);
+            this->m_il.push_back(start + il[i-1]);
         }
     }
+
+    template <typename Vec>
+    void PushLoops(const Vec *pv, uint vc, const LineIndex *il, uint ic, uint ls)
+    {
+        const LineIndex start = this->PushV(pv, vc);
+        PushLoopIndexes(start, il, ic, ls);
+    }
+
+    template <typename Vec>
+    void PushLines(const Vec *pv, uint c)
+    {
+        const LineIndex start = this->PushV(pv, c);
+        for (uint i=1; i<c; i+=2)
+        {
+            this->m_il.push_back(start + i - 1);
+            this->m_il.push_back(start + i);
+        }
+    }
+
+    #include "Polyhedra.h"
 
     // first and last points are control points/tangents
     void PushCardinalSpline(const float2 *pv, uint count, uint icount, float c=1.f)
@@ -909,12 +1046,12 @@ struct LineMesh : public PrimMesh<Vtx, 2> {
         this->PushStrip(&ipv[0], icount);
     }
 
-    void PushLineCircle(float radius, int numVerts=32)
+    void PushCircle(float radius, int numVerts=32)
     {
-        this->PushLineCircle(float2(0), radius, numVerts);
+        this->PushCircle(float2(0), radius, numVerts);
     }
 
-    void PushLineCircle(const float2 &pos, float radius, int numVerts=32, float startAngle=0.f)
+    void PushCircle(const float2 &pos, float radius, int numVerts=32, float startAngle=0.f)
     {
         static const int maxVerts = 64;
         ASSERT(numVerts >= 3);
@@ -931,6 +1068,32 @@ struct LineMesh : public PrimMesh<Vtx, 2> {
         }
 
         PushLoop(verts, numVerts);
+    }
+
+    void PushLineCylinder(const float2 &pos, float2 radius, int numVerts=32, float startAngle=0.f)
+    {
+        static const int maxVerts = 64;
+        ASSERT(numVerts >= 3);
+        numVerts = min(maxVerts, numVerts);
+        float3 verts[maxVerts];
+
+        const float angleIncr = 2.f * M_PIf / (float) numVerts;
+
+        for (uint j=0; j<2; j++) {
+            for (int i=0; i != numVerts; ++i)
+            {
+                const float angle = startAngle + i * angleIncr;
+                verts[i].x = pos.x + radius.x * cos(angle);
+                verts[i].y = pos.y + radius.x * sin(angle);
+                verts[i].z = (j == 0) ? radius.y : -radius.y;
+                if (j == 0) {
+                    float3 v2 = verts[i];
+                    v2.z = -v2.z;
+                    PushLine(verts[i], v2);
+                }
+            }
+            PushLoop(verts, numVerts);
+        }
     }
 
     void PushDashedLineCircle(const float2 &pos, float radius, int numVerts, float startAngle, int dashOn, int dashOff)
@@ -981,6 +1144,28 @@ struct LineMesh : public PrimMesh<Vtx, 2> {
         }
     }
 
+    void PushBox(float2 pos, float3 rad)
+    {
+        float3 pos3(pos, 0.f);
+        const float3 verts[] = { pos3 + float3(-rad.x, rad.y, rad.z), 
+                                 pos3 + float3(rad.x, rad.y, rad.z), 
+                                 pos3 + float3(rad.x, -rad.y, rad.z),
+                                 pos3 + float3(-rad.x, -rad.y, rad.z),
+                                 pos3 + float3(-rad.x, rad.y, -rad.z), 
+                                 pos3 + float3(rad.x, rad.y, -rad.z), 
+                                 pos3 + float3(rad.x, -rad.y, -rad.z),
+                                 pos3 + float3(-rad.x, -rad.y, -rad.z) };
+        const LineIndex idxs[] = { 0,1, 1,2, 2,3, 3,0,
+                                                       0,4, 1,5, 2,6, 3,7,
+                                                       4,5, 5,6, 6,7, 7,4 };
+        this->Push(verts, arraySize(verts), idxs, arraySize(idxs));
+    }
+
+    void PushTri(float2 a, float2 b, float2 c)
+    {
+        const float2 v[] = { a, b, c };
+        PushLoop(v, arraySize(v));
+    }
 
     void PushLineQuad(float2 a, float2 b, float2 c, float2 d)
     {
@@ -988,16 +1173,16 @@ struct LineMesh : public PrimMesh<Vtx, 2> {
         PushLoop(v, arraySize(v));
     }
 
-    void PushRect(float2 r)
+    LineIndex PushRect(float2 r)
     {
         const float2 verts[4] = { -r, float2(-r.x, r.y), r, float2(r.x, -r.y) };
-        PushLoop(verts, arraySize(verts));
+        return PushLoop(verts, arraySize(verts));
     }
 
-    void PushRect(float2 p, float2 r)
+    LineIndex PushRect(float2 p, float2 r)
     {
         const float2 verts[4] = { p-r, p + float2(-r.x, r.y), p + r, p + float2(r.x, -r.y) };
-        PushLoop(verts, arraySize(verts));
+        return PushLoop(verts, arraySize(verts));
     }
 
     void PushRectCorners(float2 a, float2 b)
@@ -1008,17 +1193,29 @@ struct LineMesh : public PrimMesh<Vtx, 2> {
         PushLoop(verts, arraySize(verts));
     }
 
-    void PushLine(float2 a, float2 b)
+    template <typename Vec>
+    void PushLine(Vec a, Vec b)
     {
-        const float2 x[] = {a, b};
-        const typename Mesh<Vtx>::IndexType i[] = {0, 1};
+        const Vec x[] = {a, b};
+        const LineIndex i[] = {0, 1};
         this->Push(x, 2, i, 2);
     }
-
+    
     void PushLineTri(float2 a, float2 b, float2 c)
     {
         const float2 x[] = {a, b, c};
         PushLoop(x, 3);
+    }
+
+    void PushLinePrism(float2 a, float2 b, float2 c, float d)
+    {
+        const float3 x[] = { float3(a, d), float3(b, d), float3(c, d),
+                             float3(a, -d), float3(b, -d), float3(c, -d) };
+        const LineIndex il0[] = { 0,1,2, 3,4,5 };
+        const LineIndex il1[] = { 0,3, 1,4, 2,5 };
+        const LineIndex start = this->PushV(x, arraySize(x));
+        PushLoopIndexes(start, il0, 6, 3);
+        PushLoopIndexes(start, il1, 6, 2);
     }
     
     template <typename Prog>
@@ -1031,6 +1228,8 @@ struct LineMesh : public PrimMesh<Vtx, 2> {
 
 template <typename Vtx>
 struct TriMesh : public PrimMesh<Vtx, 3> {
+
+    typedef typename Mesh<Vtx>::IndexType TriIndex;
 
     void PushPoly(const float2* verts, uint vc)
     {
@@ -1045,32 +1244,32 @@ struct TriMesh : public PrimMesh<Vtx, 3> {
 
     // a b
     // c d
-    void PushQuad(float2 a, float2 b, float2 c, float2 d)
+    TriIndex PushQuad(float2 a, float2 b, float2 c, float2 d)
     {
         const float2 v[] = { a, b, c, d };
-        this->PushQuadV(v);
+        return this->PushQuadV(v);
     }
 
     template <typename Vec>
-    void PushQuadV(const Vec *v)
+    TriIndex PushQuadV(const Vec *v)
     {
-        static const typename Mesh<Vtx>::IndexType i[] = {0, 1, 2, 1, 3, 2};
-        this->Push(v, 4, i, arraySize(i));
+        static const TriIndex i[] = {0, 1, 2, 1, 3, 2};
+        return this->Push(v, 4, i, arraySize(i));
     }
 
-    void PushRect(float2 p, float2 r)
+    TriIndex PushRect(float2 p, float2 r)
     {
-        PushQuad(p + float2(-r.x, r.y), p + r, 
-                 p-r, p + float2(r.x, -r.y));
+        return PushQuad(p + float2(-r.x, r.y), p + r, 
+                        p-r, p + float2(r.x, -r.y));
     }
 
-    void PushRect(float3 p, float2 r)
+    TriIndex PushRect(float3 p, float2 r)
     {
         const float3 v[] = { p + float3(-r.x,  r.y, 0),
                              p + float3( r.x,  r.y, 0),
                              p + float3(-r.x, -r.y, 0),
                              p + float3( r.x, -r.y, 0) };
-        PushQuadV(v);
+        return PushQuadV(v);
     }
 
     void PushRectCorners(float2 a, float2 b)
@@ -1084,17 +1283,20 @@ struct TriMesh : public PrimMesh<Vtx, 3> {
     void PushTri(float2 a, float2 b, float2 c)
     {
         float2 x[] = {a, b, c};
-        typename Mesh<Vtx>::IndexType i[] = {0, 1, 2};
+        TriIndex i[] = {0, 1, 2};
         this->Push(x, 3, i, 3);
     }
 
-    void PushCircle(float radius, int numVerts=32) { PushCircle(float2(0), radius, numVerts); }
+    TriIndex PushCircle(float radius, int numVerts=32) 
+    {
+        return PushCircle(float2(0), radius, numVerts); 
+    }
 
-    void PushCircle(float2 pos, float radius, int numVerts=32)
+    TriIndex PushCircle(float2 pos, float radius, int numVerts=32)
     {
         ASSERT(numVerts >= 3);
 
-        typename Mesh<Vtx>::IndexType start = this->m_vl.size();
+        TriIndex start = this->m_vl.size();
 
         for (int i=0; i < numVerts; ++i)
         {
@@ -1111,13 +1313,14 @@ struct TriMesh : public PrimMesh<Vtx, 3> {
                 this->m_il.push_back(j);
             }
         }
+        return start;
     }
 
     void PushArc(float radius, float widthRadians, int numVerts=32)
     {
         ASSERT(numVerts >= 3);
 
-        typename Mesh<Vtx>::IndexType start = this->m_vl.size();
+        TriIndex start = this->m_vl.size();
         float2 zero = float2(0);
         this->PushV(&zero, 1);
 
@@ -1138,11 +1341,11 @@ struct TriMesh : public PrimMesh<Vtx, 3> {
         }
     }
 
-    void PushCircleCenterVert(float radius, int numVerts=32)
+    TriIndex PushCircleCenterVert(float radius, int numVerts=32)
     {
         ASSERT(numVerts >= 3);
 
-        typename Mesh<Vtx>::IndexType start = this->m_vl.size();
+        TriIndex start = this->m_vl.size();
         float2 zero = float2(0);
         this->PushV(&zero, 1);
 
@@ -1165,6 +1368,7 @@ struct TriMesh : public PrimMesh<Vtx, 3> {
         this->m_il.push_back(start);
         this->m_il.push_back(start + numVerts);
         this->m_il.push_back(start + 1);
+        return start;
     }
 
     template <typename Prog>
@@ -1211,6 +1415,11 @@ struct MeshPair {
         line.clear();
     }
 
+    size_t getSizeof() const
+    {
+        return tri.getSizeof() + line.getSizeof();
+    }
+
     template <typename TriP, typename LineP>
     void Draw(const ShaderState& ss, const TriP &trip, const LineP &linep)
     {
@@ -1223,7 +1432,8 @@ struct MeshPair {
 void PushButton(TriMesh<VertexPosColor>* triP, LineMesh<VertexPosColor>* lineP, float2 pos, float2 r, 
                 uint bgColor, uint fgColor, float alpha);
 
-void DrawButton(ShaderState *data, float2 r, uint bgColor, uint fgColor, float alpha=1);
+void DrawButton(ShaderState *data, float2 pos, float2 r, uint bgColor, uint fgColor, float alpha=1);
+void DrawBox(ShaderState *data, float2 pos, float2 r, uint bgColor, uint fgColor, float alpha=1);
 
 void fadeFullScreen(ShaderState &ss, const View& view, uint color, float alpha);
 

@@ -133,7 +133,23 @@ bool sNav::update()
     
     moversDisable();
 
-    if ((dest.dims&SN_POSITION) && !precision.posEqual(state.position, dest.cfg.position))
+    if (dest.dims&SN_MISSILE_ANGLE)
+    {
+        const float2 ddirPerp = rotate(normalize(dest.cfg.position - state.position), dest.cfg.angle + M_PI_2f);
+        const float2 mydir    = angleToVector(state.angle);
+        const float  aerr     = dot(mydir, ddirPerp);
+        
+        foreach (snMover *mr, movers)
+        {
+            if (mr->useForTranslation) {
+                mr->accelEnabled = 1.f;
+            }
+            if (mr->useForRotation) {
+                mr->angAccelEnabled = aerr;
+            }
+        }
+    }
+    else if ((dest.dims&SN_POSITION) && !precision.posEqual(state.position, dest.cfg.position))
     {
         float2 destp    = this->dest.cfg.position;
         float2 destv    = (dest.dims&(SN_VELOCITY|SN_TARGET_VEL)) ? this->dest.cfg.velocity : float2(0);
@@ -158,7 +174,7 @@ bool sNav::update()
             const bool canAccel = (this->action.accel != float2(0));
             needsRotation = !canAccel || (dot(normalize(this->action.accel), uBodyDir) < 0.99);
 
-            // FIXME this assumes we can accelerate strait forwards - this is often not the case!
+            // FIXME this assumes we can accelerate straight forwards - this is often not the case!
             //(length(this->action.accel) < 0.75 * scaledMaxAccel)*/)   // OR acceleration is not as high as it could be
             if (needsRotation)
             {
@@ -190,7 +206,12 @@ bool sNav::update()
             float2 ve = dest.cfg.velocity - state.velocity;
             ve /= max(length(ve), 0.05f * length(this->maxAccel));
             float2 accel = rotate(float2(clamp(ve.x, -1.f, 1.f), clamp(ve.y, -1.f, 1.f)), -state.angle);
-            this->action.accel = moversForLinearAccel(accel, kLinearVelThreshhold, true);
+            action.accel = moversForLinearAccel(accel, kLinearVelThreshhold, true);
+            if (action.accel == float2(0.f)) {
+                moversDisable();
+                float angAccel = angAccelForTarget(vectorToAngle(accel), 0);
+                action.angAccel = moversForAngAccel(angAccel, true);
+            }
         }
     }
 

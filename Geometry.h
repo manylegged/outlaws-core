@@ -2,7 +2,6 @@
 //
 // Geometry.h - general purpose geometry and math
 // - polygon intersections and computational geometry
-// - random number generators
 // - vector and numerical operations
 //
 
@@ -144,7 +143,7 @@ inline float compareAngles(float a, float b)
 
 static const double kGoldenRatio = 1.61803398875;
 
-inline float2 toGoldenRatio(float2 v) { return float2(v.y * kGoldenRatio, v.y); }
+inline float2 toGoldenRatioY(float y) { return float2(y * kGoldenRatio, y); }
 inline float2 toGoldenRatioX(float x) { return float2(x, x / kGoldenRatio); }
 
 inline float cross(float2 a, float2 b) { return a.x * b.y - a.y * b.x; }
@@ -171,6 +170,7 @@ inline float min_dim(float2 v) { return min(v.x, v.y); }
 static const float epsilon = 0.0001f;
 
 inline bool isZero(float2 v) { return fabsf(v.x) < epsilon && fabsf(v.y) < epsilon; }
+inline bool isZero(float3 v) { return fabsf(v.x) < epsilon && fabsf(v.y) < epsilon && fabsf(v.z) < epsilon; }
 inline bool isZero(float v)  { return fabsf(v) < epsilon; }
 
 // prevent nans
@@ -240,8 +240,11 @@ inline glm::detail::tvec2<T> rotate(const glm::detail::tvec2<T> &v, const glm::d
 
 inline float2 rotate90(float2 v)  { return float2(-v.y, v.x); }
 inline float2 rotateN90(float2 v) { return float2(v.y, -v.x); }
+inline float2 swapXY(float2 v)    { return float2(v.y, v.x); }
 inline float2 flipY(float2 v)     { return float2(v.x, -v.y); }
 inline float2 flipX(float2 v)     { return float2(-v.x, v.y); }
+inline float3 flipY(float3 v)     { return float3(v.x, -v.y, v.z); }
+inline float3 flipX(float3 v)     { return float3(-v.x, v.y, v.z); }
 
 inline float sign(float a) { return ((a < -epsilon) ? -1.f : 
                                      (a > epsilon)  ? 1.f : 0.f); }
@@ -367,127 +370,58 @@ inline float lnorm(float val, float low, float high)
 inline float parabola(float x, float roota, float rootb) { return (x-roota) * (x-rootb); }
 
 
-///////////////////////////////////////////// random number functions
-
-inline std::default_random_engine &random_device()
-{
-    static std::random_device rd;
-    static std::default_random_engine e1(rd());
-    return e1;
-}
-
-template <typename T>
-inline uint randrange()
-{
-    std::uniform_int_distribution<T> uniform_dist(std::numeric_limits<T>::min(), 
-                                                  std::numeric_limits<T>::max());
-    return uniform_dist(random_device());
-}
-
-// return a random number from [start-end)
-inline int randrange(int start, int end)
-{
-    std::uniform_int_distribution<int> uniform_dist(start, end-1);
-    return uniform_dist(random_device());
-    //return start + (rand() % (end - start));
-}
-
-inline bool randbool() { return randrange(0, 2); }
-
-template <typename T>
-inline T randselect(std::initializer_list<T> l)
-{
-    return *(l.begin() + randrange(0, l.size()));
-}
-
-template <typename Vec>
-inline typename Vec::value_type& randselect(Vec& vec)
-{
-    ASSERT(vec.size());
-    return vec[randrange(0, vec.size())];
-}
-
-template <typename Vec>
-inline const typename Vec::value_type& randselect(const Vec& vec)
-{
-    ASSERT(vec.size());
-    return vec[randrange(0, vec.size())];
-}
-
-
-inline float randrange(float start, float end)
-{
-    std::uniform_real_distribution<float> uniform_dist(start, end);
-    return uniform_dist(random_device());
-    //return float(start + ((end - start) * float(rand())) / float(RAND_MAX));
-}
-
-inline float2 randrange(float2 start, float2 end)
-{
-    return float2(randrange(start.x, end.x), randrange(start.y, end.y));
-}
-
-inline float3 randrange(float3 start, float3 end)
-{
-    return float3(randrange(start.x, end.x), randrange(start.y, end.y), randrange(start.z, end.z));
-}
-
-inline float randangle() { return randrange(0.f, M_TAOf); }
-inline float2 randpolar(float minradius, float maxradius) 
-{
-    return randrange(minradius, maxradius) * angleToVector(randangle());
-}
-inline float2 randpolar(float radius) 
-{
-    return radius * angleToVector(randangle());
-}
-
-inline bool chance(float v) { return randrange(0.f, 1.f) < v; }
-
-// Box-Muller transform
-// adapted from http://en.literateprograms.org/Box-Muller_transform_(C)#chunk def:Apply Box-Muller transform on x, y
-inline float rand_normal(float mean, float stddev)
-{
-    static float n2 = 0.0;
-    static int n2_cached = 0;
-    if (!n2_cached)
-    {
-        float x, y, r;
-        do {
-            x = randrange(-1.f, 1.f);
-            y = randrange(-1.f, 1.f);
-            r = x*x + y*y;
-        } while (r == 0.0 || r > 1.0);
-
-        float d = sqrtf(-2.f*logf(r)/r);
-        float n1 = x*d;
-        n2 = y*d;
-        float result = n1*stddev + mean;
-        n2_cached = 1;
-        return result;
-    }
-    else
-    {
-        n2_cached = 0;
-        return n2*stddev + mean;
-    }
-}
-
-// return a random integer from [0-MAXV)
-// (truncated) normal distribution, with a mean of 0 and STDDEV (lower numbers more likely)
-inline int rand_positive_unormal(uint maxv, float stddev)
-{
-    ASSERT(maxv > 0);
-    ASSERT(stddev > 0.f);
-    return clamp(int(floor(fabsf(rand_normal(0, stddev)))), 0, maxv-1);
-}
-
-inline float randrange_normal(float mn, float mx)
-{
-    return clamp(rand_normal(0.5f * (mn + mx), 0.25 * (mx-mn)), mn, mx);
-}
 
 ///////////////////////////////////////////// intersection
+
+struct AABBox {
+    
+    float2 mn, mx;
+
+    float2 getRadius() const { return 0.5f * (mx-mn); }
+    float2 getCenter() const { return 0.5f * (mx+mn); }
+
+    void start(float2 pt) 
+    {
+        if (mn != mx)
+            return;
+        mn = pt;
+        mx = pt;
+    }
+
+    void reset()
+    {
+        mn = float2(0);
+        mx = float2(0);
+    }
+    
+    void insertPoint(float2 pt)
+    {
+        start(pt);
+        mx = max(mx, pt);
+        mn = min(mn, pt);
+    }
+
+    void insertCircle(float2 pt, float rad)
+    {
+        start(pt);
+        mx = max(mx, pt + float2(rad));
+        mn = min(mn, pt - float2(rad));
+    }
+
+    void insertRect(float2 pt, float2 rad)
+    {
+        start(pt);
+        mx = max(mx, pt + rad);
+        mn = min(mn, pt - rad);
+    }
+
+    void insertAABBox(const AABBox &bb)
+    {
+        start(bb.getCenter());
+        mx = max(mx, bb.mx);
+        mn = min(mn, bb.mn);
+    }
+};
 
 inline bool intersectPointCircle(const float2 &p, const float2 &c, float r)
 {
@@ -723,6 +657,13 @@ inline bool intersectSegmentCircle(float2 a, float2 b, float2 c, float r)
     return intersectPointCircle(closest, c, r);
 }
 
+// return true if line segment a, b and circle c, r intersect
+inline bool intersectSegmentCircle(float2* otp, float2 a, float2 b, float2 c, float r)
+{
+    *otp = closestPointOnSegment(a, b, c);
+    return intersectPointCircle(*otp, c, r);
+}
+
 inline bool intersectStadiumCircle(float2 a, float2 b, float r, float2 c, float cr)
 {
     float2 closest = closestPointOnSegment(a, b, c);
@@ -777,6 +718,13 @@ inline bool intersectRayCircle(float2 *o, float2 E, float2 d, float2 C, float r)
     }
 
     return false;
+}
+
+inline bool intersectRaySegment(float2 rpt, float2 rdir, float2 sa, float2 sb)
+{
+    float t = ((rdir.x * rpt.y + rdir.y * (sa.x - rpt.x)) - (rdir.x * sb.y)) / 
+              (rdir.y * (sa.x + sb.x) - rdir.x * (sa.y + sb.y));
+    return 0.f <= t && t <= 1.f;
 }
 
 // a and b are the center of each rectangle, and ar and br are the distance from the center to each edge

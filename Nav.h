@@ -45,6 +45,7 @@ enum snDimension {
     SN_ANGLE     = 1<<2,
     SN_ANGVEL    = 1<<3,
     SN_TARGET_VEL = 1<<4,       // we don't care about our velocity, but we are passing in the target position velocity
+    SN_MISSILE_ANGLE = 1<<5,
 };
 
 
@@ -56,10 +57,10 @@ struct snPrecision {
 
     static snPrecision exact() {
         snPrecision p;
-        p.pos = 0.f;
-        p.vel = 0.f;
-        p.angle = 0.f;
-        p.angVel = 0.f;
+        p.pos = epsilon;
+        p.vel = epsilon;
+        p.angle = epsilon;
+        p.angVel = epsilon;
         return p;
     }
 

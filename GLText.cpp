@@ -61,7 +61,7 @@ void GLText::load()
     }
 }
 
-void GLText::render(ShaderState* s) const
+void GLText::render(ShaderState* s, float2 pos) const
 {
     ASSERT_MAIN_THREAD();
     if (texture.width > 0 && texture.height > 0)
@@ -69,13 +69,12 @@ void GLText::render(ShaderState* s) const
         ASSERT(chars == texChars && fontSize == texFontSize);
 
         const float2 textSizePoints = getSize();
-        ShaderTexture::instance().DrawQuad(*s, texture,float2(0), float2(textSizePoints.x, 0),
-                                           float2(0, textSizePoints.y), textSizePoints);
+        ShaderTexture::instance().DrawRectCornersUpsideDown(*s, texture, pos, pos + textSizePoints);
     }
 }
 
 
-const GLText* GLText::vget(int size, const char *format, va_list vl)
+const GLText* GLText::vget(float size, const char *format, va_list vl)
 {
     string s = str_vformat(format, vl);
     return get(size, s);
@@ -101,9 +100,8 @@ float2 GLText::Draw(const ShaderState &s_, float2 p, Align align, uint color,
 
     ShaderState s = s_;
     float2 pos = round(p - (scale * st->getSize()));
-    s.translate(pos);
     s.color32(color);
-    st->render(&s);
+    st->render(&s, pos);
     return st->getSize();
 }
 
@@ -112,12 +110,13 @@ float2 GLText::getAdvancement(char c) const
     static float2 *advancements[50];
     ASSERT(fontSize > 0);
     ASSERT(fontSize < 50);
-    if (!advancements[fontSize]) {
-        advancements[fontSize] = new float2[128];
-        FontAdvancements(font, fontSize, (OSize*) advancements[fontSize]);
+    int isize = round(fontSize);
+    if (!advancements[isize]) {
+        advancements[isize] = new float2[128];
+        FontAdvancements(font, fontSize, (OSize*) advancements[isize]);
     }
     ASSERT(c >= 0);
-    return advancements[fontSize][c];
+    return advancements[isize][c];
 }
 
 float GLText::getCharStart(uint chr) const
@@ -134,15 +133,15 @@ float2 GLText::getCharSize(uint chr) const
     return getAdvancement(chars[chr]);
 }
 
-int GLText::getScaledSize(float sizeUnscaled)
+float GLText::getScaledSize(float sizeUnscaled)
 {
     View view;
     GetWindowSize(&view.sizePixels.x, &view.sizePixels.y,
                   &view.sizePoints.x, &view.sizePoints.y);
-    return round(sizeUnscaled * view.sizePoints.y / 720.f);
+    return sizeUnscaled * view.sizePoints.y / 720.f;
 }
 
-const GLText* GLText::get(int size, const string& s)
+const GLText* GLText::get(float size, const string& s)
 {
     ASSERT_MAIN_THREAD();
     float pointSize = GetCurrentBackingScaleFactor();
@@ -153,7 +152,7 @@ const GLText* GLText::get(int size, const string& s)
     for (uint i=0; i<cacheSize; i++)
     {
         if (cache[i].chars == s && 
-            cache[i].fontSize == size && 
+            isZero(cache[i].fontSize - size) && 
             cache[i].texPointSize == pointSize)
         {
             return &cache[i];
@@ -205,18 +204,19 @@ void DrawTextBox(const ShaderState& ss1, const View& view, float2 point, float2 
     st->render(&ss);
 }
 
+const float2 kOutlinePad = float2(4.f, 2.f);
 
 float2 DrawOutlinedText(const ShaderState &s_, float2 pos, float2 relnorm, uint color,
-                        float alpha, const string& str)
+                        float alpha, float tsize, const string& str)
 {
     ShaderState ss = s_;
-    const GLText* txt = GLText::get(GLText::getScaledSize(18), str);
-    ss.translate(pos - (relnorm - 0.5f) * txt->getSize());
-    DrawButton(&ss, 0.5f * txt->getSize() + 2.f,
-               ALPHAF(0.8f)|COLOR_BLACK, ALPHA_OPAQUE|color, 0.5f * alpha);
+    const GLText* txt = GLText::get(GLText::getScaledSize(tsize), str);
+    ss.translate(pos - relnorm * txt->getSize());
+    // DrawButton(&ss, 0.5f * txt->getSize(), 0.5f * txt->getSize() + float2(2.f), kOverlayBG, ALPHAF(0.5)|color, 0.5f * alpha);
+    DrawBox(&ss, pos, txt->getSize() + kOutlinePad, kOverlayBG,
+            MultAlphaARGB(color, 0.5f), alpha);
     ss.color(color, alpha);
-    ss.translate(-0.5f * txt->getSize());
     txt->render(&ss);
-    return txt->getSize() + 2.f * 2.f;
+    return txt->getSize() + 2.f * kOutlinePad;
 }
 

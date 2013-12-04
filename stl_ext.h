@@ -81,13 +81,18 @@ std::unique_ptr<T> make_unique(T* val)
     return ptr;
 }
 
+inline std::size_t hash_combine(const std::size_t &a, const std::size_t &b)
+{
+    return a ^ (b + 0x9e3779b9 + (a<<6) + (a>>2));
+}
+
 namespace std {
 
     template <typename K, typename V>
     struct hash< std::pair<K, V> > {
         std::size_t operator()(const std::pair<K, V>& pt) const
         {
-            return std::hash<K>()(pt.first) ^ (std::hash<V>()(pt.second) << 1);
+            return hash_combine(std::hash<K>()(pt.first), std::hash<V>()(pt.second));
         }
     };
 
@@ -95,18 +100,23 @@ namespace std {
     struct hash< glm::detail::tvec2<T> > {
         std::size_t operator()(const glm::detail::tvec2<T>& pt) const
         {
-            return std::hash<T>()(pt.x) ^ (std::hash<T>()(pt.y) << 1);
+            return hash_combine(std::hash<T>()(pt.x), std::hash<T>()(pt.y));
         }
     };
 
     template <typename T>
     struct hash< glm::detail::tvec3<T> > {
-        std::size_t operator()(const glm::detail::tvec2<T>& pt) const
+        std::size_t operator()(const glm::detail::tvec3<T>& pt) const
         {
-            return std::hash<T>()(pt.x) ^ (std::hash<T>()(pt.y) << 1) ^ (std::hash<T>()(pt.z) << 2);
+            return hash_combine(std::hash<T>()(pt.x),
+                                hash_combine(std::hash<T>()(pt.y),
+                                             std::hash<T>()(pt.z)));
         }
     };
 }
+
+template <typename T>
+void* copy_explicit_owner(const T* ptr) { return NULL; }
 
 // smart pointer supporting distributed and centralized ownership
 // if explicitOwner field is set, share the pointer, never delete
@@ -119,16 +129,16 @@ class copy_ptr {
     template <typename U>
     void assign1(U* v, typename std::enable_if<!std::is_const<U>::value>::type* = 0)
     {
-        if (m_ptr && !m_ptr->explicitOwner && v && !v->explicitOwner)
+        if (m_ptr && !copy_explicit_owner(m_ptr) && v && !copy_explicit_owner(v))
             *m_ptr = *v;
         else
-            reset((v && v->explicitOwner) ? v : v ? new T(*v) : NULL);
+            reset((v && copy_explicit_owner(v)) ? v : v ? new T(*v) : NULL);
     }
 
     template <typename U>
     void assign1(U* v, typename std::enable_if<std::is_const<U>::value>::type* = 0)
     {
-        reset((v && v->explicitOwner) ? v : v ? new T(*v) : NULL);
+        reset((v && copy_explicit_owner(v)) ? v : v ? new T(*v) : NULL);
     }
     
 public:
@@ -147,7 +157,7 @@ public:
     {
         if (m_ptr == v)
             return *this;
-        if (m_ptr && !m_ptr->explicitOwner) {
+        if (m_ptr && !copy_explicit_owner(m_ptr)) {
             delete m_ptr;
         }
         m_ptr = v;
@@ -171,7 +181,7 @@ public:
     // forward assignment from pointee type - copy
     copy_ptr& operator=(const T& other)
     {
-        ASSERT(!other.explicitOwner); // technically fine, but we should be setting by pointer
+        ASSERT(!copy_explicit_owner(&other)); // technically fine, but we should be setting by pointer
         if (m_ptr)
             *m_ptr = other;
         else
@@ -182,7 +192,7 @@ public:
     // forward assignment from pointee type - move
     copy_ptr& operator=(T&& other) noexcept
     {
-        ASSERT(!other.explicitOwner); // technically fine, but we should be setting by pointer
+        ASSERT(!copy_explicit_owner(&other)); // technically fine, but we should be setting by pointer
         if (m_ptr)
             *m_ptr = std::move(other);
         else
@@ -229,7 +239,7 @@ struct Watchable {
 
     mutable watch_ptr_base watch_list;
 
-    virtual ~Watchable()
+    void nullReferencesTo()
     {
         for (watch_ptr_base* watcher=watch_list.next; watcher != NULL; watcher = watcher->next)
         {
@@ -239,7 +249,16 @@ struct Watchable {
             watcher->prev = NULL;
         }
     }
+
+    virtual ~Watchable()
+    {
+        nullReferencesTo();
+    }
 };
+
+inline void nullReferencesToWatch(Watchable& it) { it.nullReferencesTo(); }
+template <typename T> void nullReferencesToWatch(T& it) { }
+
 
 // smart pointer that automatically becomes NULL when it's pointee is deleted
 template <typename T>
@@ -380,10 +399,28 @@ inline bool vector_add(V &v, const T& t)
     return adding;
 }
 
-template <typename T>
-inline const T &vector_get_index(std::vector<T> &v, uint i, const T &def=T())
+template <typename Vec>
+const typename Vec::value_type &vector_index(const Vec &v, size_t i, const typename Vec::value_type &def)
 {
     return (i < v.size()) ? v[i] : def;
+}
+
+template <typename Vec>
+typename Vec::value_type &vector_index(Vec &v, size_t i)
+{
+    if (v.size() <= i) {
+        v.resize(i + 1);
+    }
+    return v[i];
+}
+
+template <typename Vec>
+void vector_set_index(Vec &v, size_t i, const typename Vec::value_type &val)
+{
+    if (v.size() <= i) {
+        v.resize(i + 1);
+    }
+    v[i] = val;
 }
 
 template <typename T>
@@ -535,6 +572,13 @@ inline void vector_sort(T& col, const F& comp) { std::sort(col.begin(), col.end(
 // sort entire vector, using supplied function to get comparison key
 template <typename T, typename F>
 inline void vector_sort_key(T& col, const F& gkey) { std::sort(col.begin(), col.end(), make_key_comparator(gkey)); }
+
+template <typename T>
+void vector_unique(T& vec)
+{
+    typename T::iterator it = std::unique(vec.begin(), vec.end());
+    vec.resize(std::distance(vec.begin(), it));
+}
 
 // selection sort the first COUNT elements of VEC, using FUN as a key for comparison
 template <typename T, typename F>
@@ -690,12 +734,11 @@ inline int vector_remove_if_not(T &vec)
 }
 
 
-
 // swap from end to fill - does not maintain order!
-template <typename V, typename T>
-inline int vector_remove(V &v, const T& t)
+template <typename Vec>
+inline int vector_remove(Vec &v, const typename Vec::value_type& t)
 {
-    return vector_remove_if(v, lambda((const T& e), e == t));
+    return vector_remove_if(v, lambda((const typename Vec::value_type &e), e == t));
 }
 
 template <typename T, typename F>
@@ -966,6 +1009,16 @@ inline void slist_clear(T *node)
 }
 
 ////////////////////////////////////////////////////////////////////////////////////
+
+inline void set_current_thread_name(const char* name)
+{
+#if _WIN32
+#elif __APPLE__
+    pthread_setname_np(name);
+#else
+    pthread_setname_np(pthread_self(), name);
+#endif
+}
 
 
 #endif

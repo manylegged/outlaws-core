@@ -252,29 +252,7 @@ private:
     int TimeU;
     int TimeA;
     
-    ShaderIridescent()
-    {
-        LoadProgram("varying vec4 DestinationColor;\n"
-                    ,
-                    "attribute vec4 SourceColor0;\n"
-                    "attribute vec4 SourceColor1;\n"
-                    "attribute float TimeA;\n"
-                    "uniform float TimeU;\n"
-                    "void main(void) {\n"
-                    "    gl_Position = Transform * Position;\n"
-                    "    float val = 0.5 + 0.5 * sin(TimeU + TimeA);\n"
-                    "    DestinationColor = mix(SourceColor0, SourceColor1, val);\n"
-                    "}\n"
-                    ,
-                    "void main(void) {\n"
-                    "    gl_FragColor = DestinationColor;\n"
-                    "}\n"
-            );
-        GET_ATTR_LOC(SourceColor0);
-        GET_ATTR_LOC(SourceColor1);
-        GET_ATTR_LOC(TimeA);
-        GET_UNIF_LOC(TimeU);
-    }
+    ShaderIridescent();
 
 public:
 
@@ -361,6 +339,8 @@ struct ShaderTextureBase: public ShaderProgramBase {
         glBindTexture(GL_TEXTURE_2D, texture.texnum);
     }
 
+    // a b
+    // c d
     void DrawQuad(const ShaderState& ss, const OutlawTexture& texture,
                   float2 a, float2 b, float2 c, float2 d) const
     {
@@ -383,9 +363,43 @@ struct ShaderTextureBase: public ShaderProgramBase {
         DrawQuad(ss,texture, float2(bl.x, ur.y), ur, bl, float2(ur.x, bl.y));
     }
 
+    void DrawRectCornersUpsideDown(const ShaderState &ss, const OutlawTexture& texture, float2 a, float2 b) const
+    {
+        // OpenGL texture coordinate origin is in the lower left.
+        // but all my image loaders put the origin in the upper left
+        // so flip it
+
+        float2 bl(min(a.x, b.x), min(a.y, b.y));
+        float2 ur(max(a.x, b.x), max(a.y, b.y));
+        DrawQuad(ss,texture, bl, float2(ur.x, bl.y), float2(bl.x, ur.y), ur);
+    }
+
     void DrawRect(const ShaderState &ss, const OutlawTexture& texture, float2 pos, float2 rad) const
     {
         DrawRectCorners(ss, texture, pos - rad, pos + rad);
+    }
+
+    void DrawRectUpsideDown(const ShaderState &ss, const OutlawTexture& texture, float2 pos, float2 rad) const
+    {
+        DrawRectCornersUpsideDown(ss, texture, pos - rad, pos + rad);
+    }
+
+    void DrawButton(const ShaderState &ss, const OutlawTexture& texture, float2 pos, float2 r) const
+    {
+        static const float o = 0.1f;
+        VertexPosTex v[6] = { 
+            { float3(pos + float2(-r.x, lerp(r.y, -r.y, o)), 0.f), float2(0.f, 1.f - o) },
+            { float3(pos + float2(lerp(-r.x, r.x, o), r.y),  0.f), float2(o, 1.f)       },
+            { float3(pos + float2(r.x, r.y),                 0.f), float2(1.f)          },
+            { float3(pos + float2(r.x, lerp(-r.y, r.y, o)),  0.f), float2(1.f, o),      },
+            { float3(pos + float2(lerp(r.x, -r.x, o), -r.y), 0.f), float2(1.f - o, 0.f) },
+            { float3(pos + float2(-r.x, -r.y),               0.f), float2(0.f)          } };
+        static const ushort i[] = { 0,1,2, 0,2,3, 0,3,4, 0,4,5 };
+        BindTexture(texture);
+        UseProgram(ss, v, texture);
+        ShaderState s1 = ss;
+        s1.DrawElements(GL_TRIANGLES, arraySize(i), i);
+        UnuseProgram();
     }
 };
 
@@ -529,9 +543,9 @@ public:
 struct MetaballRenderer : ShaderPosBase {
 
 private:
-    View           m_view;
-    RenderTexture  m_tex;
-    vector<float3> m_balls;
+    View            m_view;
+    GLRenderTexture m_tex;
+    vector<float3>  m_balls;
 
     uint ucolor;
     uint uballs;
@@ -603,7 +617,9 @@ private:
 
     ShaderColor()
     {
-        LoadProgram("varying vec4 DestinationColor;\n"
+        LoadProgram(//"#extension GL_EXT_gpu_shader4 : require\n"
+                    //"flat varying vec4 DestinationColor;\n"
+                    "varying vec4 DestinationColor;\n"
                     ,
                     "attribute vec4 SourceColor;\n"
                     "void main(void) {\n"
@@ -633,6 +649,44 @@ public:
         return *p;
     }
 
+};
+
+struct ShaderSmoothColor : public ShaderProgramBase {
+
+private:
+    int m_colorSlot;
+
+    ShaderSmoothColor()
+    {
+        LoadProgram("varying vec4 DestinationColor;\n"
+                    ,
+                    "attribute vec4 SourceColor;\n"
+                    "void main(void) {\n"
+                    "    DestinationColor = SourceColor;\n"
+                    "    gl_Position = Transform * Position;\n"
+                    "}\n"
+                    ,
+                    "void main(void) {\n"
+                    "    gl_FragColor = DestinationColor;\n"
+                    "}\n"
+                    );
+        m_colorSlot = getAttribLocation("SourceColor");
+    }
+
+public:
+
+    template <typename Vtx>
+    void UseProgram(const ShaderState&ss, const Vtx* ptr, const Vtx* base) const
+    {
+        UseProgramBase(ss, &ptr->pos, base);
+        vertexAttribPointer(m_colorSlot, &ptr->color, base);
+    }
+
+    static const ShaderSmoothColor& instance()   
+    {
+        static ShaderSmoothColor* p = new ShaderSmoothColor();
+        return *p;
+    }
 };
 
 struct ShaderNoise : public ShaderProgramBase {

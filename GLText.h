@@ -35,12 +35,12 @@ class GLText {
 
     OutlawTexture  texture;
     string         texChars;
-    int            texFontSize;
+    float          texFontSize;
     float          texPointSize;
 
     string         chars;
     OutlawFont     font;
-    int            fontSize;
+    float          fontSize;
 
     GLText()
     {
@@ -66,14 +66,14 @@ public:
     float2 getCharSize(uint chr) const;
     
     // position is lower left corner of text
-    void render(ShaderState* s) const;
+    void render(ShaderState* s, float2 pos=float2(0)) const;
 
-    static const GLText* vget(int size, const char *format, va_list vl) __printflike(2, 0);
+    static const GLText* vget(float size, const char *format, va_list vl) __printflike(2, 0);
 
     // factory
-    static const GLText* get(int size, const string& str);
+    static const GLText* get(float size, const string& str);
 
-    static int getScaledSize(float sizeUnscaled);
+    static float getScaledSize(float sizeUnscaled);
 
     enum Align {
         LEFT,
@@ -106,6 +106,6 @@ void DrawTextBox(const ShaderState& ss1, const View& view, float2 point, float2 
 
 // RELNORM of (0, 0) sets pos in bottom left corner, (1, 1) sets pos in upper right corner
 float2 DrawOutlinedText(const ShaderState &ss, float2 pos, float2 relnorm, uint color,
-                        float alpha, const string& str);
+                        float alpha, float tsize, const string& str);
 
 #endif //GLTEXT_H
