@@ -58,7 +58,7 @@ private:
 public:
     lstring() {}
     lstring(const std::string& str) : m_ptr(Lexicon::instance().intern(str)) { }
-    lstring(const char* str)        : m_ptr(Lexicon::instance().intern(str ? str : "")) { }
+    lstring(const char* str)        : m_ptr(str ? Lexicon::instance().intern(str) : NULL) { }
     lstring(const lstring& o)       : m_ptr(o.m_ptr) {}
 
     std::string str()   const { return m_ptr ? std::string(m_ptr) : ""; }
@@ -219,21 +219,8 @@ std::string str_join_keys(const A &begin, const A &end, const std::string &sep)
     return result;
 }
 
-inline std::string str_word_wrap(std::string str, size_t width = 70)
-{
-    size_t curWidth = width;
-    while( curWidth < str.length() ) {
-        std::string::size_type spacePos = str.rfind( ' ', curWidth );
-        if( spacePos == std::string::npos )
-            spacePos = str.find( ' ', curWidth );
-        if( spacePos != std::string::npos ) {
-            str[ spacePos ] = '\n';
-            curWidth = spacePos + width + 1;
-        }
-    }
+std::string str_word_wrap(std::string str, size_t width = 70);
 
-    return str;
-}
 
 inline std::string str_capitalize(const char* str)
 {

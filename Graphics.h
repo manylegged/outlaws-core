@@ -251,28 +251,6 @@ public:
     void GenerateMipmap();
 };
 
-// RIAA for a render target
-class GLRenderTexture : public GLTexture {
-
-    GLuint m_fbname;
-    GLuint m_zrbname;
-
-    static vector<GLRenderTexture*> s_bound;
-
-    void Generate();
-
-public:
-    GLRenderTexture() : m_fbname(0), m_zrbname(0) {}
-    ~GLRenderTexture() { clear(); }
-    
-    void clear();
-
-    bool   empty() const { return !(m_fbname && m_texname && m_zrbname); }
-
-    void BindFramebuffer(float2 sizePixels);
-    void RebindFramebuffer();
-    void UnbindFramebuffer(float2 vpsize) const;
-};
 
 // encapsulate the projection/modelview matrix and some related state
 struct ShaderState {
@@ -320,6 +298,41 @@ struct ShaderState {
     void DrawArrays(uint dt, size_t count) const;
 };
 
+
+// RIAA for a render target
+class GLRenderTexture : public GLTexture {
+    
+    GLuint m_fbname;
+    GLuint m_zrbname;
+    
+    static vector<GLRenderTexture*> s_bound;
+    
+    void Generate();
+    
+    ShaderState DrawFSBegin() const;
+    void DrawFSEnd() const;
+    
+public:
+    GLRenderTexture() : m_fbname(0), m_zrbname(0) {}
+    ~GLRenderTexture() { clear(); }
+    
+    void clear();
+    
+    bool   empty() const { return !(m_fbname && m_texname && m_zrbname); }
+    
+    void BindFramebuffer(float2 sizePixels, bool keepz=false);
+    void RebindFramebuffer();
+    void UnbindFramebuffer(float2 vpsize) const;
+    
+    template <typename Shader>
+    void DrawFullscreen() const
+    {
+        ShaderState ss = DrawFSBegin();
+        Shader::instance().DrawRectCorners(ss, getTexture(), float2(0.f), float2(1.f));
+        DrawFSEnd();
+    }
+};
+
 static float kScaleMin = 0.05f;
 static float kScaleMax = 5.f;
 
@@ -363,6 +376,11 @@ struct View {
         return r;
     }
 
+    float getScale(float z) const 
+    {
+        return ((0.5f * sizePoints.y * scale) - z) / (0.5f * sizePoints.y); 
+    }
+
     float2 toWorld(float2 p) const
     {
         // FIXME angle
@@ -372,17 +390,19 @@ struct View {
         return p;
     }
 
-    float2 toScreen(float2 p) const
+    float2 toScreen(float2 p, float z=0.f) const
     {
         double2 dp = double2(p);
         dp -= position;
         dp = rotate(dp, double(-angle));
-        dp /= scale;
+        dp /= getScale(z);
         dp += 0.5f * sizePoints;
         return float2(dp);
     }
 
-    float2 toScreenPixels(float2 p) const { return toScreen(p) * (sizePixels / sizePoints); }
+    float getPointSize() const { return (sizePixels.y / sizePoints.y); }
+
+    float2 toScreenPixels(float2 p, float z=0.f) const { return toScreen(p, z) * (sizePixels / sizePoints); }
 
     void adjust(const View& v)
     {
@@ -393,20 +413,20 @@ struct View {
     }
     void adjustZoom(float v) { scale = clamp(scale * v, kScaleMin, kScaleMax); }
 
-    float  toScreenSize(float  p) const { return p / scale; }
-    float2 toScreenSize(float2 p) const { return p / scale; }
+    float  toScreenSize(float  p, float z=0.f) const { return p / getScale(z); }
+    float2 toScreenSize(float2 p, float z=0.f) const { return p / getScale(z); }
 
-    float  toScreenSizePixels(float  p) const { return (p / scale) * (sizePixels.y / sizePoints.y); }
-    float2 toScreenSizePixels(float2 p) const { return (p / scale) * (sizePixels.y / sizePoints.y); }
+    float  toScreenSizePixels(float  p, float z=0.f) const { return toScreenSize(p, z) * getPointSize(); }
+    float2 toScreenSizePixels(float2 p, float z=0.f) const { return toScreenSize(p, z) * getPointSize(); }
     
     float2 getAspect() const { return float2(sizePoints.x / sizePoints.y, 1.f); }
 
-    float  toWorldSize(float  p, float z=0.f) const { return p * scale - z; }
-    float2 toWorldSize(float2 p, float z=0.f) const { return p * scale - z * getAspect(); }
+    float  toWorldSize(float  p, float z=0.f) const { return p * getScale(z); }
+    float2 toWorldSize(float2 p, float z=0.f) const { return p * getScale(z); }
 
     // get size of screen in world coordinates
     float2 getWorldSize(float z) const 
-    { 
+    {
         float2 zPlaneSize = (scale * sizePoints) - 2.f * z * getAspect();
         return max(zPlaneSize, float2(0));
     }
@@ -449,7 +469,7 @@ struct View {
     }
 
     ShaderState getWorldShaderState(float3 offset) const;
-    ShaderState getScreenShaderState(float3 offset) const;
+    ShaderState getScreenShaderState() const;
 
     float3 getScreenCameraPos(float3 offset) const { return float3(0.f, 0.f, 0.5f * sizePoints.y); }
 
@@ -477,7 +497,7 @@ struct View {
         return intersectCircleRectangle(a, r, 0.5f * sizePoints, 0.5f * sizePoints);
     }
 
-    void setScreenLineWidth(float z, float scl=1.f) const
+    void setScreenLineWidth(float z=0.f, float scl=1.f) const
     {
         const float width     = getScreenPointSizeInPixels(z);
         const float pointSize = sizePixels.x / sizePoints.x;
@@ -660,6 +680,12 @@ const float2 &getCircleVertOffset(uint idx)
         initialized = true;
     }
     return offsets[idx];
+}
+
+inline float2 getCircleVertOffset(uint idx, uint verts)
+{
+    const float angle = (float) idx * (M_TAOf / (float) verts);
+    return angleToVector(angle);
 }
 
 
@@ -903,6 +929,8 @@ struct PrimMesh : public Mesh<Vtx1> {
 
     void SortByZ()
     {
+        if (this->m_il.empty())
+            return;
         // just re-arrange the indices
         // the other option is to leave the indices and rearange vertices
         std::sort(primBegin(), primEnd(), lambda((const IndxPrim&a, const IndxPrim &b),
@@ -1292,6 +1320,11 @@ struct TriMesh : public PrimMesh<Vtx, 3> {
         return PushCircle(float2(0), radius, numVerts); 
     }
 
+    TriIndex PushCircle(float2 pos, float radius, const View& view) 
+    {
+        return PushCircle(pos, radius, view.getCircleVerts(radius));
+    }
+
     TriIndex PushCircle(float2 pos, float radius, int numVerts=32)
     {
         ASSERT(numVerts >= 3);
@@ -1316,19 +1349,19 @@ struct TriMesh : public PrimMesh<Vtx, 3> {
         return start;
     }
 
-    void PushArc(float radius, float widthRadians, int numVerts=32)
+    // widthRadians is on either side of angleStart
+    void PushSector(float2 pos, float radius, float angleStart, float widthRadians, int numVerts=32)
     {
         ASSERT(numVerts >= 3);
 
         TriIndex start = this->m_vl.size();
-        float2 zero = float2(0);
-        this->PushV(&zero, 1);
+        this->PushV(&pos, 1);
 
         for (int i=0; i < numVerts; ++i)
         {
-            const float angle = (-0.5f * widthRadians) + (widthRadians * (float) i / (float) numVerts);
+            const float angle = angleStart + 2.f * widthRadians * (-0.5f + (float) i / (float) (numVerts-1));
             const uint  j     = (uint) this->m_vl.size();
-            float2      p     = radius * angleToVector(angle);
+            float2      p     = pos + radius * angleToVector(angle);
 
             this->PushV(&p, 1);
 
@@ -1388,6 +1421,8 @@ struct MeshPair {
     TriMesh<TriV>   tri;
     LineMesh<LineV> line;
 
+    typedef TriV TriVertex;
+    typedef LineV LineVertex;
     typedef typename Mesh<TriV>::scope TriScope;
     typedef typename Mesh<LineV>::scope LineScope;
 
@@ -1432,12 +1467,40 @@ struct MeshPair {
 void PushButton(TriMesh<VertexPosColor>* triP, LineMesh<VertexPosColor>* lineP, float2 pos, float2 r, 
                 uint bgColor, uint fgColor, float alpha);
 
-void DrawButton(ShaderState *data, float2 pos, float2 r, uint bgColor, uint fgColor, float alpha=1);
+void DrawButton(const ShaderState *data, float2 pos, float2 r, uint bgColor, uint fgColor, float alpha=1);
+
+void PushBox(TriMesh<VertexPosColor>* triP, LineMesh<VertexPosColor>* lineP, float2 pos, float2 r, uint bgColor, uint fgColor, float alpha);
 void DrawBox(ShaderState *data, float2 pos, float2 r, uint bgColor, uint fgColor, float alpha=1);
 
 void fadeFullScreen(ShaderState &ss, const View& view, uint color, float alpha);
 
 void DrawAlignedGrid(ShaderState &wss, const View& view, float size, float z); 
+
+
+// encapsulate full screen blur 
+
+struct PostProc {
+
+private:
+    GLRenderTexture m_tex[2];
+    uint            m_rtIdx = 0;
+    uint            m_blurLevel = 0;
+    float2          m_res;
+
+    GLRenderTexture &getRead() { return m_tex[m_rtIdx]; }
+    GLRenderTexture &getWrite() { return m_tex[!m_rtIdx]; }    
+public:
+
+    void setRes(float2 res) { m_res = res; }
+    void setBlur(uint blur) { m_blurLevel = blur; }
+    
+    void swapRW() { m_rtIdx = !m_rtIdx; }
+
+    void BindWriteFramebuffer();
+    void UnbindWriteFramebuffer();
+    void Draw(bool drawFinal);
+};
+
 
 
 #endif /* defined(__Outlaws__Graphics__) */

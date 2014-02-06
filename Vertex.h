@@ -40,6 +40,16 @@ struct VertexPosColor {
 //    void setColor32(uint c, float a=1) { color = ARGB2ABGR(c, a); }
 };
 
+struct VertexPosColorLuma {
+    float3 pos;
+    uint   color;
+    float  luma{1.f};          // scales color
+
+    VertexPosColorLuma() {}
+    VertexPosColorLuma(float2 p, uint c, float l=1.f) : pos(float3(p.x, p.y, 0.f)), color(c), luma(l) {}
+    VertexPosColorLuma(float3 p, uint c, float l=1.f) : pos(p), color(c), luma(l) {}
+};
+
 struct VertexPos2ColorTime {
     float3 pos;
     uint   color;

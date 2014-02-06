@@ -31,23 +31,23 @@
 
 static const int kDefaultFontSize = 12;
 
+static const int kDefaultFont = 0;
+static const int kMonoFont    = 1;
+
 class GLText {
 
     OutlawTexture  texture;
     string         texChars;
-    float          texFontSize;
+    float          texFontSize = 0.f;
     float          texPointSize;
 
     string         chars;
-    OutlawFont     font;
-    float          fontSize;
+    int            font = kDefaultFont;
+    float          fontSize = kDefaultFontSize;
 
     GLText()
     {
         memset(&texture, 0, sizeof(texture));
-        fontSize    = kDefaultFontSize;
-        font        = OF_SansMono;
-        texFontSize = 0;
     }
     ~GLText();
 
@@ -66,12 +66,10 @@ public:
     float2 getCharSize(uint chr) const;
     
     // position is lower left corner of text
-    void render(ShaderState* s, float2 pos=float2(0)) const;
-
-    static const GLText* vget(float size, const char *format, va_list vl) __printflike(2, 0);
+    void render(const ShaderState* s, float2 pos=float2(0)) const;
 
     // factory
-    static const GLText* get(float size, const string& str);
+    static const GLText* get(int font, float size, const string& str);
 
     static float getScaledSize(float sizeUnscaled);
 
@@ -87,8 +85,13 @@ public:
         MID_RIGHT,
     };
 
-    static float2 Draw(const ShaderState &s_, float2 p, Align align, uint color,
+private:
+    static const GLText* vget(int font, float size, const char *format, va_list vl) __printflike(3, 0);
+
+    static float2 Draw(const ShaderState &s_, float2 p, Align align, int font, uint color,
                        float sizeUnscaled, const std::string &s);
+
+public:
 
 
     static float2 DrawScreen(const ShaderState &s_, float2 p, Align align, uint color, 
@@ -97,12 +100,19 @@ public:
     static float2 DrawStr(const ShaderState &s_, float2 p, Align align, uint color, 
                           float sizeUnscaled, const string& str)
     {
-        return Draw(s_, p, align, color, getScaledSize(sizeUnscaled), str);
+        return Draw(s_, p, align, kDefaultFont, color, getScaledSize(sizeUnscaled), str);
+    }
+
+    static float2 DrawStr(const ShaderState &s_, float2 p, Align align, int font, uint color, 
+                          float sizeUnscaled, const string& str)
+    {
+        return Draw(s_, p, align, font, color, getScaledSize(sizeUnscaled), str);
     }
     
 };
 
-void DrawTextBox(const ShaderState& ss1, const View& view, float2 point, float2 rad, const string& text, uint tSize, uint fgColor, uint bgColor=0);
+void DrawTextBox(const ShaderState& ss1, const View& view, float2 point, float2 rad, const string& text, uint tSize, 
+                 uint fgColor, uint bgColor=0, int font=kDefaultFont);
 
 // RELNORM of (0, 0) sets pos in bottom left corner, (1, 1) sets pos in upper right corner
 float2 DrawOutlinedText(const ShaderState &ss, float2 pos, float2 relnorm, uint color,

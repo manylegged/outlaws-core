@@ -46,6 +46,7 @@ enum snDimension {
     SN_ANGVEL    = 1<<3,
     SN_TARGET_VEL = 1<<4,       // we don't care about our velocity, but we are passing in the target position velocity
     SN_MISSILE_ANGLE = 1<<5,
+    SN_VEL_ALLOW_ROTATION = 1<<6,
 };
 
 
@@ -185,7 +186,7 @@ struct sNav {
     
     void   onMoversChanged();
     float  moversForAngAccel(float angAccel, bool enable);
-    float2 moversForLinearAccel(float2 dir, float threshold, bool enable);
+    float2 moversForLinearAccel(float2 dir, float threshold, float angAccel, bool enable);
     void   moversDisable();
     float  angAccelForTarget(float destAngle, float destAngVel) const;
 

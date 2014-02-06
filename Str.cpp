@@ -23,7 +23,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-
+#include "StdAfx.h"
 #include "Str.h"
 
 std::string str_format(const char *format, ...)
@@ -76,4 +76,28 @@ long chr_unshift(long chr)
     case ')': return '0';
     }
     return chr;
+}
+
+
+std::string str_word_wrap(std::string str, size_t width)
+{
+    size_t i = 0;
+    size_t lineStart = 0;
+    size_t lastSpace = 0;
+
+    while (str.size() - lineStart > width && i<str.size())
+    {
+        if (str[i] == '\n') {
+            lineStart = i;
+        } else if (str[i] == ' ') {
+            lastSpace = i;
+        }
+        if (i - lineStart > width) {
+            str[lastSpace] = '\n';
+            lineStart = lastSpace + 1;
+        }
+        i++;
+    }
+
+    return str;
 }

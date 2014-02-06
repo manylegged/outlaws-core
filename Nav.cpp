@@ -26,9 +26,10 @@
 #include "StdAfx.h"
 #include "Nav.h"
 
-static const float kLinearPosThreshold = 0.6; // how closely should we thrust to the direction we are trying to thrust?
+static const float kLinearPosThreshold  = 0.6; // how closely should we thrust to the direction we are trying to thrust?
 static const float kLinearPosAccelScale = 0.1; // below what percentage of acceleration should we start turning down engines?
 static const float kLinearVelThreshhold = 0.3; // when adjusting velocity only, accuracy of thrust direction
+static const float kMaxLinearAngAccel   = 0.1;
 
 void sNav::moversDisable()
 {
@@ -42,14 +43,14 @@ void sNav::moversDisable()
 // enable movers to move us vaguely in the right direction...
 // FIXME make sure the returned acceleration matches the input direction as closely as possible
 // FIXME this means that some thrusters may not be fully enabled
-float2 sNav::moversForLinearAccel(float2 dir, float threshold, bool enable)
+float2 sNav::moversForLinearAccel(float2 dir, float threshold, float angAccel, bool enable)
 {
-    ASSERT(!fpu_error(dir.x) && !fpu_error(dir.y));
-    float amount = length(dir);
-    ASSERT(amount <= 1.01f);
-    ASSERT(amount > 0.f);
-    ASSERT(0 <= threshold && threshold <= 1.001);
-    float2 accel = float2(0);
+    const float amount = length(dir);
+    
+    float2 accel         = float2(0);
+    float  totalAngAccel = 0.f;
+    int    enabled       = 0;
+    int    disabled      = 0;
 
     // enable thrusters that move us in the right direction
     foreach (snMover *mv, movers)
@@ -58,9 +59,50 @@ float2 sNav::moversForLinearAccel(float2 dir, float threshold, bool enable)
         {
             if (enable)
                 mv->accelEnabled = amount;
-            accel += amount * mv->accel;
+            
+            accel         += amount * mv->accel;
+            totalAngAccel += amount * mv->accelAngAccel;
+            enabled++;
         }
     }
+
+    if (!enable || movers.size() == 1 || enabled == 1)
+        return accel;
+    
+    float angAccelError = totalAngAccel;
+
+#if 1
+    // turn off thruster one by one until we stop adding rotation
+    while (fabsf(angAccelError) > kMaxLinearAngAccel)
+    {
+        float    mxaa = 0.f;
+        snMover *mxmv = NULL;
+        
+        foreach (snMover *mv, movers) {
+            if (mv->useForTranslation && mv->useForRotation) {
+                const float aa = fabsf(mv->accelAngAccel * mv->accelEnabled);
+                if (sign(mv->accelAngAccel) == sign(angAccelError) && aa > mxaa) {
+                    mxaa = aa;
+                    mxmv = mv;
+                }
+            }
+        }
+
+        if (!mxmv)
+            break;
+        
+        const float aa = mxmv->accelEnabled * mxmv->accelAngAccel;
+        const float v  = min(mxmv->accelEnabled, angAccelError / aa);
+
+        //ASSERT(enabled > disabled);
+        accel         -= v * mxmv->accel;
+        angAccelError -= v * mxmv->accelAngAccel;
+        
+        mxmv->accelEnabled -= v;
+        disabled++;
+    }
+#endif
+
     return accel;
 }
 
@@ -82,6 +124,12 @@ float sNav::moversForAngAccel(float angAccel, bool enable)
                 m->accelEnabled = fabsf(angAccel);
             totalAngAccel += fabsf(angAccel) * m->accelAngAccel;
         }
+#if 0
+        else if (enable) {
+            // turn off thrusters in the wrong direction
+            m->accelEnabled = 0.f;
+        }
+#endif
 
         if (m->angAccel > 0)
         {
@@ -97,7 +145,7 @@ float sNav::moversForAngAccel(float angAccel, bool enable)
 void sNav::onMoversChanged()
 {
     // FIXME we are assuming forwards...
-    maxAccel    = moversForLinearAccel(float2(1, 0), kLinearPosThreshold, false);
+    maxAccel    = moversForLinearAccel(float2(1, 0), kLinearPosThreshold, 0.f, false);
     maxAngAccel = moversForAngAccel(+1, false);
 }
 
@@ -170,9 +218,8 @@ bool sNav::update()
             const float2 uBody          = rotate(u, -state.angle);
             const float2 uBodyDir       = normalize(uBody);
        
-            this->action.accel = moversForLinearAccel(uBodyDir, kLinearPosThreshold, true);
-            const bool canAccel = (this->action.accel != float2(0));
-            needsRotation = !canAccel || (dot(normalize(this->action.accel), uBodyDir) < 0.99);
+            this->action.accel = moversForLinearAccel(uBodyDir, kLinearPosThreshold, 0.f, true);
+            needsRotation = isZero(this->action.accel) || (dot(normalize(this->action.accel), uBodyDir) < 0.99);
 
             // FIXME this assumes we can accelerate straight forwards - this is often not the case!
             //(length(this->action.accel) < 0.75 * scaledMaxAccel)*/)   // OR acceleration is not as high as it could be
@@ -200,19 +247,21 @@ bool sNav::update()
             float angAccel = angAccelForTarget(this->dest.cfg.angle, this->dest.dims&SN_ANGVEL ? this->dest.cfg.angVel : 0);
             this->action.angAccel = moversForAngAccel(angAccel, true);
         }
+
         if ((dest.dims&SN_VELOCITY) && !precision.velEqual(dest.cfg.velocity, state.velocity))
         {
             // action outputs are in the ship reference frame
             float2 ve = dest.cfg.velocity - state.velocity;
             ve /= max(length(ve), 0.05f * length(this->maxAccel));
             float2 accel = rotate(float2(clamp(ve.x, -1.f, 1.f), clamp(ve.y, -1.f, 1.f)), -state.angle);
-            action.accel = moversForLinearAccel(accel, kLinearVelThreshhold, true);
-            if (action.accel == float2(0.f)) {
+            action.accel = moversForLinearAccel(accel, kLinearVelThreshhold, 0.f, true);
+            if (isZero(action.accel) && (dest.dims&SN_VEL_ALLOW_ROTATION)) {
                 moversDisable();
-                float angAccel = angAccelForTarget(vectorToAngle(accel), 0);
-                action.angAccel = moversForAngAccel(angAccel, true);
+                float angAccel = angAccelForTarget(vectorToAngle(accel), 0.f);
+                this->action.angAccel = moversForAngAccel(angAccel, true);
             }
         }
+
     }
 
     return isAtDest();

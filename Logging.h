@@ -94,7 +94,7 @@ struct FrameLogger {
     {
         if (m_paused)
             return;
-        m_frameStartTime = GetCurrentTime();
+        m_frameStartTime = OL_GetCurrentTime();
         m_current.clear();
     }
 
@@ -103,7 +103,7 @@ struct FrameLogger {
         if (m_paused)
             return;
         ASSERT(m_currentPhases.empty());
-        m_currentPhases.push_back(std::make_pair(phase.str(), GetCurrentTime()));
+        m_currentPhases.push_back(std::make_pair(phase.str(), OL_GetCurrentTime()));
     }
 
     void endPhase(lstring phase)
@@ -111,7 +111,7 @@ struct FrameLogger {
         if (m_paused)
             return;
         ASSERT(m_currentPhases.size() && m_currentPhases.back().first == phase);
-        map_setdefault(m_current, m_currentPhases.back().first, 0.0) += GetCurrentTime() - m_currentPhases.back().second;
+        map_setdefault(m_current, m_currentPhases.back().first, 0.0) += OL_GetCurrentTime() - m_currentPhases.back().second;
         m_currentPhases.pop_back();
     }
 
@@ -131,7 +131,7 @@ struct FrameLogger {
             return;
         ASSERT(m_currentPhases.empty());
         ASSERT(m_frameStartTime > 0.0);
-        addPhase("Frame", GetCurrentTime() - m_frameStartTime);
+        addPhase("Frame", OL_GetCurrentTime() - m_frameStartTime);
         m_frameStartTime = 0.0;
 
         std::lock_guard<std::mutex> l(m_mutex);
@@ -253,7 +253,7 @@ struct FrameLogger {
 
     void render(const View& view)
     {
-        ShaderState screenSS = view.getScreenShaderState(float3(0));
+        ShaderState screenSS = view.getScreenShaderState();
 
         static const float2 kGraphStart(500, 40);
         static const float2 kGraphSize = toGoldenRatioX(view.sizePoints.x - kGraphStart.x - kGraphStart.y);

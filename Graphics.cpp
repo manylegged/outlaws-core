@@ -30,11 +30,6 @@
 #include "Graphics.h"
 #include "Shaders.h"
 
-void SetOpenGLVersion(int major, int minor)
-{
-}
-
-
 vector<GLRenderTexture*> GLRenderTexture::s_bound;
 
 void GLRenderTexture::Generate()
@@ -48,7 +43,7 @@ void GLRenderTexture::Generate()
     glBindTexture(GL_TEXTURE_2D, m_texname);
     glReportError();
  
-    glTexImage2D(GL_TEXTURE_2D, 0, m_format, m_size.x, m_size.y, 0, m_format, GL_UNSIGNED_BYTE, 0);
+    glTexImage2D(GL_TEXTURE_2D, 0, m_format, m_size.x, m_size.y, 0, GL_RGB, GL_UNSIGNED_BYTE, 0);
     glReportError();
 
     // The depth buffer
@@ -56,7 +51,7 @@ void GLRenderTexture::Generate()
     glBindRenderbuffer(GL_RENDERBUFFER, m_zrbname);
     glReportError();
         
-    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT, m_size.x, m_size.y);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, m_size.x, m_size.y);
     glReportError();
     glBindFramebuffer(GL_FRAMEBUFFER, m_fbname);
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, m_zrbname);
@@ -82,23 +77,24 @@ void GLRenderTexture::Generate()
     glReportFramebufferError();
 }
 
-
 void GLRenderTexture::clear()
 {
-    m_size = int2(0);
     if (m_fbname)
         glDeleteFramebuffers(1, &m_fbname);
-    m_fbname = 0;
     if (m_texname)
         glDeleteTextures(1, &m_texname);
-    m_texname = 0;
     if (m_zrbname)
         glDeleteRenderbuffers(1, &m_zrbname);
+    if (m_fbname || m_texname || m_zrbname) {
+        glReportError();
+    }
+    m_size = int2(0);
+    m_texname = 0;
+    m_fbname = 0;
     m_zrbname = 0;
-    glReportError();
 }
 
-void GLRenderTexture::BindFramebuffer(float2 size)
+void GLRenderTexture::BindFramebuffer(float2 size, bool keepz)
 {
     ASSERT(!isZero(size));
     if (size != m_size)
@@ -107,7 +103,18 @@ void GLRenderTexture::BindFramebuffer(float2 size)
     if (!m_fbname)
         Generate();
     RebindFramebuffer();
-    glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+
+    if (keepz)
+    {
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, s_bound.size() ? s_bound.back()->m_fbname : 0);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_fbname);
+        glBlitFramebuffer(0, 0, m_size.x, m_size.y, 0, 0, m_size.x, m_size.y,
+                          GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+    }
+    else
+    {
+        glClear(GL_DEPTH_BUFFER_BIT);
+    }
     
     glReportError();
     ASSERT(s_bound.empty() || s_bound.back() != this);
@@ -141,6 +148,25 @@ void GLRenderTexture::UnbindFramebuffer(float2 vpsize) const
         glViewport(0, 0, vpsize.x, vpsize.y);
         glReportError();
     }
+}
+
+ShaderState GLRenderTexture::DrawFSBegin() const
+{
+    glDepthMask(GL_FALSE);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_ALPHA_TEST);
+
+    ShaderState ss;
+    ss.uTransform = glm::ortho(0.f, 1.f, 0.f, 1.f, -1.f, 1.f);
+    return ss;
+}
+
+void GLRenderTexture::DrawFSEnd() const
+{
+    glDepthMask(GL_TRUE);
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_ALPHA_TEST);
+    glReportError();
 }
 
 void GLTexture::TexImage2D(int2 size, GLenum format, const uint *data)
@@ -182,7 +208,7 @@ void GLTexture::loadFile(const char* fname)
 {
     clear();
 
-    OutlawTexture tex = LoadTexture(fname);
+    OutlawTexture tex = OL_LoadTexture(fname);
     ASSERT(tex.texnum);
     
     m_texname = tex.texnum;
@@ -199,6 +225,7 @@ GLTexture PixImage::uploadTexture() const
     return tex;
 }
 
+static string kNoErrors("No errors.\n");
 
 static void printShaderInfoLog(const char* txt, GLuint id)
 {
@@ -206,7 +233,7 @@ static void printShaderInfoLog(const char* txt, GLuint id)
     char buf[bufsize];
     GLsizei length;
     glGetShaderInfoLog(id, bufsize, &length, buf);
-    if (length) {
+    if (length && buf != kNoErrors) {
         string st = str_addLineNumbers(txt);
         ReportMessagef("For Shader:\n%s\n%s", st.c_str(), buf);
         ASSERT(length < bufsize);
@@ -220,8 +247,8 @@ static void printProgramInfoLog(GLuint id)
     char buf[bufsize];
     GLsizei length;
     glGetProgramInfoLog(id, bufsize, &length, buf);
-    if (length) {
-        ReportMessage(buf);
+    if (length && buf != kNoErrors) {
+        OL_ReportMessage(buf);
         ASSERT(length < bufsize);
         ASSERT(0);
     }
@@ -391,7 +418,7 @@ void ShaderState::DrawArrays(uint dt, size_t count) const
 void DrawAlignedGrid(ShaderState &wss, const View& view, float size, float z)
 {
     const double2 roundedCam  = double2(round(view.position, size));
-    const double2 roundedSize = double2(round(0.5f * view.getWorldSize(-z), size) + float2(size));
+    const double2 roundedSize = double2(round(0.5f * view.getWorldSize(z), size) + float2(size));
     ShaderUColor::instance().DrawGrid(wss, size, 
                                       double3(roundedCam - roundedSize, z), 
                                       double3(roundedCam + roundedSize, z));
@@ -455,7 +482,7 @@ void PushButton(TriMesh<VertexPosColor>* triP, LineMesh<VertexPosColor>* lineP, 
     }
 }
 
-void DrawButton(ShaderState *data, float2 pos, float2 r, uint bgColor, uint fgColor, float alpha)
+void DrawButton(const ShaderState *data, float2 pos, float2 r, uint bgColor, uint fgColor, float alpha)
 {
     if (alpha < epsilon)
         return;
@@ -474,6 +501,19 @@ void DrawBox(ShaderState *ss, float2 pos, float2 size, uint bgColor, uint fgColo
     ShaderUColor::instance().DrawLineRect(*ss, pos, size);
 }
 
+void PushBox(TriMesh<VertexPosColor>* triP, LineMesh<VertexPosColor>* lineP, float2 pos, float2 r, 
+             uint bgColor, uint fgColor, float alpha)
+{
+    if (lineP) {
+        lineP->color32(fgColor, alpha);
+        lineP->PushRect(pos, r);
+    }
+    if (triP) {
+        triP->color32(fgColor, alpha);
+        triP->PushRect(pos, r);
+    }
+}
+
 void fadeFullScreen(ShaderState &ss, const View& view, uint color, float alpha)
 {
     glDepthMask(GL_FALSE);
@@ -482,5 +522,48 @@ void fadeFullScreen(ShaderState &ss, const View& view, uint color, float alpha)
     ShaderUColor::instance().DrawRectCorners(ss, float2(0), view.sizePoints);
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_TRUE);
+}
+
+
+void PostProc::BindWriteFramebuffer()
+{
+    getWrite().BindFramebuffer(m_res);
+}
+
+void PostProc::UnbindWriteFramebuffer()
+{
+    getWrite().UnbindFramebuffer(m_res);
+}
+
+void PostProc::Draw(bool bindFB)
+{
+    // assume write was just written
+
+    if (m_blurLevel > 1)
+    {
+        swapRW(); 
+        BindWriteFramebuffer();
+        ShaderBlur::instance().setDimension(1);
+        getRead().DrawFullscreen<ShaderBlur>();
+        ShaderBlur::instance().setDimension(0);
+        UnbindWriteFramebuffer();
+    }
+
+    if (bindFB && m_blurLevel > 1)
+    {
+        swapRW();
+        BindWriteFramebuffer();
+        getRead().DrawFullscreen<ShaderBlur>();
+        UnbindWriteFramebuffer();
+    }
+    else if (!bindFB)
+    {
+        if (m_blurLevel > 1) {
+            getWrite().DrawFullscreen<ShaderBlur>();
+        } else {
+            getWrite().DrawFullscreen<ShaderTexture>();
+        }
+    }
+    // nothing to do if bindFB and no blur
 }
 

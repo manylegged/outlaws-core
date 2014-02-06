@@ -40,7 +40,7 @@ GLText::~GLText()
 void GLText::load()
 {
     ASSERT_MAIN_THREAD();
-    float pointSize = GetCurrentBackingScaleFactor();
+    float pointSize = OL_GetCurrentBackingScaleFactor();
     if (chars != texChars || fontSize != texFontSize || pointSize != texPointSize)
     {
         if (texture.width > 0)
@@ -49,7 +49,7 @@ void GLText::load()
 
         if (chars.size())
         {
-            int status = StringTexture(&texture, chars.c_str(), fontSize, font, -1.f, -1.f);
+            int status = OL_StringTexture(&texture, chars.c_str(), fontSize, font, -1.f, -1.f);
             if (status && texture.width > 0 && texture.height > 0)
             {
                 texChars     = chars;
@@ -61,7 +61,7 @@ void GLText::load()
     }
 }
 
-void GLText::render(ShaderState* s, float2 pos) const
+void GLText::render(const ShaderState* s, float2 pos) const
 {
     ASSERT_MAIN_THREAD();
     if (texture.width > 0 && texture.height > 0)
@@ -74,16 +74,16 @@ void GLText::render(ShaderState* s, float2 pos) const
 }
 
 
-const GLText* GLText::vget(float size, const char *format, va_list vl)
+const GLText* GLText::vget(int font, float size, const char *format, va_list vl)
 {
     string s = str_vformat(format, vl);
-    return get(size, s);
+    return get(font, size, s);
 }
 
-float2 GLText::Draw(const ShaderState &s_, float2 p, Align align, uint color, 
+float2 GLText::Draw(const ShaderState &s_, float2 p, Align align, int font, uint color,
                     float sizeUnscaled, const std::string &str)
 {
-    const GLText* st = get(sizeUnscaled, str);
+    const GLText* st = get(font, sizeUnscaled, str);
 
     float2 scale;
     switch (align) {
@@ -113,10 +113,10 @@ float2 GLText::getAdvancement(char c) const
     int isize = round(fontSize);
     if (!advancements[isize]) {
         advancements[isize] = new float2[128];
-        FontAdvancements(font, fontSize, (OSize*) advancements[isize]);
+        OL_FontAdvancements(font, fontSize, (OLSize*) advancements[isize]);
     }
     ASSERT(c >= 0);
-    return advancements[isize][c];
+    return advancements[isize][(int)c];
 }
 
 float GLText::getCharStart(uint chr) const
@@ -136,15 +136,15 @@ float2 GLText::getCharSize(uint chr) const
 float GLText::getScaledSize(float sizeUnscaled)
 {
     View view;
-    GetWindowSize(&view.sizePixels.x, &view.sizePixels.y,
+    OL_GetWindowSize(&view.sizePixels.x, &view.sizePixels.y,
                   &view.sizePoints.x, &view.sizePoints.y);
     return sizeUnscaled * view.sizePoints.y / 720.f;
 }
 
-const GLText* GLText::get(float size, const string& s)
+const GLText* GLText::get(int font, float size, const string& s)
 {
     ASSERT_MAIN_THREAD();
-    float pointSize = GetCurrentBackingScaleFactor();
+    float pointSize = OL_GetCurrentBackingScaleFactor();
     //ReportMessagef("scale: %g", pointSize);
     
     static const int cacheSize = 64;
@@ -153,7 +153,8 @@ const GLText* GLText::get(float size, const string& s)
     {
         if (cache[i].chars == s && 
             isZero(cache[i].fontSize - size) && 
-            cache[i].texPointSize == pointSize)
+            cache[i].texPointSize == pointSize &&
+            cache[i].font == font)
         {
             return &cache[i];
         }
@@ -162,6 +163,7 @@ const GLText* GLText::get(float size, const string& s)
     int i = randrange(0, cacheSize);
     cache[i].chars    = s;
     cache[i].fontSize = size;
+    cache[i].font     = font;
     cache[i].load();
     return &cache[i];
 
@@ -172,19 +174,22 @@ float2 GLText::DrawScreen(const ShaderState &s_, float2 p, Align align, uint col
 {
     va_list vl;
     va_start(vl, format);
-    float2 size = Draw(s_, p, align, color, sizeUnscaled, str_vformat(format, vl));
+    float2 size = Draw(s_, p, align, kDefaultFont, color, sizeUnscaled, str_vformat(format, vl));
     va_end(vl);
     return size;
 }
 
-void DrawTextBox(const ShaderState& ss1, const View& view, float2 point, float2 rad, const string& text,
-                 uint tSize, uint fgColor, uint bgColor)
+void DrawTextBox(const ShaderState& ss1, const View& view, float2 point, float2 rad, 
+                 const string& text, uint tSize, uint fgColor, uint bgColor, int font)
 {
+    if ((fgColor&ALPHA_OPAQUE) == 0)
+        return;
+
     if (bgColor == 0)
         bgColor = COLOR_TEXT_BG|ALPHAF(0.6);
 
     ShaderState ss = ss1;    
-    const GLText* st = GLText::get(tSize, text);
+    const GLText* st = GLText::get(font, tSize, text);
     float2 boxSz = 5.f + 0.5f * st->getSize();
 
     float2 corneroffset = rad + st->getSize();
@@ -210,11 +215,11 @@ float2 DrawOutlinedText(const ShaderState &s_, float2 pos, float2 relnorm, uint 
                         float alpha, float tsize, const string& str)
 {
     ShaderState ss = s_;
-    const GLText* txt = GLText::get(GLText::getScaledSize(tsize), str);
+    const GLText* txt = GLText::get(kDefaultFont, GLText::getScaledSize(tsize), str);
     ss.translate(pos - relnorm * txt->getSize());
     // DrawButton(&ss, 0.5f * txt->getSize(), 0.5f * txt->getSize() + float2(2.f), kOverlayBG, ALPHAF(0.5)|color, 0.5f * alpha);
-    DrawBox(&ss, pos, txt->getSize() + kOutlinePad, kOverlayBG,
-            MultAlphaARGB(color, 0.5f), alpha);
+    // DrawBox(&ss, 0.5f * txt->getSize(), 0.5f * txt->getSize() + kOutlinePad, kOverlayBG,
+    //         SetAlphaAXXX(color, 0.5f), alpha);
     ss.color(color, alpha);
     txt->render(&ss);
     return txt->getSize() + 2.f * kOutlinePad;

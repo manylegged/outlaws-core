@@ -42,15 +42,20 @@
 #define foreach(A, B) for (A : (B))
 #endif
 
+#if _MSC_VER
+#define NOEXCEPT
+#else
+#define NOEXCEPT noexcept
+#endif
+
 #define unless(X) if (!(X))
 
 // lambda((int* a), return *a + 3)
 #define lambda(X, Y) [&] X { return (Y); }
 
 // return bit index of leading 1 (0x80000000 == 0x80030100 == 31, 0x1 == 0, 0x0 == -1)
-inline int findLeadingOne(uint v)
+inline int findLeadingOne(uint v, int i=0)
 {
-    int i=0;
     if (v&0xffff0000) { i += 16; v >>= 16; }
     if (v&0xff00)     { i +=  8; v >>=  8; }
     if (v&0xf0)       { i +=  4; v >>=  4; }
@@ -59,6 +64,12 @@ inline int findLeadingOne(uint v)
     if (v&0x1)        { return i;          }
     return -1;
 }
+
+inline int findLeadingOne(uint64 v)
+{
+    return (v&0xffffffff00000000L) ? findLeadingOne((uint) (v>>32), 32) : findLeadingOne((uint)v, 0);
+}
+
 
 inline bool isPow2(int x)
 { 
@@ -151,8 +162,8 @@ public:
     //copy_ptr(int) { }
 
     // take ownership
-    explicit copy_ptr(T* &&t) noexcept : m_ptr(t) { t = NULL; }
-    copy_ptr& operator=(T* &&t) noexcept { reset(t); t = NULL; return *this; }
+    explicit copy_ptr(T* &&t) NOEXCEPT : m_ptr(t) { t = NULL; }
+    copy_ptr& operator=(T* &&t) NOEXCEPT { reset(t); t = NULL; return *this; }
     copy_ptr& reset(T* v=NULL)
     {
         if (m_ptr == v)
@@ -166,8 +177,8 @@ public:
 
     // copy data when assigning unless data has explicit owner
     copy_ptr(const copy_ptr& other) { assign(other.m_ptr); }
-    copy_ptr(copy_ptr&& other) noexcept : m_ptr(other.m_ptr) { other.m_ptr = NULL; }
-    copy_ptr& operator=(copy_ptr&& other) noexcept { std::swap(m_ptr, other.m_ptr); return *this; }
+    copy_ptr(copy_ptr&& other) NOEXCEPT : m_ptr(other.m_ptr) { other.m_ptr = NULL; }
+    copy_ptr& operator=(copy_ptr&& other) NOEXCEPT { std::swap(m_ptr, other.m_ptr); return *this; }
     copy_ptr& operator=(const copy_ptr& other) { return assign(other.m_ptr); }
     copy_ptr& assign(T* v)
     {
@@ -190,7 +201,7 @@ public:
     }
 
     // forward assignment from pointee type - move
-    copy_ptr& operator=(T&& other) noexcept
+    copy_ptr& operator=(T&& other) NOEXCEPT
     {
         ASSERT(!copy_explicit_owner(&other)); // technically fine, but we should be setting by pointer
         if (m_ptr)
@@ -213,6 +224,13 @@ public:
 
     T*  get() const { return m_ptr; }
     T** getPtr()    { return &m_ptr; }
+
+    T* release()
+    {
+        T* ptr = m_ptr;
+        m_ptr = NULL;
+        return ptr;
+    }
 };
 
 template <typename T>
@@ -355,6 +373,14 @@ inline bool vector_contains(const V &v, const T& t)
     return std::find(std::begin(v), end, t) != end;
 }
 
+template <typename V, typename Fun>
+inline void vector_foreach(V& vec, Fun& fun)
+{
+    foreach (auto &v, vec) {
+        fun(v);
+    }
+}
+
 template <typename V, typename T>
 inline int vector_count(const V &v, const T& t)
 {
@@ -397,6 +423,15 @@ inline bool vector_add(V &v, const T& t)
     if (adding)
         v.push_back(t);
     return adding;
+}
+
+template <typename V, typename V1>
+inline bool vector_extend(V &v, const V1& t)
+{
+    foreach (auto &x, t) {
+        v.push_back(x);
+    }
+    return t.size();
 }
 
 template <typename Vec>
@@ -901,6 +936,16 @@ inline void map_keepcount(M& map, K ident, V change)
     }
 }
 
+// delete all values and clear v
+template <typename T>
+inline void map_clear_deep(T &v)
+{
+    foreach (auto &x, v) {
+        delete x.second;
+    }
+    v.clear();
+}
+
 template <typename K, typename V>
 inline bool multimap_contains(const std::multimap<K, V> &map, const typename std::multimap<K, V>::value_type &x)
 {
@@ -1010,9 +1055,44 @@ inline void slist_clear(T *node)
 
 ////////////////////////////////////////////////////////////////////////////////////
 
+#if _WIN32
+//
+// Usage: SetThreadName (-1, "MainThread");
+//
+const DWORD MS_VC_EXCEPTION = 0x406D1388;
+
+#pragma pack(push,8)
+typedef struct tagTHREADNAME_INFO
+{
+    DWORD dwType; // Must be 0x1000.
+    LPCSTR szName; // Pointer to name (in user addr space).
+    DWORD dwThreadID; // Thread ID (-1=caller thread).
+    DWORD dwFlags; // Reserved for future use, must be zero.
+} THREADNAME_INFO;
+#pragma pack(pop)
+
+inline void SetThreadName(DWORD dwThreadID, const char* threadName)
+{
+    THREADNAME_INFO info;
+    info.dwType = 0x1000;
+    info.szName = threadName;
+    info.dwThreadID = dwThreadID;
+    info.dwFlags = 0;
+
+    __try
+    {
+        RaiseException(MS_VC_EXCEPTION, 0, sizeof(info) / sizeof(ULONG_PTR), (ULONG_PTR*)&info);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+    }
+}
+#endif
+
 inline void set_current_thread_name(const char* name)
 {
 #if _WIN32
+    SetThreadName(GetCurrentThreadId(), name);
 #elif __APPLE__
     pthread_setname_np(name);
 #else

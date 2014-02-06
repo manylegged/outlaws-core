@@ -262,7 +262,7 @@ public:
         vertexAttribPointer(SourceColor0, &ptr->color, base);
         vertexAttribPointer(SourceColor1, &ptr->color1, base);
         vertexAttribPointer(TimeA, &ptr->time, base);
-        glUniform1f(TimeU, globals.renderTime);
+        glUniform1f(TimeU, globals.renderSimTime);
     }
 
     static const ShaderIridescent& instance()   
@@ -453,6 +453,31 @@ public:
 
 };
 
+struct ShaderTonemap : public ShaderTextureBase {
+
+private:
+    uint texture1;
+    uint SourceTexCoord;
+
+public:
+    ShaderTonemap();
+
+    void UseProgram(const ShaderState &ss, VertexPosTex *ptr, const OutlawTexture &ot) const
+    {
+        UseProgramBase(ss, &ptr->pos, (VertexPosTex*) NULL);
+
+        vertexAttribPointer(SourceTexCoord, &ptr->texCoord, (VertexPosTex*) NULL);
+        glUniform1i(texture1, 0);
+    }
+
+    static const ShaderTonemap& instance()   
+    {
+        static ShaderTonemap* p = new ShaderTonemap();
+        return *p;
+    }
+
+};
+
 // seperable gaussian blur
 struct ShaderBlur : public ShaderTextureBase {
 
@@ -464,7 +489,7 @@ private:
     
     float  coefficients[5];
     mutable float2 offsets[5];
-    mutable uint dimension;
+    mutable uint dimension = 0;
 
     ShaderBlur()
     {
@@ -646,6 +671,31 @@ public:
     static const ShaderColor& instance()   
     {
         static ShaderColor* p = new ShaderColor();
+        return *p;
+    }
+
+};
+
+struct ShaderColorLuma : public ShaderProgramBase {
+
+private:
+    int SourceColor, Luma;
+
+    ShaderColorLuma();
+
+public:
+
+    template <typename Vtx>
+    void UseProgram(const ShaderState&ss, const Vtx* ptr, const Vtx* base) const
+    {
+        UseProgramBase(ss, &ptr->pos, base);
+        vertexAttribPointer(SourceColor, &ptr->color, base);
+        vertexAttribPointer(Luma, &ptr->luma, base);
+    }
+
+    static const ShaderColorLuma& instance()   
+    {
+        static ShaderColorLuma* p = new ShaderColorLuma();
         return *p;
     }
 

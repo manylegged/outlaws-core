@@ -116,10 +116,10 @@ using glm::mat2;
 #ifdef _MSC_VER
 #include <float.h>
 namespace std {
-    template <typename T>
-    inline int isnan(T v) { return _isnan(v); }
-    template <typename T>
-    inline int isinf(T v) { return !_finite(v); }
+    inline int isnan(float v) { return _isnan(v); }
+    inline int isinf(float v) { return !_finite(v); }
+	inline int isnan(double v) { return _isnan(v); }
+	inline int isinf(double v) { return !_finite(v); }
 }
 #endif
 template <typename T>
@@ -163,6 +163,12 @@ inline float2 clamp_length(float2 v, float mn, float mx)
     else
         return v;
 }
+
+// return vector V clamped to fit inside origin centered rectangle with radius RAD
+float2 clamp_rect(float2 v, float2 rad);
+
+// return center of circle as close to POS as possible and with radius RAD, that fits inside of AABBox defined by RCENTER and RRAD
+float2 circle_in_rect(float2 pos, float rad, float2 rcenter, float2 rrad);
 
 inline float max_dim(float2 v) { return max(v.x, v.y); }
 inline float min_dim(float2 v) { return min(v.x, v.y); }
@@ -245,6 +251,15 @@ inline float2 flipY(float2 v)     { return float2(v.x, -v.y); }
 inline float2 flipX(float2 v)     { return float2(-v.x, v.y); }
 inline float3 flipY(float3 v)     { return float3(v.x, -v.y, v.z); }
 inline float3 flipX(float3 v)     { return float3(-v.x, v.y, v.z); }
+inline float2 justY(float2 v)     { return float2(0.f, v.y); }
+inline float2 justX(float2 v)     { return float2(v.x, 0.f); }
+
+template <typename T>
+inline T multiplyComponent(T v, int i, float x)
+{
+    v[i] *= x;
+    return v;
+}
 
 inline float sign(float a) { return ((a < -epsilon) ? -1.f : 
                                      (a > epsilon)  ? 1.f : 0.f); }
@@ -272,7 +287,17 @@ inline float logerp1(float from, float to, float v) { return pow(from, 1-v) * po
 inline float2 logerp1(float2 from, float2 to, float v) { return float2(pow(from.x, 1-v) * pow(to.x, v), pow(from.y, 1-v) * pow(to.y, v)); }
 
 template <typename T>
-inline T lerp(const T &from, const T &to, float v) { return (1.f - v) * from + v * to; }
+inline T lerp(const T &from, const T &to, float v) 
+{
+    return (1.f - v) * from + v * to; 
+}
+
+template <typename T>
+inline T clamp_lerp(const T &from, const T &to, float v) 
+{
+    v = clamp(v, 0.f, 1.f);
+    return (1.f - v) * from + v * to; 
+}
 
 template <typename T>
 inline T lerp(T *array, float v) 
@@ -300,6 +325,24 @@ inline T lerp(const vector<T> &vec, float v)
 inline float lerpAngles(float a, float b, float v)
 {
     return vectorToAngle(lerp(angleToVector(a), angleToVector(b), v));
+}
+
+// return 0-1 depending how close value is to inputs zero and one
+inline float inv_lerp(float zero, float one, float val)
+{
+    bool inv = false;
+    if (zero > one) {
+        inv = true;
+        swap(zero, one);
+    }
+    float unorm;
+    if (val >= one)
+        unorm = 1.f;
+    else if (val <= zero)
+        unorm = 0.f;
+    else
+        unorm = (val - zero) / (one - zero);
+    return inv ? 1.f - unorm : unorm;
 }
 
 // cardinal spline, interpolating with 't' between y1 and y2 with control points y0 and y3 and tension 'c'
@@ -351,13 +394,25 @@ inline float signorm(float x, float k)
     return y + (2.f * x * k) / (2.f * (1 + k - 2.f * x) );
 }
 
+// http://en.wikipedia.org/wiki/Smoothstep
+inline float smootherstep(float edge0, float edge1, float x)
+{
+    // Scale, and clamp x to 0..1 range
+    x = clamp((x - edge0)/(edge1 - edge0), 0.0, 1.0);
+    // Evaluate polynomial
+    return x*x*x*(x*(x*6 - 15) + 10);
+}
+
 // map unorm to a smooth bell curve shape (0->0, 0.5->1, 1->0)
 inline float bellcurve(float x)
 {
     return 0.5f * (-cos(M_TAOf * x) + 1);
 }
 
-struct Circle { float2 pos; float radius; };
+struct BCircle { 
+    float2 pos; 
+    float radius;
+};
 
 inline float lnorm(float val, float low, float high)
 {
@@ -369,6 +424,11 @@ inline float lnorm(float val, float low, float high)
 
 inline float parabola(float x, float roota, float rootb) { return (x-roota) * (x-rootb); }
 
+// like sin, but 0 to 1 instead of -1 to 1
+inline float unorm_sin(float a)
+{
+    return 0.5f * (1.f + sin(a));
+}
 
 
 ///////////////////////////////////////////// intersection
@@ -415,6 +475,13 @@ struct AABBox {
         mn = min(mn, pt - rad);
     }
 
+    void insertRectCorners(float2 p0, float2 p1)
+    {
+        start(p0);
+        mx = max(mx, max(p0, p1));
+        mn = min(mn, min(p0, p1));
+    }
+
     void insertAABBox(const AABBox &bb)
     {
         start(bb.getCenter());
@@ -448,61 +515,10 @@ inline float distanceCircleCircleSqr(float2 ap, float ar, float2 bp, float br)
 }
 
 // intersect two circles, returning number of intersections with points in RA and RB
-inline int intersectCircleCircle(float2 *ra, float2 *rb, const float2 &p, float pr, const float2 &c, float cr)
-{
-    if (!intersectCircleCircle(p, pr, c, cr))
-        return 0;
-    float2 c2  = c - p;         // position of c relative to p
-    float dist = length(c2);
-    if (dist < epsilon && fabsf(pr - cr) < epsilon) {
-        // coincident
-        return 3;
-    } else if (dist < max(pr, cr) - min(pr, cr)) {
-        // fully contained
-        return 0;
-    } else if (fabsf(dist - (pr + cr)) < epsilon) {
-        // just touching
-        *ra = p + (pr/dist) * c2;
-        return 1;
-    }
+int intersectCircleCircle(float2 *ra, float2 *rb, const float2 &p, float pr, const float2 &c, float cr);
 
-    // with p at origin and c at (dist, 0)
-    float x = (dist*dist - cr*cr + pr*pr) / (2.f * dist);
-    float y = sqrt(pr*pr - x*x); // plus and minus
-    
-    float2 ydir   = rotate90(c2 / dist);
-    float2 center = p + (x / dist) * c2;
-
-    *ra = center + ydir * y;
-    *rb = center - ydir * y;
-    return 2;
-}
-
-inline bool intersectSegmentSegment(float2 a1, float2 a2, float2 b1, float2 b2)
-{
-	const float div = (b2.y - b1.y) * (a2.x - a1.x) - (b2.x - b1.x) * (a2.y - a1.y);
-	if (fabsf(div) < 0.00001)
-		return false; // parallel
-    
-	const float ua = ((b2.x - b1.x) * (a1.y - b1.y) - (b2.y - b1.y) * (a1.x - b1.x)) / div;
-	const float ub = ((a2.x - a1.x) * (a1.y - b1.y) - (a2.y - a1.y) * (a1.x - b1.x)) / div;
-    
-	return (0 <= ua && ua <= 1) && (0 <= ub && ub <= 1);
-}
-inline bool intersectSegmentSegment(float2 *o, float2 a1, float2 a2, float2 b1, float2 b2)
-{
-	const float div = (b2.y - b1.y) * (a2.x - a1.x) - (b2.x - b1.x) * (a2.y - a1.y);
-	if (std::fabs(div) < 0.00001)
-		return false; // parallel
-    
-	const float ua = ((b2.x - b1.x) * (a1.y - b1.y) - (b2.y - b1.y) * (a1.x - b1.x)) / div;
-	const float ub = ((a2.x - a1.x) * (a1.y - b1.y) - (a2.y - a1.y) * (a1.x - b1.x)) / div;
-    
-	bool intersecting = (0 <= ua && ua <= 1) && (0 <= ub && ub <= 1);
-    if (intersecting && o)
-        *o = lerp(a1, a2, ua);
-    return intersecting;
-}
+bool intersectSegmentSegment(float2 a1, float2 a2, float2 b1, float2 b2);
+bool intersectSegmentSegment(float2 *o, float2 a1, float2 a2, float2 b1, float2 b2);
 
 // distance from point P to closest point on line A B
 // FIXME could probably do this with only one sqrt...
@@ -529,83 +545,21 @@ inline float orient(float2 p1, float2 p2, float2 p3)
     return (p2.x - p1.x)*(p3.y - p1.y) - (p2.y - p1.y)*(p3.x - p1.x);
 }
 
+// p1 is implicitly 0, 0
+inline float orient2(float2 p2, float2 p3)
+{
+    return p2.x * p3.y - p2.y * p3.x;
+}
+
 /*               Return a positive value if the point pd lies inside the     */
 /*               circle passing through pa, pb, and pc; a negative value if  */
 /*               it lies outside; and zero if the four points are cocircular.*/
 /*               The points pa, pb, and pc must be in counterclockwise       */
 /*               order, or the sign of the result will be reversed.          */
-inline float incircle(float2 pa, float2 pb, float2 pc, float2 pd)
-{
-    double adx, ady, bdx, bdy, cdx, cdy;
-    double abdet, bcdet, cadet;
-    double alift, blift, clift;
-    
-    adx = pa.x - pd.x;
-    ady = pa.y - pd.y;
-    bdx = pb.x - pd.x;
-    bdy = pb.y - pd.y;
-    cdx = pc.x - pd.x;
-    cdy = pc.y - pd.y;
-    
-    abdet = adx * bdy - bdx * ady;
-    bcdet = bdx * cdy - cdx * bdy;
-    cadet = cdx * ady - adx * cdy;
-    alift = adx * adx + ady * ady;
-    blift = bdx * bdx + bdy * bdy;
-    clift = cdx * cdx + cdy * cdy;
-    
-    return alift * bcdet + blift * cadet + clift * abdet;
-}
-
+float incircle(float2 pa, float2 pb, float2 pc, float2 pd);
 
 // Graham's scan
-inline int convexHull(vector<float2> &points)
-{
-    if (points.size() < 3)
-        return 0;
-    if (points.size() == 3)
-        return 3;
-        
-    float minY  = std::numeric_limits<float>::max();
-    int   minYI = -1;
-    
-    for (int i=0; i<points.size(); i++)
-    {
-        if (points[i].y < minY) {
-            minY = points[i].y;
-            minYI = i;
-        }
-    }
-    swap(points[0], points[minYI]);
-    const float2 points0 = points[0];
-    std::sort(points.begin() + 1, points.end(),
-              [points0](float2 a, float2 b)
-              {
-                  return vectorToAngle(a - points0) < vectorToAngle(b - points0);
-              });
-    vector<float2>::iterator nend = std::unique(points.begin(), points.end(),
-                                                [](float2 a, float2 b) { return isZero(a - b); });
-    
-    const size_t N = std::distance(points.begin(), nend);
-    long M = 1;
-    for (int i=1; i<N; i++)
-    {
-        while (orient(points[M-1], points[M], points[i]) < 0)
-        {
-            if (M > 1)
-                M--;
-            else if (i == N-1)
-                return 0;
-            else
-                i++;
-        }
-        M++;
-        swap(points[M], points[i]);
-    }
-    if (M < 2)
-        return 0;
-    return M+1;
-}
+int convexHull(vector<float2> &points);
 
 inline float areaForPoly(const int numVerts, const float2 *verts)
 {
@@ -670,6 +624,7 @@ inline bool intersectStadiumCircle(float2 a, float2 b, float r, float2 c, float 
     return intersectCircleCircle(closest, r, c, cr);
 }
 
+
 inline bool intersectRayCircle(const float2 &a, float2 d, const float2 &c, float r)
 {
     float2 closest = closestPointOnRay(a, d, c);
@@ -679,46 +634,7 @@ inline bool intersectRayCircle(const float2 &a, float2 d, const float2 &c, float
 // modified from http://stackoverflow.com/questions/1073336/circle-line-collision-detection
 // ray is at point E in direction d
 // circle is at point C with radius r
-inline bool intersectRayCircle(float2 *o, float2 E, float2 d, float2 C, float r)
-{
-    float2 f = E - C;
-    d = normalize(d) * (r + length(f));
-
-    float a = dot(d, d);
-    float b = 2 * dot(f, d);
-    float c = dot(f, f) - r * r;
-
-    float discriminant = b*b-4*a*c;
-    if (discriminant < 0)
-        return false;
-
-    // ray didn't totally miss sphere, so there is a solution to the equation.
-
-    discriminant = sqrt( discriminant );
-
-    // either solution may be on or off the ray so need to test both t1 is always the smaller value,
-    // because BOTH discriminant and a are nonnegative.
-    float t1 = (-b - discriminant)/(2*a);
-    float t2 = (-b + discriminant)/(2*a);
-
-    if( t1 >= 0 && t1 <= 1 )
-    {
-        // t1 is an intersection, and if it hits, it's closer than t2 would be
-        if (o)
-            *o = E + t1 * d;
-        return true ;
-    }
-
-    // here t1 didn't intersect so we are either started inside the sphere or completely past it
-    if( t2 >= 0 && t2 <= 1 )
-    {
-        if (o)
-            *o = E + t2 * d;
-        return true ;
-    }
-
-    return false;
-}
+bool intersectRayCircle(float2 *o, float2 E, float2 d, float2 C, float r);
 
 inline bool intersectRaySegment(float2 rpt, float2 rdir, float2 sa, float2 sb)
 {
@@ -730,8 +646,8 @@ inline bool intersectRaySegment(float2 rpt, float2 rdir, float2 sa, float2 sb)
 // a and b are the center of each rectangle, and ar and br are the distance from the center to each edge
 inline bool intersectRectangleRectangle(const float2 &a, const float2 &ar, const float2 &b, const float2 &br)
 {
-    return (fabsf(a.x - b.x) < (ar.x + br.x) &&
-            fabsf(a.y - b.y) < (ar.y + br.y));
+    return (fabsf(a.x - b.x) <= (ar.x + br.x) &&
+            fabsf(a.y - b.y) <= (ar.y + br.y));
 }
 
 inline bool intersectCircleRectangle(const float2 &circle, float circleR, const float2 &rectP, const float2 &rectR)
@@ -750,7 +666,8 @@ inline bool intersectCircleRectangle(const float2 &circle, float circleR, const 
 
 inline bool intersectPointRectangle(float2 p, float2 b, float2 br)
 {
-    return fabsf(p.x - b.x) < br.x && fabsf(p.y - b.y) < br.y;
+    const float2 v = b - p;
+    return v.x > -br.x && v.y > -br.y && v.x <= br.x && v.y <= br.y;
 }
 
 inline bool containedCircleInRectangle(const float2 &circle, float circleR, const float2 &rectP, const float2 &rectR)
@@ -758,30 +675,7 @@ inline bool containedCircleInRectangle(const float2 &circle, float circleR, cons
     return intersectPointRectangle(circle, rectP, rectR - float2(circleR));
 }
 
-inline float intersectBBSegmentV(float bbl, float bbb, float bbr, float bbt, float2 a, float2 b)
-{
-	float idx = 1.0f/(b.x - a.x);
-	float tx1 = (bbl == a.x ? -INFINITY : (bbl - a.x)*idx);
-	float tx2 = (bbr == a.x ?  INFINITY : (bbr - a.x)*idx);
-	float txmin = min(tx1, tx2);
-	float txmax = max(tx1, tx2);
-	
-	float idy = 1.0f/(b.y - a.y);
-	float ty1 = (bbb == a.y ? -INFINITY : (bbb - a.y)*idy);
-	float ty2 = (bbt == a.y ?  INFINITY : (bbt - a.y)*idy);
-	float tymin = min(ty1, ty2);
-	float tymax = max(ty1, ty2);
-	
-	if(tymin <= txmax && txmin <= tymax){
-		float minv = max(txmin, tymin);
-		float maxv = min(txmax, tymax);
-		
-		if(0.0 <= maxv && minv <= 1.0) 
-            return (minv > 0.f) ? minv : min(maxv, 1.f);
-	}
-	
-	return INFINITY;
-}
+float intersectBBSegmentV(float bbl, float bbb, float bbr, float bbt, float2 a, float2 b);
 
 inline bool intersectBBSegment(float l, float b, float r, float t, float2 ss, float2 se)
 {
@@ -796,28 +690,7 @@ inline bool intersectRectangleSegment(float2 rc, float2 rr, float2 ss, float2 se
 }
 
 // from http://www.blackpawn.com/texts/pointinpoly/
-inline bool intersectPointTriangle(float2 P, float2 A, float2 B, float2 C)
-{
-    // Compute vectors        
-    float2 v0 = C - A;
-    float2 v1 = B - A;
-    float2 v2 = P - A;
-
-    // Compute dot products
-    float dot00 = dot(v0, v0);
-    float dot01 = dot(v0, v1);
-    float dot02 = dot(v0, v2);
-    float dot11 = dot(v1, v1);
-    float dot12 = dot(v1, v2);
-
-    // Compute barycentric coordinates
-    float invDenom = 1 / (dot00 * dot11 - dot01 * dot01);
-    float u = (dot11 * dot02 - dot01 * dot12) * invDenom;
-    float v = (dot00 * dot12 - dot01 * dot02) * invDenom;
-
-    // Check if point is in triangle
-    return (u >= 0) && (v >= 0) && (u + v < 1);
-}
+bool intersectPointTriangle(float2 P, float2 A, float2 B, float2 C);
 
 // quad points must have clockwise winding
 inline bool intersectPointQuad(float2 P, float2 A, float2 B, float2 C, float2 D)
@@ -832,7 +705,31 @@ inline bool intersectPointQuad(float2 P, float2 A, float2 B, float2 C, float2 D)
             orient(P, D, A) >= 0);
 }
 
+// angle must be acute
+inline bool intersectSectorPointAcute(float2 ap, float ad, float aa, float2 cp)
+{
+    return orient2(angleToVector(ad + aa), cp - ap) <= 0.f &&
+        orient2(angleToVector(ad - aa), cp - ap) >= 0.f;
+}
 
+// sector starting at AP, +- angle AA from angle AD (infinite radius)
+inline bool intersectSectorPoint1(float2 ap, float ad, float aa, float2 cp)
+{
+    if (aa > M_PIf/2.f) {
+        return !intersectSectorPointAcute(ap, ad + M_PIf, M_PIf - aa, cp);
+    } else {
+        return intersectSectorPointAcute(ap, ad, aa, cp);
+    }
+}
+
+// sector starting at AP, radius AR, +- angle AA from angle AD
+inline bool intersectSectorPoint(float2 ap, float ar, float ad, float aa, float2 cp)
+{
+    return intersectPointCircle(cp, ap, ar) && intersectSectorPoint1(ap, ad, aa, cp);
+}
+
+// sector position, radius, direction, angle
+bool intersectSectorCircle(float2 ap, float ar, float ad, float aa, float2 cp, float cr);
 
 ////////////////////////////////////////////////////////////////////////////
 
@@ -876,27 +773,7 @@ static double findRootRegulaFalsi(const Fun& fun, double lo, double hi, double e
 
 // return number of real solutions, with values in r0 (smaller) and r1 (larger)
 // x where a^2x + bx + c = 0
-inline int quadraticFormula(double* r0, double* r1, double a, double b, double c)
-{
-    if (isZero(a)) {
-        *r0 = isZero(b) ? (-c) : (-c / b);
-        return 1;
-    }
-    
-    const double discr = b*b - 4*a*c;
-    if (discr < 0) {
-        return 0;
-    } else if (discr == 0) {
-        *r0 = -b / (2*a);
-        return 1;
-    }
-    
-    const double sqrt_discr = sqrt(discr);
-    *r0 = (-b - sqrt_discr) / (2*a);
-    *r1 = (-b + sqrt_discr) / (2*a);
-    return 2;
-}
-
+int quadraticFormula(double* r0, double* r1, double a, double b, double c);
 
 
 #endif
