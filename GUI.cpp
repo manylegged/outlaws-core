@@ -29,7 +29,7 @@
 
 bool ButtonBase::HandleEvent(const Event* event, bool* isActivate, bool* isPress)
 {
-    float2 sz = 0.5f*size;
+    const float2 sz = 0.5f*size;
 
     bool handled = false;
     if (event->type == Event::KEY_DOWN || event->type == Event::KEY_UP)
@@ -53,56 +53,27 @@ bool ButtonBase::HandleEvent(const Event* event, bool* isActivate, bool* isPress
                    (event->type == Event::MOUSE_DRAGGED));
         // && (event->key == 0);
 
-        bool wasPressed = pressed;
-        if (active && isActivate && pressed && handled && (event->type == Event::MOUSE_UP)) {
-            *isActivate = true;
-            pressed = false;
-        } else if (active && visible && hovered) {
-            if (event->type == Event::MOUSE_DOWN)
+        const bool wasPressed = pressed;
+        if (active && handled)
+        {
+            if (wasPressed && (event->type == Event::MOUSE_UP)) {
+                if (isActivate)
+                    *isActivate = true;
+                pressed = false;
+            } else if (!wasPressed && event->type == Event::MOUSE_DOWN) {
+                if (isPress)
+                    *isPress = true;
                 pressed = true;
-        } else {
+            }
+        }
+        else 
+        {
             pressed = false;
         }
-        if (active && isPress)
-            *isPress = (pressed && !wasPressed);
     }
     return handled;
-    
 }
 
-bool ButtonHandleEvent(ButtonBase &button, const Event* event, const char* keys, bool* isActivate, bool* isPress)
-{
-    const bool wasHovered = button.hovered;
-
-    bool handled = false;
-    if (button.active &&
-        (event->type == Event::KEY_DOWN || event->type == Event::KEY_UP) && 
-        keys && isEventKey(event, keys) &&
-        !globals.keyState[OControlKey] && !globals.keyState[OShiftKey] &&
-        !globals.keyState[OAltKey])
-    {
-        handled = true;
-        bool activate =!button.pressed && (event->type == Event::KEY_DOWN);
-        button.pressed = activate;
-        if (isActivate)
-            *isActivate = activate;
-    }
-    else
-    {
-        handled = button.HandleEvent(event, isActivate, isPress);
-    }
-                         
-    if ((isActivate && *isActivate) || (isPress && *isPress))
-    {
-        globals.sound->OnButtonPress();
-    } 
-    else if (!wasHovered && button.hovered && button.active)
-    {
-        globals.sound->OnButtonHover();
-    }
-
-    return handled;
-}
 
 bool ButtonBase::renderTooltip(const ShaderState &ss, const View& view, uint color, bool force) const
 {
@@ -111,7 +82,7 @@ bool ButtonBase::renderTooltip(const ShaderState &ss, const View& view, uint col
 
     DrawTextBox(ss, view, position, size, tooltip, 13,
                 MultAlphaAXXX(color, alpha),
-                ALPHAF(0.5f * alpha)|COLOR_BLACK);
+                ALPHAF(0.5f * alpha)|COLOR_BLACK, kMonoFont);
     return true;
 }
 
@@ -131,9 +102,9 @@ void Button::render(const ShaderState *s_, bool selected)
     if (!visible)
         return;
     ShaderState s = *s_;
-    const GLText* t = GLText::get(kDefaultFont, GLText::getScaledSize(textSize), text);
+    const GLText* t = GLText::get(textFont, GLText::getScaledSize(textSize), text);
     size.x = max(size.x, t->getSize().x + 2.f * kPadDist);
-    size.y = t->getSize().y + 2.f * kPadDist;
+    size.y = t->getSize().y + 4.f * kPadDist;
     const float2 sz = 0.5f * size;
 
     DrawButton(&s, position, sz, getBGColor(), getFGColor(selected), alpha);
@@ -201,7 +172,7 @@ bool TextInputBase::HandleEvent(const Event* event, bool *textChanged)
         return false;
 
     active = forceActive || 
-             (!locked && intersectPointRectangle(globals.cursorPosScreen, 
+             (!locked && intersectPointRectangle(KeyState::instance().cursorPosScreen, 
                                                  position, 0.5f * sizePoints));
     hovered = active;
 
@@ -210,7 +181,7 @@ bool TextInputBase::HandleEvent(const Event* event, bool *textChanged)
 
     if (active && event->type == Event::KEY_DOWN)
     {            
-        if (globals.keyState[OControlKey]) {
+        if (KeyState::instance()[OControlKey]) {
             switch (event->key)
             {
             case 'a': cursor.x = 0; break;
@@ -224,7 +195,7 @@ bool TextInputBase::HandleEvent(const Event* event, bool *textChanged)
                 break;
             case 'd': lines[cursor.y].erase(cursor.x, 1); break;
             }
-        } else if (std::isprint(event->key)) {
+        } else if (event->key < 256 && std::isprint(event->key)) {
             lines[cursor.y].insert(cursor.x, 1, event->key);
             if (textChanged)
                 *textChanged = true;
@@ -360,7 +331,7 @@ void TextInputBase::render(const ShaderState *s_)
         const GLText* t = GLText::get(kMonoFont, GLText::getScaledSize(textSize), lines[i].c_str());
             
         // draw cursor
-        if (active && cursor.y == i && blinkOn()) {
+        if (active && cursor.y == i) {
             ShaderState  s1    = s;
             const float  start = t->getCharStart(cursor.x);
             const float2 size  = float2(t->getCharSize(cursor.x).x, charHeight);
@@ -394,6 +365,7 @@ void TextInputCommandLine::loadHistory(const char *fname)
     if (data) {
         str_split(data, '\n', commandHistory);
     }
+    historyIndex = commandHistory.size();
 }
 
 string TextInputCommandLine::helpCmd(void* data, const char* name, const char* args) 
@@ -586,7 +558,7 @@ void ContextMenuBase::render(ShaderState *s_)
         sizePoints.x = max(sizePoints.x, titleSizePoints.x);
         sizePoints.y += titleSizePoints.y;
     }
-    hovered = !active ? -1 : getHoverSelection(globals.cursorPosScreen);
+    hovered = !active ? -1 : getHoverSelection(KeyState::instance().cursorPosScreen);
 
     {
         const float2 sz = 0.5f * getMenuSizePoints();
@@ -625,7 +597,7 @@ void ContextMenuBase::render(ShaderState *s_)
 void LineSelectionBox::render(const ShaderState &ss)
 {
     ShaderState s = ss;
-    hoveredLine = !active ? -1 : getHoverSelection(globals.cursorPosScreen);
+    hoveredLine = !active ? -1 : getHoverSelection(KeyState::instance().cursorPosScreen);
     hovered = (hoveredLine != -1);
 
     // draw box
@@ -699,7 +671,7 @@ bool OptionButtons::HandleEvent(const Event* event, int* butActivate, int* butPr
     {
         bool isActivate = false;
         bool isPress    = false;
-        if (ButtonHandleEvent(buttons[i], &ev, "", &isActivate, &isPress))
+        if (buttons[i].HandleEvent(&ev, &isActivate, &isPress))
         {
             if (isActivate && butActivate)
                 *butActivate = isActivate;
@@ -759,9 +731,10 @@ bool OptionSlider::HandleEvent(const Event* event, bool *valueChanged)
                           (event->type == Event::MOUSE_DRAGGED));
 
     if (pressed) {
-        float v = ((event->pos.x - position.x) / size.x) + 0.5f;
+        const int lastv = value;
+        const float v = ((event->pos.x - position.x) / size.x) + 0.5f;
         setValueFloat(v);
-        *valueChanged = true;
+        *valueChanged = (value != lastv);
     }
 
     return handled;
@@ -775,7 +748,7 @@ void OptionSlider::render(const ShaderState &s_)
     ss.color(getFGColor(), alpha);
     ShaderUColor::instance().DrawLine(ss, position - float2(sz.x, 0.f), 
                                       position + float2(sz.x, 0.f));
-    const float w = sz.x / values;
+    const float w = max(sz.x / values, 5.f);
     DrawButton(&ss, position + float2((size.x - 2.f * w) * (getValueFloat() - 0.5f), 0.f),
                float2(w, sz.y), getBGColor(), getFGColor(), alpha);
 }

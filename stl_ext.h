@@ -108,16 +108,16 @@ namespace std {
     };
 
     template <typename T>
-    struct hash< glm::detail::tvec2<T> > {
-        std::size_t operator()(const glm::detail::tvec2<T>& pt) const
+    struct hash< glm::detail::tvec2<T, glm::defaultp> > {
+        std::size_t operator()(const glm::detail::tvec2<T, glm::defaultp>& pt) const
         {
             return hash_combine(std::hash<T>()(pt.x), std::hash<T>()(pt.y));
         }
     };
 
     template <typename T>
-    struct hash< glm::detail::tvec3<T> > {
-        std::size_t operator()(const glm::detail::tvec3<T>& pt) const
+    struct hash< glm::detail::tvec3<T, glm::defaultp> > {
+        std::size_t operator()(const glm::detail::tvec3<T, glm::defaultp>& pt) const
         {
             return hash_combine(std::hash<T>()(pt.x),
                                 hash_combine(std::hash<T>()(pt.y),
@@ -1099,6 +1099,36 @@ inline void set_current_thread_name(const char* name)
     pthread_setname_np(pthread_self(), name);
 #endif
 }
+
+
+// adapted from boost::reverse_lock
+template<typename Lock>
+class reverse_lock
+{
+public:
+    typedef typename Lock::mutex_type mutex_type;
+    reverse_lock& operator=(const reverse_lock &) = delete;
+	
+    explicit reverse_lock(Lock& m_) : m(m_), mtx(0)
+    {
+        if (m.owns_lock())
+        {
+            m.unlock();
+        }
+        mtx=m.release();
+    }
+    ~reverse_lock()
+    {
+        if (mtx) {
+            mtx->lock();
+            m = std::move(Lock(*mtx, std::adopt_lock));
+        }
+    }
+	
+private:
+    Lock& m;
+    mutex_type* mtx;
+};
 
 
 #endif

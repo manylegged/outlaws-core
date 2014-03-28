@@ -38,8 +38,21 @@
 #pragma GCC diagnostic ignored "-Wshadow"
 #endif
 
-#define GLM_FORCE_ONLY_XYZW 1
-#include "../glm/glm.hpp"
+#define GLM_FORCE_RADIANS 1
+#define GLM_FORCE_XYZW 1
+#include "../glm/vec2.hpp"
+#include "../glm/vec3.hpp"
+#include "../glm/vec4.hpp"
+#include "../glm/mat3x3.hpp"
+#include "../glm/mat4x4.hpp"
+#include "../glm/trigonometric.hpp"
+#include "../glm/exponential.hpp"
+#include "../glm/common.hpp"
+//#include "../glm/packing.hpp"
+#include "../glm/geometric.hpp"
+//#include "../glm/matrix.hpp"
+//#include "../glm/vector_relational.hpp"
+//#include "../glm/integer.hpp"
 #include "../glm/gtc/matrix_transform.hpp"
 #include "../glm/gtx/color_space.hpp"
 #include "../glm/gtc/random.hpp"
@@ -54,6 +67,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <random>
+
 
 typedef unsigned char uint8;
 typedef unsigned short uint16;
@@ -125,7 +139,6 @@ namespace std {
 template <typename T>
 inline bool fpu_error(T x) { return (std::isinf(x) || std::isnan(x)); }
 
-
 inline float round(float a, float v) { return v * round(a / v); }
 inline float2 round(float2 a, float v) { return float2(round(a.x, v), round(a.y, v)); }
 
@@ -165,6 +178,7 @@ inline float2 clamp_length(float2 v, float mn, float mx)
 }
 
 // return vector V clamped to fit inside origin centered rectangle with radius RAD
+// direction of V does not change
 float2 clamp_rect(float2 v, float2 rad);
 
 // return center of circle as close to POS as possible and with radius RAD, that fits inside of AABBox defined by RCENTER and RRAD
@@ -231,17 +245,17 @@ inline float toradians(float degrees) { return 2.f * M_PIf / 360.0f * degrees; }
 
 // rotate vector v by angle a
 template <typename T>
-inline glm::detail::tvec2<T> rotate(glm::detail::tvec2<T> v, T a)
+inline glm::detail::tvec2<T, glm::defaultp> rotate(glm::detail::tvec2<T, glm::defaultp> v, T a)
 {
-    T cosa = cos(a);
-    T sina = sin(a);
-    return glm::detail::tvec2<T>(cosa * v.x - sina * v.y, sina * v.x + cosa * v.y);
+    T cosa = std::cos(a);
+    T sina = std::sin(a);
+    return glm::detail::tvec2<T, glm::defaultp>(cosa * v.x - sina * v.y, sina * v.x + cosa * v.y);
 }
 
 template <typename T>
-inline glm::detail::tvec2<T> rotate(const glm::detail::tvec2<T> &v, const glm::detail::tvec2<T> &a)
+inline glm::detail::tvec2<T, glm::defaultp> rotate(const glm::detail::tvec2<T, glm::defaultp> &v, const glm::detail::tvec2<T, glm::defaultp> &a)
 {
-    return glm::detail::tvec2<T>(a.x * v.x - a.y * v.y, a.y * v.x + a.x * v.y);
+    return glm::detail::tvec2<T, glm::defaultp>(a.x * v.x - a.y * v.y, a.y * v.x + a.x * v.y);
 }
 
 inline float2 rotate90(float2 v)  { return float2(-v.y, v.x); }
@@ -343,6 +357,15 @@ inline float inv_lerp(float zero, float one, float val)
     else
         unorm = (val - zero) / (one - zero);
     return inv ? 1.f - unorm : unorm;
+}
+
+// reduced VAL to 0.0 within FADELEN of either START or END (or beyond), and 1.0 if in the middle
+inline float smooth_clamp(float start, float end, float val, float fadelen)
+{
+    ASSERT(end - start > fadelen);
+    val = clamp(start, end, val);
+    return min(1.f, min((val - start) / fadelen,
+                        (end - val) / fadelen));
 }
 
 // cardinal spline, interpolating with 't' between y1 and y2 with control points y0 and y3 and tension 'c'

@@ -28,9 +28,10 @@
 #ifndef __Outlaws__Graphics__
 #define __Outlaws__Graphics__
 
-#include "StdAfx.h"
-#include "Colors.h"
+#include "RGB.h"
 #include "Vertex.h"
+
+extern uint graphicsDrawCount;
 
 GLenum glReportError1(const char *file, uint line, const char *function);
 GLenum glReportFramebufferError1(const char *file, uint line, const char *function);
@@ -48,6 +49,27 @@ void   glReportValidateShaderError1(const char* file, uint line, const char* fun
 
 
 class ShaderProgramBase;
+
+struct GLEnableScope {
+    const GLenum val;
+    GLEnableScope(GLenum v) : val(v) { glEnable(v); }
+    ~GLEnableScope() { glDisable(val); }
+};
+
+struct GLDisableScope {
+    const GLenum val;
+    GLDisableScope(GLenum v) : val(v) { glDisable(v); }
+    ~GLDisableScope() { glEnable(val); }
+};
+
+#if OPENGL_ES
+struct GLDisableAlphaTest {};
+#else
+struct GLDisableAlphaTest : public GLDisableScope {
+    GLDisableAlphaTest() : GLDisableScope(GL_ALPHA_TEST) {}
+};
+#endif
+
 
 // RAII for opengl buffers
 template <typename Type, uint GLType>
@@ -77,7 +99,6 @@ public:
     void clear()
     {
         if (m_id) {
-            ASSERT_MAIN_THREAD();
             glDeleteBuffers(1, &m_id);
             m_id = 0;
         }
@@ -109,7 +130,6 @@ public:
 
     void BufferData(uint size, Type* data, uint mode)
     {
-        ASSERT_MAIN_THREAD();
         if (m_id == 0) {
             glGenBuffers(1, &m_id);
         } else if (m_size == size && m_usage == mode) {
@@ -126,7 +146,6 @@ public:
 
     void BufferSubData(uint offset, uint size, Type* data)
     {
-        ASSERT_MAIN_THREAD();
         ASSERT(m_id);
         ASSERT(offset + size <= m_size);
         Bind();
@@ -193,6 +212,7 @@ public:
 
     GLTexture(const GLTexture& tex) = delete; // not copyable
 
+    GLTexture(GLuint texn, float2 sz, GLint fmt) : m_texname(texn), m_size(sz), m_format(fmt) {}
     GLTexture() {}
     GLTexture(GLTexture&& o)
     {
@@ -226,16 +246,17 @@ public:
     OutlawTexture getTexture() const 
     {
         OutlawTexture ot;
+        memset(&ot, 0, sizeof(ot));
         ot.width = (uint) m_size.x;
         ot.height = (uint) m_size.y;
         ot.texnum = m_texname;
         return ot;
     }
 
-    void BindTexture(uint tex=0) const
+    void BindTexture(int slot) const
     {
         ASSERT(m_texname);
-        glActiveTexture(GL_TEXTURE0 + tex);
+        glActiveTexture(GL_TEXTURE0 + slot);
         glBindTexture(GL_TEXTURE_2D, m_texname);
         glReportError();
     }
@@ -250,6 +271,8 @@ public:
     void SetTexMagFilter(GLint filter);
     void GenerateMipmap();
 };
+
+const GLTexture &getDitherTex();
 
 
 // encapsulate the projection/modelview matrix and some related state
@@ -267,7 +290,7 @@ struct ShaderState {
     void translate(float2 t) { uTransform = glm::translate(uTransform, float3(t.x, t.y, 0)); }
     void translateZ(float z) { uTransform = glm::translate(uTransform, float3(0, 0, z)); }
     void translate(const float3 &t) { uTransform = glm::translate(uTransform, t); }
-    void rotate(float a)     { uTransform = glm::rotate(uTransform, todegrees(a), float3(0, 0, 1)); }
+    void rotate(float a)     { uTransform = glm::rotate(uTransform, a, float3(0, 0, 1)); }
 
     void translateRotate(float2 t, float a)
     {
@@ -345,7 +368,6 @@ struct View {
     float  scale;               // larger values are more zoomed out
     float  angle;               // rotation is applied after position
     float  zfar;
-    float  znear;
 
     View()
     {
@@ -353,7 +375,6 @@ struct View {
         angle = 0.f;
 
         zfar  = 3500;
-        znear = -1000;
     }
 
     // interpolation support
@@ -462,9 +483,9 @@ struct View {
     float getScreenPointSizeInPixels(float depth) const { return sizePixels.x / ((sizePoints.x) - depth); }
     float getWorldPointSizeInPixels(float depth) const  { return sizePixels.x / ((scale * sizePoints.x) - depth); }
 
-    uint getCircleVerts(float worldRadius) const
+    uint getCircleVerts(float worldRadius, int mx=24) const
     {
-        const uint verts = clamp(2 * uint(toScreenSize(worldRadius)), 3, 24);
+        const uint verts = clamp(2 * uint(round(toScreenSize(worldRadius))), 3, mx);
         return verts;
     }
 
@@ -630,22 +651,22 @@ struct Transform2D {
     template <typename R>
     void apply(R &result, const cpVect &vec) const
     {
-        result.x += transform.value[0].x * vec.x + transform.value[1].x * vec.y + transform.value[2].x;
-        result.y += transform.value[0].y * vec.x + transform.value[1].y * vec.y + transform.value[2].y;
+        result.x += transform[0].x * vec.x + transform[1].x * vec.y + transform[2].x;
+        result.y += transform[0].y * vec.x + transform[1].y * vec.y + transform[2].y;
     }
 
     template <typename R, typename T>
-    void apply(R &result, const glm::detail::tvec2<T> &vec) const
+    void apply(R &result, const glm::detail::tvec2<T, glm::defaultp> &vec) const
     {
-        result.x += transform.value[0].x * vec.x + transform.value[1].x * vec.y + transform.value[2].x;
-        result.y += transform.value[0].y * vec.x + transform.value[1].y * vec.y + transform.value[2].y;
+        result.x += transform[0].x * vec.x + transform[1].x * vec.y + transform[2].x;
+        result.y += transform[0].y * vec.x + transform[1].y * vec.y + transform[2].y;
     }
 
     template <typename R, typename T>
-    void apply(R& result, const glm::detail::tvec3<T> &vec) const
+    void apply(R& result, const glm::detail::tvec3<T, glm::defaultp> &vec) const
     {
-        result.x += transform.value[0].x * vec.x + transform.value[1].x * vec.y + transform.value[2].x;
-        result.y += transform.value[0].y * vec.x + transform.value[1].y * vec.y + transform.value[2].y;
+        result.x += transform[0].x * vec.x + transform[1].x * vec.y + transform[2].x;
+        result.y += transform[0].y * vec.x + transform[1].y * vec.y + transform[2].y;
         result.z += vec.z;
     }
 
@@ -768,6 +789,7 @@ public:
         ASSERT(start + ic < std::numeric_limits<IndexType>::max());
         for (uint i=0; i<ic; i++)
         {
+            DASSERT(start + pidx[i] < m_vl.size());
             m_il.push_back(start + pidx[i]);
         }
     }
@@ -948,6 +970,9 @@ struct PrimMesh : public Mesh<Vtx1> {
     // remove redundant vertices and then redundant primitives
     void Optimize()
     {
+        if (!this->m_il.size())
+            return;
+
         static const float kUnifyDist = 0.1f;
         std::set<uint> replacedIndices;
         int maxIndex = 0;
@@ -1074,6 +1099,27 @@ struct LineMesh : public PrimMesh<Vtx, 2> {
         this->PushStrip(&ipv[0], icount);
     }
 
+    // widthRadians is on either side of angleStart
+    void PushArc(float2 pos, float radius, float angleStart, float widthRadians, int numVerts=32)
+    {
+        ASSERT(numVerts >= 3);
+
+        LineIndex start = this->m_vl.size();
+
+        for (int i=0; i < numVerts; ++i)
+        {
+            const float angle = angleStart + 2.f * widthRadians * (-0.5f + (float) i / (float) (numVerts-1));
+            const uint  j     = (uint) this->m_vl.size();
+            float2      p     = pos + radius * angleToVector(angle);
+
+            this->PushV(&p, 1);
+            if (j > start) {
+                this->m_il.push_back(j-1);
+                this->m_il.push_back(j);
+            }
+        }
+    }
+
     void PushCircle(float radius, int numVerts=32)
     {
         this->PushCircle(float2(0), radius, numVerts);
@@ -1193,6 +1239,15 @@ struct LineMesh : public PrimMesh<Vtx, 2> {
     {
         const float2 v[] = { a, b, c };
         PushLoop(v, arraySize(v));
+    }
+
+    void PushPointTri(float2 pos, float angle, float offset, float2 sz)
+    {
+        glm::mat3 trans = this->transform;
+        this->translateRotate(pos, angle);
+        this->translate(float2(offset, 0.f));
+        PushTri(float2(sz.x, 0.f), flipX(sz), -sz);
+        this->transform = trans;
     }
 
     void PushLineQuad(float2 a, float2 b, float2 c, float2 d)
@@ -1374,19 +1429,18 @@ struct TriMesh : public PrimMesh<Vtx, 3> {
         }
     }
 
-    TriIndex PushCircleCenterVert(float radius, int numVerts=32)
+    TriIndex PushCircleCenterVert(float2 pos, float radius, int numVerts=32)
     {
         ASSERT(numVerts >= 3);
 
         TriIndex start = this->m_vl.size();
-        float2 zero = float2(0);
-        this->PushV(&zero, 1);
+        this->PushV(&pos, 1);
 
         for (int i=0; i < numVerts; ++i)
         {
             const float angle = M_TAOf * (float) i / (float) numVerts;
             const uint  j     = (uint) this->m_vl.size();
-            float2      p     = radius * angleToVector(angle);
+            float2      p     = pos + radius * angleToVector(angle);
 
             this->PushV(&p, 1);
 
@@ -1402,6 +1456,11 @@ struct TriMesh : public PrimMesh<Vtx, 3> {
         this->m_il.push_back(start + numVerts);
         this->m_il.push_back(start + 1);
         return start;
+    }
+    
+    TriIndex PushCircleCenterVert(float radius, int numVerts=32)
+    {
+        return PushCircleCenterVert(float2(0.f), radius, numVerts);
     }
 
     template <typename Prog>

@@ -32,6 +32,12 @@ struct VertexPosTex {
     float2 texCoord;
 };
 
+struct VertexPosColorTex {
+    float3 pos;
+    uint   color;
+    float2 texCoord;
+};
+
 struct VertexPosColor {
     float3 pos;
     uint   color;

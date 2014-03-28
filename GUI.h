@@ -28,7 +28,6 @@
 #define GUI_H
 
 #include "GLText.h"
-#include "Colors.h"
 #include "Shaders.h"
 #include <cctype>
 
@@ -37,13 +36,19 @@ static const double kTripleClickTimeout = 0.3f;
 static const float  kPadDist            = 2;
 static const float2 kButtonPad         = float2(4.f);
 
+#define COLOR_TARGET  0xff3a3c
+#define COLOR_TEXT_BG 0x0d0715
+#define COLOR_BG_GRID 0x3f1935
+#define COLOR_ORANGE  0xff6f1f
+#define COLOR_BLACK 0x000000
 
-static uint kGUIBg       = 0xb0202020;
-static uint kGUIBgActive = 0xf0404040;
-static uint kGUIFg       = 0xff404040;
-static uint kGUIFgActive = 0xfff0f0f0;
-static uint kGUIText     = 0xfff0f0f0;
-static uint kGUITextLow  = 0xffa0a0a0;
+static const uint kGUIBg       = 0xb0202020;
+static const uint kGUIBgActive = 0xf0404040;
+static const uint kGUIFg       = 0xff404040;
+static const uint kGUIFgActive = 0xfff0f0f0;
+static const uint kGUIText     = 0xfff0f0f0;
+static const uint kGUITextLow  = 0xffa0a0a0;
+static const uint kGUIInactive = 0xa0a0a0a0;
 
 struct WidgetBase {
     float2      position;       // center of button
@@ -81,13 +86,14 @@ struct Button : public ButtonBase
 {
     string text;
     float  textSize          = 24.f;
+    int    textFont          = kDefaultFont;
     uint   defaultBGColor    = kGUIBg;
     uint   pressedBGColor    = kGUIBgActive;
     uint   defaultLineColor  = kGUIFg;
     uint   hoveredLineColor  = kGUIFgActive; 
-    uint   inactiveLineColor = COLOR_INACTIVE;
+    uint   inactiveLineColor = kGUIInactive;
     uint   textColor         = kGUIText;
-    uint   inactiveTextColor = COLOR_INACTIVE;
+    uint   inactiveTextColor = kGUIInactive;
 
     Button() {}
     Button(const string& str) : text(str) {}
@@ -118,18 +124,6 @@ struct Button : public ButtonBase
         size = max(size, GLText::DrawStr(s_, position, GLText::MID_CENTERED, tcolor, textSize, text));
     }
 };
-
-bool ButtonHandleEvent(ButtonBase &button, const Event* event, const char* keys, bool* isActivate, bool* isPress=NULL);
-
-inline void ButtonSetPos(ButtonBase& button, float2 pos)
-{
-    if (isZero(button.position)) {
-        button.position = pos;
-    } else {
-        button.position = lerp(button.position, pos,
-                               0.5f * globals.getView().sizePixels.y * globals.frameTime);
-    }
-}
 
 
 struct TextInputBase : public WidgetBase {
@@ -200,7 +194,6 @@ struct TextInputBase : public WidgetBase {
 
     int2 getSizeChars() const    { return sizeChars; }
     float2 getSizePoints() const { return sizePoints; }
-    bool blinkOn() const         { return fmodf(globals.renderTime, 0.5f) > 0.25f; }
 
     virtual void updateState(int line, ShaderState* ss){}
 
@@ -219,7 +212,7 @@ struct TextInputCommandLine : public TextInputBase {
     };
 
     vector<string>            commandHistory;
-    int                       historyIndex;
+    int                       historyIndex = 0;
     std::map<string, Command> commands;
     string                    prompt;
 
@@ -511,11 +504,11 @@ struct OptionSlider : public WidgetBase {
     uint   pressedBGColor    = kGUIBgActive;
     uint   defaultLineColor  = kGUIFg;
     uint   hoveredLineColor  = kGUIFgActive; 
-    uint   inactiveLineColor = COLOR_INACTIVE;
+    uint   inactiveLineColor = kGUIInactive;
 
     float2 getSizePoints() const { return size; }
     float  getValueFloat() const { return (float) value / (values-1); }
-    void   setValueFloat(float v) { value = clamp((int)round(v * values), 0, values-1); }
+    void   setValueFloat(float v) { value = clamp((int)round(v * (values-1)), 0, values-1); }
 
     bool HandleEvent(const Event* event, bool *valueChanged);
 
@@ -553,9 +546,9 @@ struct TabWindow : public WidgetBase {
     uint  pressedBGColor    = kGUIBgActive;
     uint  defaultLineColor  = kGUIFg;
     uint  hoveredLineColor  = kGUIFgActive; 
-    uint  inactiveLineColor = COLOR_INACTIVE;
+    uint  inactiveLineColor = kGUIInactive;
     uint  textColor         = kGUIText;
-    uint  inactiveTextColor = COLOR_INACTIVE;
+    uint  inactiveTextColor = kGUIInactive;
     
     vector<TabButton> buttons;
     int               selected = 0;

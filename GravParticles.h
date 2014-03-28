@@ -21,7 +21,7 @@ private:
     int                         m_addPos = 0;
     int                         m_liveCount = 0;
 
-    bool update();
+    bool update(float frameTime);
 
     float2 m_emitterBoundingRadius;
 
@@ -55,8 +55,8 @@ public:
     float2 attractorPos;
 
     GravityParticleSystem();
-    void render(const ShaderState &ss);
-    void render(TriMesh<VertexPosColorLuma>& mesH);
+    void render(const ShaderState &ss, float frametime);
+    void render(TriMesh<VertexPosColorLuma>& mesH, float frametime);
 
     void resize(int size);
 

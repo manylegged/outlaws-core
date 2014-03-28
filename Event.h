@@ -5,7 +5,10 @@
 
 struct Event {
     // !!! KEEP IN SYNC WITH Outlaws.h VERSION !!!
-    enum Type { KEY_DOWN=0, KEY_UP, MOUSE_DOWN, MOUSE_UP, MOUSE_DRAGGED, MOUSE_MOVED, SCROLL_WHEEL, LOST_FOCUS, GAINED_FOCUS };
+    enum Type { KEY_DOWN=0, KEY_UP, MOUSE_DOWN, MOUSE_UP, MOUSE_DRAGGED, 
+                MOUSE_MOVED, SCROLL_WHEEL, LOST_FOCUS, GAINED_FOCUS,
+                TOUCH_BEGIN, TOUCH_MOVED, TOUCH_STATIONARY, TOUCH_ENDED, TOUCH_CANCELLED,
+                INVALID };
     Type   type;
     long   key;
     long   rawkey;
@@ -116,6 +119,9 @@ class KeyState {
     bool misc;
     
 public:
+
+    float2 cursorPosScreen;
+    
     KeyState()
     {
         reset();
@@ -151,6 +157,12 @@ public:
         (*this)[2 + LeftMouseButton] = false;
     }
 
+    static KeyState &instance()
+    {
+        static KeyState v;
+        return v;
+    }
+
 };
 
 inline string keyToString(int key)
@@ -172,13 +184,27 @@ inline string keyToString(int key)
     case ' ': return "Space";
     case NSPageUpFunctionKey: return "Page Up";
     case NSPageDownFunctionKey: return "Page Down";
+    case NSHomeFunctionKey: return "Home";
+    case NSEndFunctionKey: return "End";
     case NSDeleteCharacter: return "Delete";
     case NSBackspaceCharacter: return "Backspace";
     case EscapeCharacter: return "Escape";
+    case NSF1FunctionKey: return "F1";
+    case NSF2FunctionKey: return "F2";
+    case NSF3FunctionKey: return "F3";
+    case NSF4FunctionKey: return "F4";
+    case NSF5FunctionKey: return "F5";
+    case NSF6FunctionKey: return "F6";
+    case NSF7FunctionKey: return "F7";
+    case NSF8FunctionKey: return "F8";
+    case NSF9FunctionKey: return "F9";
+    case NSF10FunctionKey: return "F10";
+    case NSF11FunctionKey: return "F11";
+    case NSF12FunctionKey: return "F12";
     case 0: return " ";
     default:
         if (isprint(key))
-            return str_format("'%c'", key);
+            return str_format("%c", key);
         else
             return str_format("0x%x", key);
     }

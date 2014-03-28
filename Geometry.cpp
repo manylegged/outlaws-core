@@ -324,6 +324,6 @@ float2 circle_in_rect(float2 pos, float rad, float2 rcenter, float2 rrad)
     }
 
     ASSERT(containedCircleInRectangle(npos, rad-epsilon, rcenter, rrad));
-    return pos;
+    return npos;
 }
 

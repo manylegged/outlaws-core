@@ -69,7 +69,12 @@ public:
     {
         return !m_ptr ? true : !o.m_ptr ? false : strcmp(m_ptr, o.m_ptr) < 0;
     }
-
+    
+    explicit operator bool() const
+    {
+        return !empty();
+    }
+    
     bool operator==(const lstring &o) const { return m_ptr == o.m_ptr; }
     bool operator!=(const lstring &o) const { return m_ptr != o.m_ptr; }
 };
@@ -102,9 +107,11 @@ inline std::string str_replace(T&& s, const char* a, const char* b)
 template <typename T>
 inline std::string str_indent(T&& s, int amount)
 {
-    std::string istr = std::string(' ', amount) + '\n';
-    return str_replace(std::forward<T>(s), "\n", istr.c_str());
+    std::string istr = '\n' + std::string(amount, ' ');
+    return std::string(amount, ' ') + str_replace(std::forward<T>(s), "\n", istr.c_str());
 }
+
+std::string str_align(const std::string& input, char token);
 
 inline std::string str_strip(const std::string& s)
 {
@@ -219,19 +226,19 @@ std::string str_join_keys(const A &begin, const A &end, const std::string &sep)
     return result;
 }
 
-std::string str_word_wrap(std::string str, size_t width = 70);
+std::string str_word_wrap(std::string str, size_t width = 70, const char* newline="\n");
 
 
 inline std::string str_capitalize(const char* str)
 {
-    string s = str;
+    std::string s = str;
     s[0] = toupper(s[0]);
     return s;
 }
 
 inline std::string str_toupper(const char* str)
 {
-    string s = str;
+    std::string s = str;
     for (uint i=0; i<s.size(); i++)
         s[i] = std::toupper(s[i]);
     return s;
@@ -239,7 +246,7 @@ inline std::string str_toupper(const char* str)
 
 inline std::string str_tolower(const char* str)
 {
-    string s = str;
+    std::string s = str;
     for (uint i=0; i<s.size(); i++)
         s[i] = std::tolower(s[i]);
     return s;
@@ -247,7 +254,7 @@ inline std::string str_tolower(const char* str)
 
 inline std::string str_tolower(const std::string &str)
 {
-    string s = str;
+    std::string s = str;
     for (uint i=0; i<s.size(); i++)
         s[i] = std::tolower(s[i]);
     return s;

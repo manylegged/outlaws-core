@@ -79,11 +79,12 @@ long chr_unshift(long chr)
 }
 
 
-std::string str_word_wrap(std::string str, size_t width)
+std::string str_word_wrap(std::string str, size_t width, const char* newline)
 {
     size_t i = 0;
     size_t lineStart = 0;
     size_t lastSpace = 0;
+    const size_t nlsize = strlen(newline);
 
     while (str.size() - lineStart > width && i<str.size())
     {
@@ -93,11 +94,51 @@ std::string str_word_wrap(std::string str, size_t width)
             lastSpace = i;
         }
         if (i - lineStart > width) {
-            str[lastSpace] = '\n';
-            lineStart = lastSpace + 1;
+            str.replace(lastSpace, 1, newline);
+            lineStart = lastSpace + nlsize;
         }
         i++;
     }
 
+    return str;
+}
+
+std::string str_align(const std::string& input, char token)
+{
+    int alignColumn = 0;
+    int lineStart = 0;
+    int tokensInLine = 0;
+    for (int i=0; i<input.size(); i++) {
+        if (input[i] == '\n') {
+            lineStart = i;
+            tokensInLine = 0;
+        } else if (input[i] == token &&
+                   input.size() != i+1 && input[i+1] != '\n' &&
+                   tokensInLine == 0) {
+            alignColumn = max(alignColumn, i - lineStart + 1);
+            tokensInLine++;
+        }
+    }
+
+    if (alignColumn == 0)
+        return input;
+
+    std::string str;
+    lineStart = 0;
+    tokensInLine = 0;
+    
+    for (int i=0; i<input.size(); i++) {
+        str += input[i];
+        if (input[i] == '\n') {
+            lineStart = i;
+            tokensInLine = 0;
+        } else if (input[i] == token && tokensInLine == 0) {
+            const int spaces = alignColumn - (i - lineStart);
+            for (; (i+1)<input.size() && input[i+1] == ' '; i++);
+            if (input[i+1] != '\n')
+                str.append(spaces, ' ');
+            tokensInLine++;
+        }
+    }
     return str;
 }

@@ -22,6 +22,7 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
+
 #ifndef SHADERS_H
 #define SHADERS_H
 
@@ -157,53 +158,8 @@ struct ShaderPosBase: public ShaderProgramBase {
 
     void DrawGrid(const ShaderState &ss, double width, double3 first, double3 last) const;
 
-    void DrawLineCircle(const ShaderState& ss, float radius, int numVerts=32) const
-    {
-        static const int maxVerts = 64;
-        numVerts = std::min(maxVerts, numVerts);
-        float2 verts[maxVerts];
-    
-        for (int i=0; i != numVerts; ++i)
-        {
-            const float angle = (float) i * (2.f * M_PIf / (float) numVerts);
-            verts[i].x = radius * cos(angle);
-            verts[i].y = radius * sin(angle);
-        }
-
-        UseProgram(ss, verts);
-        ss.DrawArrays(GL_LINE_LOOP, numVerts);
-        UnuseProgram();
-    }
-
-    void DrawCircle(const ShaderState& ss, float radius, int numVerts=32) const
-    {
-        static const int maxVerts = 64;
-        numVerts = std::min(maxVerts - maxVerts/3, numVerts);
-        float2 verts[maxVerts];
-    
-        verts[0].x = 0;
-        verts[0].y = 0;
-    
-        int j=1;
-        for (int i=0; i < (numVerts+1); ++i)
-        {
-            const float angle = (float) i * (2 * M_PI / (float) numVerts);
-            verts[j].x = radius * cos(angle);
-            verts[j].y = radius * sin(angle);
-            j++;
-            if (i % 3 == 0)
-            {
-                verts[j] = verts[0];
-                j++;
-            }
-        }
-
-        UseProgram(ss, verts);
-        ss.DrawArrays(GL_TRIANGLE_STRIP, j);
-        UnuseProgram();
-    }
-
-
+    void DrawLineCircle(const ShaderState& ss, float radius, int numVerts=32) const;
+    void DrawCircle(const ShaderState& ss, float radius, int numVerts=32) const;
 };
 
 struct ShaderUColor : public ShaderPosBase {
@@ -262,7 +218,7 @@ public:
         vertexAttribPointer(SourceColor0, &ptr->color, base);
         vertexAttribPointer(SourceColor1, &ptr->color1, base);
         vertexAttribPointer(TimeA, &ptr->time, base);
-        glUniform1f(TimeU, globals.renderSimTime);
+        glUniform1f(TimeU, OLG_GetRenderSimTime());
     }
 
     static const ShaderIridescent& instance()   
@@ -314,7 +270,7 @@ public:
         float4 c1 = ABGR2RGBAf(ss.uColor1);
         glUniform4fv(SourceColor0, 1, &c0[0]);
         glUniform4fv(SourceColor1, 1, &c1[0]);
-        glUniform1f(TimeU, globals.renderTime);
+        glUniform1f(TimeU, OLG_GetRenderSimTime());
         vertexAttribPointer(TimeA, &ptr->time, base);
     }
 
@@ -330,31 +286,19 @@ public:
 
 struct ShaderTextureBase: public ShaderProgramBase {
 
-    virtual void UseProgram(const ShaderState &ss, VertexPosTex *ptr, const OutlawTexture& ot) const = 0;
+    virtual void UseProgram(const ShaderState &ss, const VertexPosTex *ptr, const OutlawTexture& ot) const = 0;
 
-    void BindTexture(const OutlawTexture& texture) const
+    void BindTexture(const OutlawTexture& texture, int slot) const
     {
         ASSERT(texture.width);
-        glActiveTexture(GL_TEXTURE0 + 0);
+        glActiveTexture(GL_TEXTURE0 + slot);
         glBindTexture(GL_TEXTURE_2D, texture.texnum);
     }
 
     // a b
     // c d
     void DrawQuad(const ShaderState& ss, const OutlawTexture& texture,
-                  float2 a, float2 b, float2 c, float2 d) const
-    {
-        VertexPosTex v[] = { { float3(a, 0), float2(0, 1) },
-                             { float3(b, 0), float2(1, 1) },
-                             { float3(c, 0), float2(0, 0) },
-                             { float3(d, 0), float2(1, 0) } };
-        static const ushort i[] = {0, 1, 2, 1, 3, 2};
-
-        BindTexture(texture);
-        UseProgram(ss, v, texture);
-        ss.DrawElements(GL_TRIANGLES, 6, i);
-        UnuseProgram();
-    }
+                  float2 a, float2 b, float2 c, float2 d) const;
 
     void DrawRectCorners(const ShaderState &ss, const OutlawTexture& texture, float2 a, float2 b) const
     {
@@ -379,28 +323,18 @@ struct ShaderTextureBase: public ShaderProgramBase {
         DrawRectCorners(ss, texture, pos - rad, pos + rad);
     }
 
+    void DrawRectWidth(const ShaderState &ss, const OutlawTexture& texture, float2 pos, float width) const
+    {
+        float2 rad(width, width * texture.height / texture.width);
+        DrawRect(ss, texture, pos, rad);
+    }
+
     void DrawRectUpsideDown(const ShaderState &ss, const OutlawTexture& texture, float2 pos, float2 rad) const
     {
         DrawRectCornersUpsideDown(ss, texture, pos - rad, pos + rad);
     }
 
-    void DrawButton(const ShaderState &ss, const OutlawTexture& texture, float2 pos, float2 r) const
-    {
-        static const float o = 0.1f;
-        VertexPosTex v[6] = { 
-            { float3(pos + float2(-r.x, lerp(r.y, -r.y, o)), 0.f), float2(0.f, 1.f - o) },
-            { float3(pos + float2(lerp(-r.x, r.x, o), r.y),  0.f), float2(o, 1.f)       },
-            { float3(pos + float2(r.x, r.y),                 0.f), float2(1.f)          },
-            { float3(pos + float2(r.x, lerp(-r.y, r.y, o)),  0.f), float2(1.f, o),      },
-            { float3(pos + float2(lerp(r.x, -r.x, o), -r.y), 0.f), float2(1.f - o, 0.f) },
-            { float3(pos + float2(-r.x, -r.y),               0.f), float2(0.f)          } };
-        static const ushort i[] = { 0,1,2, 0,2,3, 0,3,4, 0,4,5 };
-        BindTexture(texture);
-        UseProgram(ss, v, texture);
-        ShaderState s1 = ss;
-        s1.DrawElements(GL_TRIANGLES, arraySize(i), i);
-        UnuseProgram();
-    }
+    void DrawButton(const ShaderState &ss, const OutlawTexture& texture, float2 pos, float2 r) const;
 };
 
 struct ShaderTexture : public ShaderTextureBase {
@@ -434,20 +368,46 @@ public:
         m_aTexCoords = getAttribLocation("SourceTexCoord");
     }
 
-    void UseProgram(const ShaderState &ss, VertexPosTex *ptr, const OutlawTexture &ot) const
+    void UseProgram(const ShaderState &ss, const VertexPosTex *ptr, const OutlawTexture &ot) const override
     {
-        UseProgramBase(ss, &ptr->pos, (VertexPosTex*) NULL);
+        UseProgram(ss, ptr, (const VertexPosTex*) NULL);
+    }
 
-        vertexAttribPointer(m_aTexCoords, &ptr->texCoord, (VertexPosTex*) NULL);
+    template <typename Vtx>
+    void UseProgram(const ShaderState &ss, const Vtx *ptr, const Vtx *base) const
+    {
+        UseProgramBase(ss, &ptr->pos, base);
+
+        vertexAttribPointer(m_aTexCoords, &ptr->texCoord, base);
         glUniform1i(m_uTexture, 0);
 
         float4 c = ABGR2RGBAf(ss.uColor);
-        glUniform4fv(m_uColorSlot, 1, &c[0]);
+        glUniform4fv(m_uColorSlot, 1, &c[0]); 
     }
 
     static const ShaderTexture& instance()   
     {
         static ShaderTexture* p = new ShaderTexture();
+        return *p;
+    }
+
+};
+
+struct ShaderTonemapDither : public ShaderTextureBase {
+
+private:
+    uint texture1;
+    uint dithertex;
+    uint SourceTexCoord;
+
+public:
+    ShaderTonemapDither();
+
+    void UseProgram(const ShaderState &ss, const VertexPosTex *ptr, const OutlawTexture &ot) const;
+
+    static const ShaderTonemapDither& instance()
+    {
+        static ShaderTonemapDither* p = new ShaderTonemapDither();
         return *p;
     }
 
@@ -462,13 +422,7 @@ private:
 public:
     ShaderTonemap();
 
-    void UseProgram(const ShaderState &ss, VertexPosTex *ptr, const OutlawTexture &ot) const
-    {
-        UseProgramBase(ss, &ptr->pos, (VertexPosTex*) NULL);
-
-        vertexAttribPointer(SourceTexCoord, &ptr->texCoord, (VertexPosTex*) NULL);
-        glUniform1i(texture1, 0);
-    }
+    void UseProgram(const ShaderState &ss, const VertexPosTex *ptr, const OutlawTexture &ot) const;
 
     static const ShaderTonemap& instance()   
     {
@@ -491,67 +445,10 @@ private:
     mutable float2 offsets[5];
     mutable uint dimension = 0;
 
-    ShaderBlur()
-    {
-        // TODO calculate offset in vertex shader
-        LoadProgram("varying vec2 DestTexCoord;\n"
-                    ,
-                    "attribute vec2 SourceTexCoord;\n"
-                    "void main(void) {\n"
-                    "    DestTexCoord = SourceTexCoord;\n"
-                    "    gl_Position  = Transform * Position;\n"
-                    "}\n"
-                    ,
-                    "uniform sampler2D source;\n"
-                    "uniform float coefficients[5];\n"
-                    "uniform vec2 offsets[5];\n"
-                    "void main() {\n"
-                    "    float d = 0.1;\n"
-                    "    vec4 c = vec4(0, 0, 0, 0);\n"
-                    "    vec2 tc = DestTexCoord;\n"
-                    "    c += coefficients[0] * texture2D(source, tc + offsets[0]);\n"
-                    "    c += coefficients[1] * texture2D(source, tc + offsets[1]);\n"
-                    "    c += coefficients[2] * texture2D(source, tc + offsets[2]);\n"
-                    "    c += coefficients[3] * texture2D(source, tc + offsets[3]);\n"
-                    "    c += coefficients[4] * texture2D(source, tc + offsets[4]);\n"
-                    "    gl_FragColor = c;\n"
-                    "}\n"
-            );
-        usourceTex      = getUniformLocation("source");
-        asourceTexCoord = getAttribLocation("SourceTexCoord");
-        ucoefficients   = getUniformLocation("coefficients");
-        uoffsets        = getUniformLocation("offsets");
-        glReportError();
-
-
-        coefficients[0] = 0.0539909665;
-        coefficients[1] = 0.2419707245;
-        coefficients[2] = 0.3989422804;
-        coefficients[3] = 0.2419707245;
-        coefficients[4] = 0.0539909665;
-    }
+    ShaderBlur();
 public:
 
-    void UseProgram(const ShaderState &ss, VertexPosTex *ptr, const OutlawTexture &ot) const
-    {
-        UseProgramBase(ss, &ptr->pos, (VertexPosTex*) NULL);
-
-        vertexAttribPointer(asourceTexCoord, &ptr->texCoord, (VertexPosTex*) NULL);
-        glUniform1i(usourceTex, 0);
-
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        
-        memset(offsets, 0, sizeof(offsets));
-        const float of = 1.5f / float((dimension == 0) ? ot.width : ot.height);
-        for (int i=0; i<5; i++)
-            offsets[i][dimension] = of * (2 - i);
-
-        glUniform1i(usourceTex, 0);
-        glUniform2fv(uoffsets, 5, &offsets[0][0]);
-        glUniform1fv(ucoefficients, 5, &coefficients[0]);
-        glReportError();
-    }
+    void UseProgram(const ShaderState &ss, const VertexPosTex *ptr, const OutlawTexture &ot) const;
 
     void setDimension(uint dim) const 
     {
@@ -770,7 +667,7 @@ struct ShaderNoise : public ShaderProgramBase {
     {
         UseProgramBase(ss, &ptr->pos, base);
         vertexAttribPointer(m_colorSlot, &ptr->color, base);
-        glUniform1f(m_uRandomSeed, fmod(globals.renderTime, 1.0));
+        glUniform1f(m_uRandomSeed, fmod(OLG_GetRenderSimTime(), 1.0));
     }
 };
 

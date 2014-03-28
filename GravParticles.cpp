@@ -24,7 +24,7 @@ bool GravityParticleSystem::emit(float2 pos, float2 vel, float radius)
 {
     ASSERT(m_particles.size());
 
-    const float time = globals.renderSimTime;
+    const float time = OLG_GetRenderSimTime();
 
     for (uint i=0; i<m_particles.size(); i++)
     {
@@ -46,7 +46,7 @@ bool GravityParticleSystem::emit(float2 pos, float2 vel, float radius)
     return false;
 }
 
-bool GravityParticleSystem::update()
+bool GravityParticleSystem::update(float frametime)
 {
     m_emitterBoundingRadius = float2(0.f);
 
@@ -55,9 +55,9 @@ bool GravityParticleSystem::update()
     m_attractorLastPos = attractorPos;
     m_attractorLastVel = attractorVel;
 
-    const float time     = globals.renderSimTime;
+    const float time     = OLG_GetRenderSimTime();
     const int   verts    = edges+1;
-    const float timestep = globals.frameTime * timeFactor;
+    const float timestep = frametime * timeFactor;
 
 
     if (!m_liveCount && !autoemit)
@@ -144,15 +144,15 @@ bool GravityParticleSystem::update()
     return true;
 }
 
-void GravityParticleSystem::render(const ShaderState &ss)
+void GravityParticleSystem::render(const ShaderState &ss, float frametime)
 {
-    if (update())
+    if (update(frametime))
         m_mesh.Draw(ss, ShaderColor::instance());
 }
 
-void GravityParticleSystem::render(TriMesh<VertexPosColorLuma>& mesh)
+void GravityParticleSystem::render(TriMesh<VertexPosColorLuma>& mesh, float frametime)
 {
-    if (update())
+    if (update(frametime))
         mesh.Push(m_mesh);
 }
 

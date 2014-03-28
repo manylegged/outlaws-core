@@ -80,6 +80,8 @@ inline const typename Vec::value_type& randselect(const Vec& vec)
 inline float randrange(float start, float end)
 {
     ASSERT(start <= end);
+    if (start == end)
+        return start;
     std::uniform_real_distribution<float> uniform_dist(start, end);
     return uniform_dist(random_device());
     //return float(start + ((end - start) * float(rand())) / float(RAND_MAX));

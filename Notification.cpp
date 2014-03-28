@@ -5,6 +5,9 @@
 
 void Notifier::registerHandler(uint64 types, INotifyHandler* handler)
 {
+    if (!types)
+        return;
+    
     for (uint i=0; i<NOTIFICATION_TYPE_COUNT; i++)
     {
         if (types&(1<<i)) {
@@ -19,6 +22,9 @@ void Notifier::registerHandler(uint64 types, INotifyHandler* handler)
 
 void Notifier::unregisterHandler(uint64 types, INotifyHandler *handler)
 {
+    if (!types)
+        return;
+
     int count = 0;
     for (uint i=0; i<NOTIFICATION_TYPE_COUNT; i++)
     {
@@ -49,6 +55,16 @@ void Notifier::notify(const Notification& notif)
 INotifyHandler::INotifyHandler(uint64 types) : m_registeredTypes(types)
 {
     Notifier::instance().registerHandler(types, this);
+}
+
+void INotifyHandler::registerTypes(uint64 types)
+{
+    if (types != m_registeredTypes)
+    {
+        Notifier::instance().unregisterHandler(m_registeredTypes, this);
+        Notifier::instance().registerHandler(types, this);
+        m_registeredTypes = types;
+    }
 }
 
 

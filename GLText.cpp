@@ -32,14 +32,12 @@
 
 GLText::~GLText()
 {
-    ASSERT_MAIN_THREAD();
     if (texture.width > 0)
         glDeleteTextures(1, &texture.texnum);
 }
 
 void GLText::load()
 {
-    ASSERT_MAIN_THREAD();
     float pointSize = OL_GetCurrentBackingScaleFactor();
     if (chars != texChars || fontSize != texFontSize || pointSize != texPointSize)
     {
@@ -63,7 +61,6 @@ void GLText::load()
 
 void GLText::render(const ShaderState* s, float2 pos) const
 {
-    ASSERT_MAIN_THREAD();
     if (texture.width > 0 && texture.height > 0)
     {
         ASSERT(chars == texChars && fontSize == texFontSize);
@@ -143,7 +140,6 @@ float GLText::getScaledSize(float sizeUnscaled)
 
 const GLText* GLText::get(int font, float size, const string& s)
 {
-    ASSERT_MAIN_THREAD();
     float pointSize = OL_GetCurrentBackingScaleFactor();
     //ReportMessagef("scale: %g", pointSize);
     
@@ -186,7 +182,7 @@ void DrawTextBox(const ShaderState& ss1, const View& view, float2 point, float2 
         return;
 
     if (bgColor == 0)
-        bgColor = COLOR_TEXT_BG|ALPHAF(0.6);
+        bgColor = 0x0d0715|ALPHAF(0.6);
 
     ShaderState ss = ss1;    
     const GLText* st = GLText::get(font, tSize, text);
@@ -209,13 +205,14 @@ void DrawTextBox(const ShaderState& ss1, const View& view, float2 point, float2 
     st->render(&ss);
 }
 
-const float2 kOutlinePad = float2(4.f, 2.f);
+const float2 kOutlinePad = float2(2.f, 1.f);
 
 float2 DrawOutlinedText(const ShaderState &s_, float2 pos, float2 relnorm, uint color,
                         float alpha, float tsize, const string& str)
 {
     ShaderState ss = s_;
-    const GLText* txt = GLText::get(kDefaultFont, GLText::getScaledSize(tsize), str);
+    const int font = tsize > 24 ? kTitleFont : kDefaultFont;
+    const GLText* txt = GLText::get(font, GLText::getScaledSize(tsize), str);
     ss.translate(pos - relnorm * txt->getSize());
     // DrawButton(&ss, 0.5f * txt->getSize(), 0.5f * txt->getSize() + float2(2.f), kOverlayBG, ALPHAF(0.5)|color, 0.5f * alpha);
     // DrawBox(&ss, 0.5f * txt->getSize(), 0.5f * txt->getSize() + kOutlinePad, kOverlayBG,

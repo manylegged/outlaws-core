@@ -33,13 +33,14 @@ static const int kDefaultFontSize = 12;
 
 static const int kDefaultFont = 0;
 static const int kMonoFont    = 1;
+static const int kTitleFont   = 2;
 
 class GLText {
 
     OutlawTexture  texture;
     string         texChars;
     float          texFontSize = 0.f;
-    float          texPointSize;
+    float          texPointSize = 0.f;
 
     string         chars;
     int            font = kDefaultFont;

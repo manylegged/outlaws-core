@@ -30,11 +30,20 @@
 #include "Graphics.h"
 #include "Shaders.h"
 
+#ifndef ASSERT_MAIN_THREAD
+#define ASSERT_MAIN_THREAD()
+#endif
+
+uint graphicsDrawCount = 0;
+
 vector<GLRenderTexture*> GLRenderTexture::s_bound;
 
 void GLRenderTexture::Generate()
 {
     ASSERT_MAIN_THREAD();
+
+    ASSERT(m_size.x > 1 && m_size.y > 1);
+
     glReportError();
     glGenFramebuffers(1, &m_fbname);
     glReportError();
@@ -51,7 +60,7 @@ void GLRenderTexture::Generate()
     glBindRenderbuffer(GL_RENDERBUFFER, m_zrbname);
     glReportError();
         
-    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, m_size.x, m_size.y);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT16, m_size.x, m_size.y);
     glReportError();
     glBindFramebuffer(GL_FRAMEBUFFER, m_fbname);
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, m_zrbname);
@@ -104,25 +113,34 @@ void GLRenderTexture::BindFramebuffer(float2 size, bool keepz)
         Generate();
     RebindFramebuffer();
 
+ #if !OPENGL_ES
     if (keepz)
     {
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, s_bound.size() ? s_bound.back()->m_fbname : 0);
+        const GLuint def = s_bound.size() ? s_bound.back()->m_fbname : 0;
+        ASSERT(def != m_fbname);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, def);
+        glReportError();
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_fbname);
+        glReportError();
         glBlitFramebuffer(0, 0, m_size.x, m_size.y, 0, 0, m_size.x, m_size.y,
                           GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+        glReportError();
     }
     else
+#endif
     {
         glClear(GL_DEPTH_BUFFER_BIT);
+        glReportError();
     }
     
-    glReportError();
     ASSERT(s_bound.empty() || s_bound.back() != this);
     s_bound.push_back(this);
 }
 
 void GLRenderTexture::RebindFramebuffer()
 {
+    ASSERT(m_size.x > 1 && m_size.y > 1);
+
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, m_texname);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -154,7 +172,9 @@ ShaderState GLRenderTexture::DrawFSBegin() const
 {
     glDepthMask(GL_FALSE);
     glDisable(GL_DEPTH_TEST);
+#if !OPENGL_ES
     glDisable(GL_ALPHA_TEST);
+#endif
 
     ShaderState ss;
     ss.uTransform = glm::ortho(0.f, 1.f, 0.f, 1.f, -1.f, 1.f);
@@ -165,12 +185,15 @@ void GLRenderTexture::DrawFSEnd() const
 {
     glDepthMask(GL_TRUE);
     glEnable(GL_DEPTH_TEST);
+#if !OPENGL_ES
     glEnable(GL_ALPHA_TEST);
+#endif
     glReportError();
 }
 
 void GLTexture::TexImage2D(int2 size, GLenum format, const uint *data)
 {
+#if !OPENGL_ES
     if (!m_texname)
         glGenTextures(1, &m_texname);
     glBindTexture(GL_TEXTURE_2D, m_texname);
@@ -185,6 +208,7 @@ void GLTexture::TexImage2D(int2 size, GLenum format, const uint *data)
 
     glBindTexture(GL_TEXTURE_2D, 0);
     m_size = float2(size);
+#endif
 }
 
 void GLTexture::SetTexMagFilter(GLint filter)
@@ -271,27 +295,30 @@ GLenum glReportError1(const char *file, uint line, const char *function)
 	GLenum err = glGetError();
 	if (GL_NO_ERROR != err)
     {
-		ReportMessagef("%s:%d:%s(): %s", file, line, function, (char *) gluErrorString (err));
-        ASSERTF(0, "%s", (char *) gluErrorString (err));
+        const char* msg = (const char *)gluErrorString(err);
+        OLG_OnAssertFailed(file, line, function, "glGetError", "%s", msg);
     }
     
 	return err;
 }
+
 
 #define CASE_STR(X) case X: return #X
 static const char* glFrameBufferStatusString(GLenum err)
 {
     switch(err) {
         CASE_STR(GL_FRAMEBUFFER_COMPLETE);
-        CASE_STR(GL_FRAMEBUFFER_UNDEFINED);
         CASE_STR(GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT);
         CASE_STR(GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT);
+        CASE_STR(GL_FRAMEBUFFER_UNSUPPORTED);
+#if !OPENGL_ES
+        CASE_STR(GL_FRAMEBUFFER_UNDEFINED);
         CASE_STR(GL_FRAMEBUFFER_INCOMPLETE_DRAW_BUFFER);
         CASE_STR(GL_FRAMEBUFFER_INCOMPLETE_READ_BUFFER);
-        CASE_STR(GL_FRAMEBUFFER_UNSUPPORTED);
         CASE_STR(GL_FRAMEBUFFER_INCOMPLETE_MULTISAMPLE);
         CASE_STR(GL_FRAMEBUFFER_INCOMPLETE_LAYER_TARGETS_EXT);
         CASE_STR(GL_FRAMEBUFFER_INCOMPLETE_LAYER_COUNT_EXT);
+#endif
     }
     return NULL;
 }
@@ -302,8 +329,7 @@ GLenum glReportFramebufferError1(const char *file, uint line, const char *functi
 	GLenum err = glCheckFramebufferStatus(GL_FRAMEBUFFER);
 	if (GL_FRAMEBUFFER_COMPLETE != err)
     {
-		ReportMessagef("%s:%d:%s(): %s", file, line, function, glFrameBufferStatusString(err));
-        ASSERTF(0, "%s", glFrameBufferStatusString(err));
+        OLG_OnAssertFailed(file, line, function, "glCheckFramebufferStatus", "%s", glFrameBufferStatusString(err));
     }
     
 	return err;
@@ -321,7 +347,14 @@ void glReportValidateShaderError1(const char *file, uint line, const char *funct
 bool ShaderProgramBase::LoadProgram(const char* shared, const char *vertf, const char *fragf)
 {
     ASSERT_MAIN_THREAD();
-    string header = string("#version 120\n") + shared;
+    string header =
+#if OPENGL_ES
+        "precision highp float;\n"
+        "precision highp sampler2D;\n";
+#else
+        "#version 120\n";
+#endif
+    header += shared;
     static const char* vertheader =
         "attribute vec4 Position;\n"
         "uniform mat4 Transform;\n";
@@ -396,7 +429,7 @@ void ShaderState::DrawElements(uint dt, size_t ic, const ushort* i) const
     ASSERT_MAIN_THREAD();
     glDrawElements(dt, (GLsizei) ic, GL_UNSIGNED_SHORT, i);
     glReportError();
-    globals.drawCount++;
+    graphicsDrawCount++;
 }
 
 void ShaderState::DrawElements(uint dt, size_t ic, const uint* i) const
@@ -404,7 +437,7 @@ void ShaderState::DrawElements(uint dt, size_t ic, const uint* i) const
     ASSERT_MAIN_THREAD();
     glDrawElements(dt, (GLsizei) ic, GL_UNSIGNED_INT, i);
     glReportError();
-    globals.drawCount++;
+    graphicsDrawCount++;
 }
 
 void ShaderState::DrawArrays(uint dt, size_t count) const
@@ -412,7 +445,7 @@ void ShaderState::DrawArrays(uint dt, size_t count) const
     ASSERT_MAIN_THREAD();
     glDrawArrays(dt, 0, (GLsizei)count);
     glReportError();
-    globals.drawCount++;
+    graphicsDrawCount++;
 }
 
 void DrawAlignedGrid(ShaderState &wss, const View& view, float size, float z)
@@ -567,3 +600,90 @@ void PostProc::Draw(bool bindFB)
     // nothing to do if bindFB and no blur
 }
 
+ShaderState View::getWorldShaderState(float3 offset) const
+{
+    // +y is up in world coordinates
+    const float2 s = 0.5f * sizePoints * float(scale);
+    ShaderState ws;
+
+#if 0
+    ws.uTransform = glm::ortho(-s.x, s.x, -s.y, s.y, -10.f, 10.f);
+    ws.rotate(-angle);
+    ws.translate(-position);
+#else
+    const float fovy   = M_PI_2f;
+    const float aspect = sizePoints.x / sizePoints.y;
+    const float dist   = s.y;
+    const float mznear = max(1.f, dist - 10.f);
+    const float mzfar  = dist + clamp(zfar, 5.f, 10000.f);
+
+    const glm::mat4 view = glm::lookAt(float3(position, dist),
+                                       float3(position, 0.f),
+                                       float3(angleToVector(angle + 0.5f * M_PIf), 0));
+    const glm::mat4 proj = glm::perspective(fovy, aspect, mznear, mzfar);
+    ws.uTransform = proj * view;
+#endif
+
+    ws.translate(offset);
+    return ws;
+}
+
+ShaderState View::getScreenShaderState() const
+{
+    ShaderState ss;
+
+#if 0
+    cpBB screenBB = getScreenPointBB();
+    ss.uTransform = glm::ortho((float)screenBB.l, (float)screenBB.r, (float)screenBB.b, (float)screenBB.t, -10.f, 10.f);
+#else
+    const float2 pos   = 0.5f * sizePoints;
+    const float fovy   = M_PI_2f;
+    const float aspect = sizePoints.x / sizePoints.y;
+    const float dist   = pos.y;
+    const float mznear  = max(dist - 10.f, 1.f);
+
+    const glm::mat4 view = glm::lookAt(float3(pos, dist),
+                                       float3(pos, 0.f),
+                                       float3(0, 1, 0));
+    const glm::mat4 proj = glm::perspective(fovy, aspect, mznear, dist + 10.f);
+    ss.uTransform = proj * view;
+#endif
+
+    //ss.translate(float3(offset.x, offset.y, toScreenSize(offset.z)));
+    //ss.translate(offset);
+
+    return ss;
+}
+
+
+const GLTexture &getDitherTex()
+{
+    static GLTexture *tex = NULL;
+
+    if (!tex)
+    {
+        static const char pattern[] = {
+            0, 32,  8, 40,  2, 34, 10, 42,   /* 8x8 Bayer ordered dithering  */
+            48, 16, 56, 24, 50, 18, 58, 26,   /* pattern.  Each input pixel   */
+            12, 44,  4, 36, 14, 46,  6, 38,   /* is scaled to the 0..63 range */
+            60, 28, 52, 20, 62, 30, 54, 22,   /* before looking in this table */
+            3, 35, 11, 43,  1, 33,  9, 41,   /* to determine the action.     */
+            51, 19, 59, 27, 49, 17, 57, 25,
+            15, 47,  7, 39, 13, 45,  5, 37,
+            63, 31, 55, 23, 61, 29, 53, 21 };
+
+        GLuint name = 0;
+        glGenTextures(1, &name);
+        glBindTexture(GL_TEXTURE_2D, name);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, 8, 8, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, pattern);
+        glReportError();
+
+        tex = new GLTexture(name, float2(8.f), GL_LUMINANCE);
+    }
+    
+    return *tex;
+}

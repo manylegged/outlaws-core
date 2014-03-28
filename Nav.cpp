@@ -27,7 +27,6 @@
 #include "Nav.h"
 
 static const float kLinearPosThreshold  = 0.6; // how closely should we thrust to the direction we are trying to thrust?
-static const float kLinearPosAccelScale = 0.1; // below what percentage of acceleration should we start turning down engines?
 static const float kLinearVelThreshhold = 0.3; // when adjusting velocity only, accuracy of thrust direction
 static const float kMaxLinearAngAccel   = 0.1;
 
@@ -73,7 +72,7 @@ float2 sNav::moversForLinearAccel(float2 dir, float threshold, float angAccel, b
 
 #if 1
     // turn off thruster one by one until we stop adding rotation
-    while (fabsf(angAccelError) > kMaxLinearAngAccel)
+    while (fabsf(angAccelError) > kMaxLinearAngAccel && (enabled - disabled > 1))
     {
         float    mxaa = 0.f;
         snMover *mxmv = NULL;

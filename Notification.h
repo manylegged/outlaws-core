@@ -38,12 +38,14 @@ struct Notification {
 
 struct INotifyHandler {
 
-    const uint64 m_registeredTypes;
+private:
+    uint64 m_registeredTypes;
+public:
 
     virtual void OnNotify(const Notification& notif) = 0;
+    void registerTypes(uint64 types);
     INotifyHandler(uint64 types);
     virtual ~INotifyHandler();
-    
 };
 
 
