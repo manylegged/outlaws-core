@@ -140,10 +140,10 @@ void OL_FontAdvancements(int font, float size, struct OLSize* advancements); // 
 // load text file into memory. pointer does not need to be freed, but is reused across calls
 const char *OL_LoadFile(const char *fname);
 
-// write text file to disk, atomically. Creates directories as needed
+// write text file to disk, atomically. Creates directories as needed.
 int OL_SaveFile(const char* fname, const char* data);
 
-// get complete path for data file, searching through save directory and application resource directory
+// get complete path for data file in utf8, searching through save directory and application resource directory
 // mode should be "w" or "r"
 const char *OL_PathForFile(const char *fname, const char *mode);
 

@@ -348,7 +348,7 @@ public:
             const char* path = OL_PathForFile(fname.c_str(), "r");
             buf = m_mgr->createBuffer(path);
             if (!buf) {
-                cAudio::getLogger()->logDebug("Allocator", str_format("Failed to load sound load '%s'", fname.c_str()).c_str());
+                cAudio::getLogger()->logError("Allocator", str_format("Failed to load sound load '%s'", path).c_str());
             }
         }
         return buf;
