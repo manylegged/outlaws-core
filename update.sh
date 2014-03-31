@@ -1,4 +1,7 @@
 #!/bin/sh
+
+# update this github repo from the central game repo
+
 outlaws=~/Documents/outlaws
 cp -v $outlaws/core/* .
 mkdir -p os/win32 os/osx os/sdl os/linux

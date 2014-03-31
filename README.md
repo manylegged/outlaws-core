@@ -1,7 +1,7 @@
 outlaws-core
 ============
 
-General purpose c++11 code from my upcoming game Gamma Void.
+General purpose c++11 code from my upcoming game Gamma Void: http://anisopteragames.com
 
 Not cleaned up enough to be #included directly by other projects without changes, but contains some useful snippets.
 
@@ -16,14 +16,15 @@ Highlights:
 * mac/win/linux platform layer in Outlaws.h (implementations in OS directory)
 
 supported compilers
-==================
+-------------------
 * Xcode 5.1 (clang)
 * Visual Studio 2013
 * GCC 4.8
 
 used libraries
-==============
+--------------
 * OpenGL: http://www.opengl.org
 * OpenGL Mathematics Library: http://glm.g-truc.net
 * Simple DirectMedia Layer (windows and linux): http://www.libsdl.org
 * OpenGL Extension Wrangler Library (GLEW): http://glew.sourceforge.net
+* cAudio 3D audio engine based on OpenAL (with my modifications): https://github.com/manylegged/cAudio
