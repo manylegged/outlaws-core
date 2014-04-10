@@ -42,8 +42,8 @@ void   glReportValidateShaderError1(const char* file, uint line, const char* fun
 #define glReportFramebufferError() glReportFramebufferError1(__FILE__, __LINE__, __func__)
 #define glReportValidateShaderError(PROG) glReportValidateShaderError1(__FILE__, __LINE__, __func__, (PROG))
 #else
-#define glReportError()
-#define glReportFramebufferError()
+#define glReportError() (GL_NO_ERROR)
+#define glReportFramebufferError() (GL_NO_ERROR)
 #define glReportValidateShaderError(PROG)
 #endif
 
@@ -411,6 +411,16 @@ struct View {
         return p;
     }
 
+    // Z is in worldspace
+    float2 toWorld(float2 p, float z) const
+    {
+        // FIXME angle
+        p -= 0.5f * sizePoints;
+        p *= getScale(z);
+        p += position;
+        return p;
+    }
+
     float2 toScreen(float2 p, float z=0.f) const
     {
         double2 dp = double2(p);
@@ -544,11 +554,10 @@ struct View {
 class ShaderProgramBase {
     
 private:    
-    GLuint m_programHandle;
-    GLint m_transformUniform;
-    GLint m_positionSlot;
+    GLuint m_programHandle    = 0;
+    GLint  m_transformUniform = -1;
+    GLint  m_positionSlot     = -1;
     
-    bool m_loaded;
     mutable vector<GLuint> m_enabledAttribs;
 
     static void vap1(uint slot, uint size, const float* ptr)  { glVertexAttribPointer(slot, 1, GL_FLOAT, GL_FALSE, size, ptr); }
@@ -558,23 +567,27 @@ private:
     static void vap1(uint slot, uint size, const uint* ptr)   { glVertexAttribPointer(slot, 4, GL_UNSIGNED_BYTE, GL_TRUE, size, ptr); }
 
 protected:
-    ShaderProgramBase() : m_loaded(false) {}
+    ShaderProgramBase() {}
     virtual ~ShaderProgramBase(){}
     
     GLuint getProgram() const { return m_programHandle; }
     
     bool LoadProgram(const char* shared, const char *vert, const char *frag);
     
-    int getAttribLocation(const char *name) const 
-    { 
+    GLint getAttribLocation(const char *name) const
+    {
+        if (!isLoaded())
+            return -1;
         GLint v = glGetAttribLocation(m_programHandle, name);
         ASSERT(v >= 0);
         glReportError();
         return v;
     }
 
-    int getUniformLocation(const char *name) const 
-    { 
+    GLint getUniformLocation(const char *name) const
+    {
+        if (!isLoaded())
+            return -1;
         GLint v = glGetUniformLocation(m_programHandle, name);
         ASSERT(v >= 0);
         glReportError();
@@ -604,7 +617,7 @@ public:
 
     void UnuseProgram() const;
 
-    bool Loaded() const { return m_loaded; }
+    bool isLoaded() const { return m_programHandle != 0; }
 };
 
 
@@ -900,6 +913,9 @@ public:
     template <typename Prog>
     void Draw(const ShaderState &s, uint type, const Prog &program) const
     {
+        if (!program.isLoaded())
+            return;
+
         if (!m_vbo.empty())
         {
             ASSERT(m_ibo.size());

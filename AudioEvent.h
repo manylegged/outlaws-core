@@ -404,6 +404,8 @@ struct EventDescription {
         if (usedef)
             *this = getDefault();
     }
+    
+    typedef int VisitEnabled;
 
     template <typename V>
     bool accept(V& vis)

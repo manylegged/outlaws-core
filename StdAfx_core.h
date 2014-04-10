@@ -48,14 +48,20 @@ inline void ReportMessagef(const char *format, ...)
 }
 
 
-// eat the first two numbers...
 #define TYPE_NAME(X) (typeid(X).name())
 
 #define arraySize(X) (sizeof(X) / sizeof(X[0]))
 
+#define SIZEOF_PTR(X) ((X) ? sizeof(*(X)) : 0)
+#define SIZEOF_REC(X) ((X) ? (X)->getSizeof() : 0)
+#define SIZEOF_IREC(X) ((X).getSizeof() - sizeof(X))
+#define SIZEOF_VEC(X) (sizeof((X)[0]) * (X).capacity())
+#define SIZEOF_PVEC(X) ((X) ? SIZEOF_VEC(*X) : 0)
+#define SIZEOF_ARR(X, Y) ((X) ? (sizeof(X[0]) * (Y)) : 0)
+
 // assertions are enabled even in release builds
-#define ASSERT(X) if (__builtin_expect(!(X), 0)) OLG_OnAssertFailed(__FILE__, __LINE__, __func__, #X, "")
-#define ASSERTF(X, Y, ...) if (__builtin_expect(!(X), 0)) OLG_OnAssertFailed(__FILE__, __LINE__, __func__, #X, (Y), __VA_ARGS__)
+#define ASSERT(X) (__builtin_expect(!(X), 0) ? OLG_OnAssertFailed(__FILE__, __LINE__, __func__, #X, ""), 1 : 0)
+#define ASSERTF(X, Y, ...) (__builtin_expect(!(X), 0) ? OLG_OnAssertFailed(__FILE__, __LINE__, __func__, #X, (Y), __VA_ARGS__), 1 : 0)
 
 
 #if !defined(DEBUG) && !defined(DEVELOP)

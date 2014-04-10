@@ -79,6 +79,14 @@ private:
 
 public:
 
+    size_t getSizeof() const
+    {
+        size_t sz = sizeof(*this);
+        sz += SIZEOF_VEC(m_elements);
+        sz += SIZEOF_VEC(m_cells);
+        return sz;
+    }
+
     // change size of hash
     void reset(float cell_size, uint cells)
     {

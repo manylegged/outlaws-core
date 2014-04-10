@@ -255,7 +255,7 @@ static void printShaderInfoLog(const char* txt, GLuint id)
 {
     const uint bufsize = 2048;
     char buf[bufsize];
-    GLsizei length;
+    GLsizei length = 0;
     glGetShaderInfoLog(id, bufsize, &length, buf);
     if (length && buf != kNoErrors) {
         string st = str_addLineNumbers(txt);
@@ -269,7 +269,7 @@ static void printProgramInfoLog(GLuint id)
 {
     const uint bufsize = 2048;
     char buf[bufsize];
-    GLsizei length;
+    GLsizei length = 0;
     glGetProgramInfoLog(id, bufsize, &length, buf);
     if (length && buf != kNoErrors) {
         OL_ReportMessage(buf);
@@ -279,9 +279,9 @@ static void printProgramInfoLog(GLuint id)
 }
 
 
-static uint createShader(const char *txt, GLenum type)
+static GLuint createShader(const char *txt, GLenum type)
 {
-    uint id = glCreateShader(type);
+    GLuint id = glCreateShader(type);
     glShaderSource(id, 1, &txt, NULL);
     glCompileShader(id);
     printShaderInfoLog(txt, id);
@@ -362,8 +362,11 @@ bool ShaderProgramBase::LoadProgram(const char* shared, const char *vertf, const
     string vertful = header + vertheader + vertf;
     string fragful = header + fragf;
 
-    uint vert = createShader(vertful.c_str(), GL_VERTEX_SHADER);
-    uint frag = createShader(fragful.c_str(), GL_FRAGMENT_SHADER);
+    GLuint vert = createShader(vertful.c_str(), GL_VERTEX_SHADER);
+    GLuint frag = createShader(fragful.c_str(), GL_FRAGMENT_SHADER);
+
+    if (!vert || !frag)
+        return false;
     
     m_programHandle = glCreateProgram();
     glAttachShader(m_programHandle, vert);
@@ -378,17 +381,17 @@ bool ShaderProgramBase::LoadProgram(const char* shared, const char *vertf, const
     
     GLint linkSuccess;
     glGetProgramiv(m_programHandle, GL_LINK_STATUS, &linkSuccess);
-    if (linkSuccess == GL_FALSE)
+    if (linkSuccess == GL_FALSE) {
+        m_programHandle = 0;
         return false;
+    }
     
     m_positionSlot = glGetAttribLocation(m_programHandle, "Position");
     
     glReportError();
     
     m_transformUniform = glGetUniformLocation(m_programHandle, "Transform");
-    
-    m_loaded = true;
-    return m_loaded;
+    return true;
 }
 
 void ShaderProgramBase::UseProgramBase(const ShaderState& ss, uint size, const float3* pos) const

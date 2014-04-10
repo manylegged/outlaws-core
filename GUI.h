@@ -31,8 +31,6 @@
 #include "Shaders.h"
 #include <cctype>
 
-static const double kDoubleClickTimeout = 0.25f;
-static const double kTripleClickTimeout = 0.3f;
 static const float  kPadDist            = 2;
 static const float2 kButtonPad         = float2(4.f);
 

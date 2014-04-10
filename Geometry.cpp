@@ -233,7 +233,7 @@ float intersectBBSegmentV(float bbl, float bbb, float bbr, float bbt, float2 a, 
 
 bool intersectPointTriangle(float2 P, float2 A, float2 B, float2 C)
 {
-    // Compute vectors        
+    // Compute vectors
     float2 v0 = C - A;
     float2 v1 = B - A;
     float2 v2 = P - A;

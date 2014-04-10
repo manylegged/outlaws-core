@@ -26,7 +26,6 @@
 #ifndef SERIALCORE_H
 #define SERIALCORE_H
 
-
 typedef pair<lstring, uint64> SaveEnum;
 #define TO_SAVEENUM(K, V) SaveEnum(#K, V),
 #define TO_ENUM(X, V) X=V,
@@ -41,36 +40,100 @@ typedef pair<lstring, uint64> SaveEnum;
     }
 
 #define DEFINE_ENUM_OP(X)                                          \
-    uint64 operator X(uint64 val) const { return value X val; }    \
-    uint64 operator X##=(uint64 val) { return value X##= val; }   \
-    uint64 operator X(SerialEnum val) const { return value X val.value; } \
-    uint64 operator X##=(SerialEnum val) { return value X##= val.value; }
+    U operator X(U val) const { return value X val; }    \
+    U operator X##=(U val) { return value X##= val; }   \
+    U operator X(SerialEnum val) const { return value X val.value; } \
+    U operator X##=(SerialEnum val) { return value X##= val.value; }
 
-template <typename T>
+template <typename T, typename U=uint64>
 struct SerialEnum {
 
     typedef T Type;
     
     SerialEnum() {}
-    SerialEnum(uint64 init) : value(init) {}
+    SerialEnum(U init) : value(init) {}
     
-    uint64 value = 0;
+    U value = 0;
     
     DEFINE_ENUM_OP(&)
     DEFINE_ENUM_OP(|)
     DEFINE_ENUM_OP(^)
 
-    uint64 operator==(uint64 o) const { return value == o; }
-    uint64 operator==(SerialEnum o) const { return value == o.value; }
-    uint64 operator!=(uint64 o) const { return value != o; }
-    uint64 operator!=(SerialEnum o) const { return value != o.value; }
-    SerialEnum& operator=(uint64 o) { value = o; return *this; }
+    U operator==(U o) const { return value == o; }
+    U operator==(SerialEnum o) const { return value == o.value; }
+    U operator!=(U o) const { return value != o; }
+    U operator!=(SerialEnum o) const { return value != o.value; }
+    SerialEnum& operator=(U o) { value = o; return *this; }
     SerialEnum& operator=(SerialEnum o) { value = o.value; return *this; }
     explicit operator bool() const { return bool(value); }
 
-    uint64 get() const { return value; }
+    U get() const { return value; }
     string toString() const;
 };
+
+
+/////////////////////////////////////////////////////////////////////////////////
+// Reflective struct macros
+// Easily declare structs that automatically 
+//
+// fields in function like macro like this:
+// F(TYPE, NAME, DEFAULT)
+//
+// For example:
+// #define SERIAL_BLOCK_FIELDS(F)                                       \
+//     F(uint,              ident,                   0)                 \
+//     F(float2,            offset,                  float2(0))         \
+//     F(float,             angle,                   0.f)               \
+
+#define SERIAL_TO_STRUCT_FIELD(TYPE, NAME, _DEFAULT) TYPE NAME;
+#define SERIAL_VISIT_FIELD_AND(TYPE, NAME, DEFAULT) vis.visit(#NAME, (NAME), TYPE(DEFAULT)) &&
+#define SERIAL_INITIALIZE_FIELD(_TYPE, NAME, DEFAULT) NAME = (DEFAULT);
+#define SERIAL_COPY_FIELD(TYPE, NAME, _DEFAULT) NAME = sb.NAME;
+#define SERIAL_ELSE_FIELD_NEQUAL(_TYPE, NAME, _DEFAULT) else if ((this->NAME) != (sb.NAME)) return 0;
+#define VISIT(FIELD) visit(#FIELD, (FIELD))
+
+#define DECLARE_SERIAL_STRUCT_CONTENTS(STRUCT_NAME, FIELDS_MACRO)   \
+    FIELDS_MACRO(SERIAL_TO_STRUCT_FIELD);                           \
+    STRUCT_NAME();                                                  \
+    STRUCT_NAME(const STRUCT_NAME& o) { *this = o; }                \
+    template <typename V>                                           \
+    bool accept(V& vis)                                             \
+    {                                                               \
+        return FIELDS_MACRO(SERIAL_VISIT_FIELD_AND) true;       \
+    }                                                               \
+    static const STRUCT_NAME &getDefault();                         \
+    bool operator==(const STRUCT_NAME& sb) const;                   \
+    STRUCT_NAME& operator=(const STRUCT_NAME& sb);                  \
+    typedef int VisitEnabled;                                       \
+
+
+
+#define DECLARE_SERIAL_STRUCT(STRUCT_NAME, FIELDS_MACRO)            \
+    struct STRUCT_NAME {                                            \
+        DECLARE_SERIAL_STRUCT_CONTENTS(STRUCT_NAME, FIELDS_MACRO);  \
+    }                                                               \
+
+
+
+#define DEFINE_SERIAL_STRUCT(STRUCT_NAME, FIELDS_MACRO)         \
+    STRUCT_NAME::STRUCT_NAME()                                  \
+    {                                                           \
+        FIELDS_MACRO(SERIAL_INITIALIZE_FIELD);                  \
+    }                                                           \
+    bool STRUCT_NAME::operator==(const STRUCT_NAME& sb) const   \
+    {                                                           \
+        if (0); FIELDS_MACRO(SERIAL_ELSE_FIELD_NEQUAL) else return 1;   \
+    }                                                           \
+    STRUCT_NAME& STRUCT_NAME::operator=(const STRUCT_NAME& sb)    \
+    {                                                           \
+        FIELDS_MACRO(SERIAL_COPY_FIELD);                        \
+        return *this;                                           \
+    }                                                           \
+    const STRUCT_NAME &STRUCT_NAME::getDefault()                \
+    {                                                           \
+        static const STRUCT_NAME val;                           \
+        return val;                                             \
+    }
 
 
 #endif

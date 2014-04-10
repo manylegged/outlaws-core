@@ -27,8 +27,8 @@
 #define LOGGING_H
 
 #include "StdAfx.h"
-#include "Graphics.h"
 #include "Shaders.h"
+#include "GLText.h"
 
 static const uint kGraphItems    = 240;
 static const uint kGraphColors[] = {
@@ -197,7 +197,7 @@ struct FrameLogger {
         // draw labels
         vector<double> heights;
         double         ystart = 0;
-        uint           pi     = 0;
+        uint           pindex     = 0;
 
         foreach (const PhaseTime &phase, m_sortLog[0]) 
         {
@@ -223,7 +223,7 @@ struct FrameLogger {
                                GLText::MID_RIGHT, ALPHA_OPAQUE|m_phaseData[phase.first].color,
                                textHeight, "%s: %.1f/%.1f", phase.first.c_str(), 
                                1000.0 * stat.mean, 1000.0 * stat.stddev);
-            pi++;
+            pindex++;
         }
         
         // graph
@@ -233,7 +233,7 @@ struct FrameLogger {
         foreach (const VDict& mp, m_sortLog) 
         {
             const float x = (0.5f + xi) * (graphSize.x / kGraphItems);
-            pi = 0;
+            pindex = 0;
             ystart = 0;
             foreach (const PhaseTime &phase, mp) {
                 m_tri.color(m_phaseData[phase.first].color, 0.5f);
@@ -245,7 +245,7 @@ struct FrameLogger {
                 } else {
                     m_tri.PushRect(graphStart + float2(x, y), pointSize);
                 }
-                pi++;
+                pindex++;
             }
             xi++;
         }

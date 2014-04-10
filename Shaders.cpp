@@ -88,15 +88,13 @@ ShaderIridescent::ShaderIridescent()
 {
     const bool shader4 =
 #if __APPLE__
-#if OPENGL_ES
-    false;
+#  if OPENGL_ES
+        false;
+#  else
+    true;
+#  endif
 #else
-    	true;
-#endif
-#else
-    (glewIsSupported("GL_VERSION_3_0") || 
-     glewIsSupported("GL_EXT_gpu_shader4") ||
-     glewIsSupported("GL_EXT_geometry_shader4"));
+    glewIsSupported("GL_EXT_gpu_shader4");
 #endif
     
     OL_ReportMessage(shader4 ? "Shader4 supported" : "Shader4 unsupported");

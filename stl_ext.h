@@ -70,6 +70,14 @@ inline int findLeadingOne(uint64 v)
     return (v&0xffffffff00000000L) ? findLeadingOne((uint) (v>>32), 32) : findLeadingOne((uint)v, 0);
 }
 
+template <typename T>
+inline void setBits(T &bits, const T &flag, bool val)
+{
+    if (val)
+        bits |= flag;
+    else
+        bits &= ~flag;
+}
 
 inline bool isPow2(int x)
 { 
@@ -604,6 +612,9 @@ key_comparator<K> make_key_comparator(K k) { return key_comparator<K>(k); }
 template <typename T, typename F>
 inline void vector_sort(T& col, const F& comp) { std::sort(col.begin(), col.end(), comp); }
 
+template <typename T>
+inline void vector_sort(T& col) { std::sort(col.begin(), col.end()); }
+
 // sort entire vector, using supplied function to get comparison key
 template <typename T, typename F>
 inline void vector_sort_key(T& col, const F& gkey) { std::sort(col.begin(), col.end(), make_key_comparator(gkey)); }
@@ -1129,6 +1140,92 @@ private:
     Lock& m;
     mutex_type* mtx;
 };
+
+// pooled memory allocator
+class MemoryPool {
+
+    struct Chunk {
+        Chunk *next;
+    };
+
+    std::mutex    mutex;
+    const size_t  element_size;
+    const size_t  count;
+    size_t        used  = 0;
+    char         *pool  = NULL;
+    Chunk        *first = NULL;
+
+public:
+
+    // allocate a pool containing CNT elements of SZ bytes each
+    MemoryPool(size_t sz, size_t cnt) : element_size(sz), count(cnt)
+    {
+        pool = (char*) malloc(count * element_size);
+        first = (Chunk*) pool;
+        for (int i=0; i<count-1; i++) {
+            ((Chunk*) &pool[i * element_size])->next = (Chunk*) &pool[(i+1) * element_size];
+        }
+    }
+    
+    ~MemoryPool()
+    {
+        free(pool);
+    }
+
+    size_t getCount() const { return count; }
+    size_t getUsed() const { return used; }
+    size_t getElementSize() const { return element_size; }
+
+    template <typename T>
+    T* begin()
+    {
+        ASSERT(sizeof(T) == element_size);
+        return (T*)pool;
+    }
+
+    template <typename T>
+    T* end()
+    {
+        ASSERT(sizeof(T) == element_size);
+        return (T*)(pool + count * element_size);
+    }
+
+    bool isInPool(const void *pt) const
+    {
+        const char *ptr = (char*) pt;
+        const int index = (ptr - pool) / element_size;
+        if (index < 0 || index > count)
+            return false;
+        ASSERT(pool + (index  * element_size) == ptr);
+        return true;
+    }
+
+    // return a block of element_size bytes
+    void* allocate()
+    {
+        std::lock_guard<std::mutex> l(mutex);
+
+        Chunk *chunk = first;
+        first = first->next;
+        used++;
+        ASSERT(first);
+        return (void*) chunk;
+    }
+
+    // free a block returned by allocate()
+    void deallocate(void *ptr)
+    {
+        std::lock_guard<std::mutex> l(mutex);
+
+        ASSERT(isInPool(ptr));
+
+        Chunk *chunk = (Chunk*) ptr;
+        chunk->next = first;
+        first = chunk;
+        used--;
+    }
+};
+
 
 
 #endif

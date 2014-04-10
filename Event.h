@@ -22,9 +22,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-#ifndef EVENT_H
-#define EVENT_H
-
+#ifndef CORE_EVENT_H
+#define CORE_EVENT_H
 
 struct Event {
     // !!! KEEP IN SYNC WITH Outlaws.h VERSION !!!
@@ -234,4 +233,4 @@ inline string keyToString(int key)
 }
 
 
-#endif // EVENT_H
+#endif // CORE_EVENT_H
