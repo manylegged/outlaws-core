@@ -50,10 +50,18 @@ void OL_ReportMessage(const char *str)
 #else
     printf("%s\n", str);
 #endif
-    if (!g_logfile && !g_quitting) {
+
+    if (g_quitting)
+        return;
+
+    if (!g_logfile) {
         const char* path = OL_PathForFile("data/log.txt", "a");
-        g_logfile = SDL_RWFromFile(path, "w");
-        ReportMessagef("Log file opened at %s", path); // call self recursively
+        if (!g_logfile) { // may have been opened by OL_PathForFile
+            g_logfile = SDL_RWFromFile(path, "w");
+            if (!g_logfile)
+                return;
+            ReportMessagef("Log file opened at %s", path); // call self recursively
+        }
     }
 #if _MSC_VER
 #define OL_NEWLINE "\r\n"

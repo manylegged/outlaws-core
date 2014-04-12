@@ -36,7 +36,7 @@ protected:
             // particles created during simulation, not during render
             const float time = globals.simTime;
             startTime        = time;
-            endTime          = time + max((float)kTimeStep, t);
+            endTime          = time + max((float)globals.simTimeStep, t);
         }
     };
 

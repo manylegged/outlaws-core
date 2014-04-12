@@ -59,14 +59,15 @@ struct FrameLogger {
 
     // must be called from the same thread
     double                                       m_frameStartTime;
+    double                                       m_frameDeadline;
     vector<PhaseTime>                            m_currentPhases;
     Dict                                         m_current;
-    std::map<lstring, Stats>                     m_stats;
+    std::unordered_map<lstring, Stats>           m_stats;
 
     // shared, mutex protected
     std::mutex                                   m_mutex;
     std::deque< Dict >                           m_log;
-    std::map<lstring, PhaseData >                m_phaseData;
+    std::unordered_map<lstring, PhaseData >      m_phaseData;
 
     // render thread
     TriMesh<VertexPosColor>                      m_tri;
@@ -90,11 +91,12 @@ struct FrameLogger {
         }
     };
 
-    void beginFrame()
+    void beginFrame(double deadline)
     {
         if (m_paused)
             return;
         m_frameStartTime = OL_GetCurrentTime();
+        m_frameDeadline  = deadline;
         m_current.clear();
     }
 
@@ -256,21 +258,25 @@ struct FrameLogger {
         ShaderState screenSS = view.getScreenShaderState();
 
         static const float2 kGraphStart(500, 40);
-        static const float2 kGraphSize = toGoldenRatioX(view.sizePoints.x - kGraphStart.x - kGraphStart.y);
+        const float2 graphSize = toGoldenRatioX(view.sizePoints.x - kGraphStart.x - kGraphStart.y);
 
         m_tri.clear();
         m_line.clear();
 
         // axes
         m_line.color(COLOR_GREEN);
-        m_line.PushLine(kGraphStart, kGraphStart + float2(kGraphSize.x, 0));
-        m_line.PushLine(kGraphStart, kGraphStart + float2(0, kGraphSize.y));
+        m_line.PushLine(kGraphStart, kGraphStart + float2(graphSize.x, 0));
+        m_line.PushLine(kGraphStart, kGraphStart + float2(0, graphSize.y));
         for (uint ms=0; ms<m_maxTimeMs; ms += 5) {
-            const float y = ms * (kGraphSize.y / m_maxTimeMs);
+            const float y = ms * (graphSize.y / m_maxTimeMs);
             m_line.PushLine(kGraphStart + float2(0, y), kGraphStart + float2(ms&1 ? 10 : 20, y));
         }
+        m_line.color(COLOR_GREEN, 0.5f);
+        const float dly = 1000.f * m_frameDeadline * (graphSize.y / m_maxTimeMs);
+        m_line.PushLine(kGraphStart + float2(0.f, dly),
+                        kGraphStart + float2(graphSize.x, dly));
 
-        renderGraph(screenSS, kGraphStart, kGraphSize);
+        renderGraph(screenSS, kGraphStart, graphSize);
 
         m_line.Draw(screenSS, ShaderColor::instance());
         m_tri.Draw(screenSS, ShaderColor::instance());

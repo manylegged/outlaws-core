@@ -72,7 +72,7 @@ struct GLDisableAlphaTest : public GLDisableScope {
 
 
 // RAII for opengl buffers
-template <typename Type, uint GLType>
+template <typename Type, GLenum GLType>
 class GLBuffer {
     GLuint m_id;
     GLenum m_usage;
@@ -95,6 +95,8 @@ public:
 
     bool empty() const { return m_size == 0; }
     uint size() const  { return m_size; }
+    uint getElementSize() const { return sizeof(Type); }
+    GLenum getType() const { return GLType; }
 
     void clear()
     {
