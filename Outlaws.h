@@ -58,17 +58,19 @@ void OLG_OnQuit(void);
 // called when window manager changes full screen state
 void OLG_SetFullscreenPref(int enabled);
 
-// handle assertions
-void OLG_OnAssertFailed(const char* file, int line, const char* func, const char* x,
+// handle assertions. return 1
+int OLG_OnAssertFailed(const char* file, int line, const char* func, const char* x,
                         const char* format, ...) __printflike(5, 6) CLANG_ANALYZER_NORETURN;
-void OLG_vOnAssertFailed(const char* file, int line, const char* func, const char* x,
+int OLG_vOnAssertFailed(const char* file, int line, const char* func, const char* x,
                          const char* format, va_list v) __printflike(5, 0) CLANG_ANALYZER_NORETURN;
 
 // get current time, for animated shaders, etc
 double OLG_GetRenderSimTime(void);
 
-// get name of game
+// get name of game (for save path)
 const char* OGL_GetName(void);
+
+int OLG_UseDevSavePath(void);
 
 
  //////////////////////////////// Game calls into OS layer //////////////////////////////////
@@ -120,6 +122,9 @@ typedef struct OutlawTexture {
 
 // load a texture from file into OpenGL
 OutlawTexture OL_LoadTexture(const char* fname);
+
+// save a texture to file
+int OL_SaveTexture(const OutlawTexture *tex, const char* fname);
 
 struct OLSize {
     float x, y;

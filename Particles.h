@@ -11,7 +11,7 @@ struct ShaderParticles;
 
 struct ParticleSystem : public IDeletable {
 
-protected:
+public:
     
     struct Particle {
         float  startTime = 0.f;
@@ -39,6 +39,8 @@ protected:
             endTime          = time + max((float)globals.simTimeStep, t);
         }
     };
+    
+protected:
 
     struct ParticleTrail {
         float    startTime        = 0.f;
@@ -65,6 +67,7 @@ private:
     std::mutex             m_mutex;
     View                   m_view;
     vector<ParticleTrail>  m_trails;
+    IShader               *m_program = NULL;
     
     void updateRange(uint first, uint size);
 
@@ -83,6 +86,7 @@ protected:
     }
 
     void add(const Particle &p, bool gradient);
+    void setParticles(vector<Particle>& particles);
     void addTrail(const ParticleTrail& p) { m_trails.push_back(p); }
 
 public:
@@ -90,11 +94,12 @@ public:
     bool forceVisible = false;
 
     size_t count() const;
+    void setProgram(IShader *prog) { m_program = prog; }
 
     ParticleSystem();
     ~ParticleSystem();
 
-    void render(float3 offset, ShaderState s, const View& view);
+    void render(float3 offset, const ShaderState &ss, const View& view);
     void update();
     void clear();
     

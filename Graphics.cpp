@@ -34,15 +34,44 @@
 #define ASSERT_MAIN_THREAD()
 #endif
 
+static const uint kDebugFrames = 10;
+
+bool isGLExtensionSupported(const char *name)
+{
+    static const GLubyte* val = glGetString(GL_EXTENSIONS);
+    static const string str((const char*)val);
+    return str.find(name) != std::string::npos;
+}
+
 uint graphicsDrawCount = 0;
 
 vector<GLRenderTexture*> GLRenderTexture::s_bound;
+
+#define CASE_STR(X) case X: return #X
+static const char* textureFormatToString(GLint fmt)
+{
+    switch (fmt) {
+        CASE_STR(GL_RGB);
+        CASE_STR(GL_RGBA);
+        CASE_STR(GL_BGR);
+        CASE_STR(GL_BGRA);
+        CASE_STR(GL_RGBA16F_ARB);
+        CASE_STR(GL_RGB16F_ARB);
+#if OPENGL_ES
+        CASE_STR(GL_RGB16F_EXT);
+#endif
+        default: return "<unknown>";
+    }
+}
 
 void GLRenderTexture::Generate()
 {
     ASSERT_MAIN_THREAD();
 
-    ASSERT(m_size.x > 1 && m_size.y > 1);
+    ASSERT(m_size.x >= 1 && m_size.y >= 1);
+
+    DPRINT(SHADER, ("Generating render texture, %.fx%.f %s", m_size.x, m_size.y,
+                    textureFormatToString(m_format)));
 
     glReportError();
     glGenFramebuffers(1, &m_fbname);
@@ -113,7 +142,7 @@ void GLRenderTexture::BindFramebuffer(float2 size, bool keepz)
         Generate();
     RebindFramebuffer();
 
- #if !OPENGL_ES
+#if !OPENGL_ES
     if (keepz)
     {
         const GLuint def = s_bound.size() ? s_bound.back()->m_fbname : 0;
@@ -122,8 +151,8 @@ void GLRenderTexture::BindFramebuffer(float2 size, bool keepz)
         glReportError();
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_fbname);
         glReportError();
-        glBlitFramebuffer(0, 0, m_size.x, m_size.y, 0, 0, m_size.x, m_size.y,
-                          GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+        glBlitFramebufferEXT(0, 0, m_size.x, m_size.y, 0, 0, m_size.x, m_size.y,
+                             GL_DEPTH_BUFFER_BIT, GL_NEAREST);
         glReportError();
     }
     else
@@ -139,7 +168,7 @@ void GLRenderTexture::BindFramebuffer(float2 size, bool keepz)
 
 void GLRenderTexture::RebindFramebuffer()
 {
-    ASSERT(m_size.x > 1 && m_size.y > 1);
+    ASSERT(m_size.x >= 1 && m_size.y >= 1);
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, m_texname);
@@ -152,7 +181,7 @@ void GLRenderTexture::RebindFramebuffer()
     glReportFramebufferError();
 }
 
-void GLRenderTexture::UnbindFramebuffer(float2 vpsize) const
+void GLRenderTexture::UnbindFramebuffer() const
 {
     ASSERT(s_bound.size() && s_bound.back() == this);
     s_bound.pop_back();
@@ -162,6 +191,9 @@ void GLRenderTexture::UnbindFramebuffer(float2 vpsize) const
     }
     else
     {
+        float2 psize;
+        float2 vpsize;
+        OL_GetWindowSize(&vpsize.x, &vpsize.y, &psize.x, &psize.y);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         glViewport(0, 0, vpsize.x, vpsize.y);
         glReportError();
@@ -211,6 +243,15 @@ void GLTexture::TexImage2D(int2 size, GLenum format, const uint *data)
 #endif
 }
 
+void GLTexture::SetTexWrap(bool enable)
+{
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, m_texname);
+    const GLint param = enable ? GL_REPEAT :  GL_CLAMP_TO_EDGE;
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, param);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, param);
+}
+
 void GLTexture::SetTexMagFilter(GLint filter)
 {
     glActiveTexture(GL_TEXTURE0);
@@ -251,49 +292,62 @@ GLTexture PixImage::uploadTexture() const
 
 static string kNoErrors("No errors.\n");
 
-static void printShaderInfoLog(const char* txt, GLuint id)
+static bool checkShaderInfoLog(const char* txt, GLuint prog)
 {
     const uint bufsize = 2048;
     char buf[bufsize];
     GLsizei length = 0;
-    glGetShaderInfoLog(id, bufsize, &length, buf);
+    glGetShaderInfoLog(prog, bufsize, &length, buf);
     if (length && buf != kNoErrors) {
         string st = str_addLineNumbers(txt);
-        ReportMessagef("For Shader:\n%s\n%s", st.c_str(), buf);
+        ReportMessagef("GL Shader Info Log:\n%s\n%s", st.c_str(), buf);
         ASSERT(length < bufsize);
-        ASSERT(0);
+        return 1;
     }
+    return 0;
 }
 
-static void printProgramInfoLog(GLuint id) 
+static bool checkProgramInfoLog(GLuint prog, const char* name)
 {
     const uint bufsize = 2048;
     char buf[bufsize];
     GLsizei length = 0;
-    glGetProgramInfoLog(id, bufsize, &length, buf);
+    glGetProgramInfoLog(prog, bufsize, &length, buf);
     if (length && buf != kNoErrors) {
-        OL_ReportMessage(buf);
+        ReportMessagef("GL Program Info log %s: %s", name, buf);
         ASSERT(length < bufsize);
-        ASSERT(0);
+        return 1;
     }
+    return 0;
 }
 
 
 static GLuint createShader(const char *txt, GLenum type)
 {
-    GLuint id = glCreateShader(type);
-    glShaderSource(id, 1, &txt, NULL);
-    glCompileShader(id);
-    printShaderInfoLog(txt, id);
+    GLuint idx = glCreateShader(type);
+    glShaderSource(idx, 1, &txt, NULL);
+    glCompileShader(idx);
+    checkShaderInfoLog(txt, idx);
 
-    return id;
+    GLint val = 0;
+    glGetShaderiv(idx, GL_COMPILE_STATUS, &val);
+    if (val == GL_FALSE) {
+        glDeleteShader(idx);
+        return 0;
+    }
+    
+    return idx;
 }
 
 GLenum glReportError1(const char *file, uint line, const char *function)
 {
     ASSERT_MAIN_THREAD();
-	GLenum err = glGetError();
-	if (GL_NO_ERROR != err)
+
+    if (!(globals.debugRender&DBG_GLERROR) && globals.frameStep > kDebugFrames)
+        return GL_NO_ERROR;
+
+	GLenum err = GL_NO_ERROR;
+	while (GL_NO_ERROR != (err = glGetError()))
     {
         const char* msg = (const char *)gluErrorString(err);
         OLG_OnAssertFailed(file, line, function, "glGetError", "%s", msg);
@@ -303,7 +357,6 @@ GLenum glReportError1(const char *file, uint line, const char *function)
 }
 
 
-#define CASE_STR(X) case X: return #X
 static const char* glFrameBufferStatusString(GLenum err)
 {
     switch(err) {
@@ -326,6 +379,10 @@ static const char* glFrameBufferStatusString(GLenum err)
 GLenum glReportFramebufferError1(const char *file, uint line, const char *function)
 {
     ASSERT_MAIN_THREAD();
+
+    if (!(globals.debugRender&DBG_GLERROR) && globals.frameStep > kDebugFrames)
+        return GL_NO_ERROR;
+
 	GLenum err = glCheckFramebufferStatus(GL_FRAMEBUFFER);
 	if (GL_FRAMEBUFFER_COMPLETE != err)
     {
@@ -338,22 +395,60 @@ GLenum glReportFramebufferError1(const char *file, uint line, const char *functi
 void glReportValidateShaderError1(const char *file, uint line, const char *function, GLuint program)
 {
     ASSERT_MAIN_THREAD();
+
+    if (!(globals.debugRender&DBG_GLERROR) && globals.frameStep > kDebugFrames)
+        return;
+
     glValidateProgram(program);
-    printProgramInfoLog(program);
+    checkProgramInfoLog(program, "validate");
     glReportError();
 }
 
+GLint ShaderProgramBase::getAttribLocation(const char *name) const
+{
+    if (!isLoaded())
+        return -1;
+    GLint v = glGetAttribLocation(m_programHandle, name);
+    ASSERT(v >= 0);
+    glReportError();
+    return v;
+}
 
-bool ShaderProgramBase::LoadProgram(const char* shared, const char *vertf, const char *fragf)
+GLint ShaderProgramBase::getUniformLocation(const char *name) const
+{
+    if (!isLoaded())
+        return -1;
+    GLint v = glGetUniformLocation(m_programHandle, name);
+    ASSERT(v >= 0);
+    glReportError();
+    return v;
+}
+
+ShaderProgramBase::~ShaderProgramBase()
 {
     ASSERT_MAIN_THREAD();
+    if (m_programHandle) {
+        glDeleteProgram(m_programHandle);
+        m_programHandle = 0;
+    }
+}
+
+bool ShaderProgramBase::LoadProgram(const char* name, const char* shared, const char *vertf, const char *fragf)
+{
+    ASSERT_MAIN_THREAD();
+
+    m_name = name;
+    DPRINT(SHADER, ("Compiling %s", name));
+    
     string header =
 #if OPENGL_ES
         "precision highp float;\n"
         "precision highp sampler2D;\n";
 #else
-        "#version 120\n";
+        "#version 120\n"
 #endif
+         "#define M_PI 3.1415926535897932384626433832795\n"; 
+
     header += shared;
     static const char* vertheader =
         "attribute vec4 Position;\n"
@@ -367,50 +462,62 @@ bool ShaderProgramBase::LoadProgram(const char* shared, const char *vertf, const
 
     if (!vert || !frag)
         return false;
+
+    if (m_programHandle) {
+        glDeleteProgram(m_programHandle);
+    }
     
     m_programHandle = glCreateProgram();
     glAttachShader(m_programHandle, vert);
     glAttachShader(m_programHandle, frag);
     
-    //glBindAttribLocation(m_programHandle, 0, "Position");
-    //glBindAttribLocation(m_programHandle, 1, "SourceColor");
-    
     glLinkProgram(m_programHandle);
-    printProgramInfoLog(m_programHandle);
-    glReportError();
+
+    glDeleteShader(vert);
+    glDeleteShader(frag);
+
+    checkProgramInfoLog(m_programHandle, name);
     
-    GLint linkSuccess;
+    GLint linkSuccess = 0;
     glGetProgramiv(m_programHandle, GL_LINK_STATUS, &linkSuccess);
     if (linkSuccess == GL_FALSE) {
+        glDeleteProgram(m_programHandle);
         m_programHandle = 0;
         return false;
     }
     
     m_positionSlot = glGetAttribLocation(m_programHandle, "Position");
-    
     glReportError();
     
     m_transformUniform = glGetUniformLocation(m_programHandle, "Transform");
+    glReportError();
     return true;
 }
 
 void ShaderProgramBase::UseProgramBase(const ShaderState& ss, uint size, const float3* pos) const
 {
     UseProgramBase(ss);
-    glEnableVertexAttribArray(m_positionSlot);
-    vap1(m_positionSlot, size, pos);
+    if (m_positionSlot >= 0) {
+        glEnableVertexAttribArray(m_positionSlot);
+        vap1(m_positionSlot, size, pos);
+        glReportError();
+    }
 }
 
 void ShaderProgramBase::UseProgramBase(const ShaderState& ss, uint size, const float2* pos) const
 {
     UseProgramBase(ss);
-    glEnableVertexAttribArray(m_positionSlot);
-    vap1(m_positionSlot, size, pos);
+    if (m_positionSlot >= 0) {
+        glEnableVertexAttribArray(m_positionSlot);
+        vap1(m_positionSlot, size, pos);
+        glReportError();
+    }
 }
 
 void ShaderProgramBase::UseProgramBase(const ShaderState& ss) const
 {
     ASSERT_MAIN_THREAD();
+    ASSERT(isLoaded());
     glUseProgram(m_programHandle);
     glUniformMatrix4fv(m_transformUniform, 1, GL_FALSE, &ss.uTransform[0][0]);
     glReportError();
@@ -420,7 +527,9 @@ void ShaderProgramBase::UnuseProgram() const
 {
     ASSERT_MAIN_THREAD();
     glReportValidateShaderError(m_programHandle);
-    glDisableVertexAttribArray(m_positionSlot);
+    if (m_positionSlot >= 0) {
+        glDisableVertexAttribArray(m_positionSlot);
+    }
     foreach (GLuint slot, m_enabledAttribs)
         glDisableVertexAttribArray(slot);
     m_enabledAttribs.clear();
@@ -529,15 +638,16 @@ void DrawButton(const ShaderState *data, float2 pos, float2 r, uint bgColor, uin
     vpl.Draw(*data, ShaderColor::instance());
 }
 
-void DrawBox(ShaderState *ss, float2 pos, float2 size, uint bgColor, uint fgColor, float alpha)
+void DrawFilledRect(const ShaderState &s_, float2 pos, float2 size, uint bgColor, uint fgColor, float alpha)
 {
-    ss->color32(bgColor, alpha);
-    ShaderUColor::instance().DrawRect(*ss, pos, size);
-    ss->color32(fgColor,alpha);
-    ShaderUColor::instance().DrawLineRect(*ss, pos, size);
+    ShaderState ss = s_;
+    ss.color32(bgColor, alpha);
+    ShaderUColor::instance().DrawRect(ss, pos, size);
+    ss.color32(fgColor,alpha);
+    ShaderUColor::instance().DrawLineRect(ss, pos, size);
 }
 
-void PushBox(TriMesh<VertexPosColor>* triP, LineMesh<VertexPosColor>* lineP, float2 pos, float2 r, 
+void PushRect(TriMesh<VertexPosColor>* triP, LineMesh<VertexPosColor>* lineP, float2 pos, float2 r, 
              uint bgColor, uint fgColor, float alpha)
 {
     if (lineP) {
@@ -545,15 +655,16 @@ void PushBox(TriMesh<VertexPosColor>* triP, LineMesh<VertexPosColor>* lineP, flo
         lineP->PushRect(pos, r);
     }
     if (triP) {
-        triP->color32(fgColor, alpha);
+        triP->color32(bgColor, alpha);
         triP->PushRect(pos, r);
     }
 }
 
-void fadeFullScreen(ShaderState &ss, const View& view, uint color, float alpha)
+void fadeFullScreen(const ShaderState &s_, const View& view, uint color, float alpha)
 {
     glDepthMask(GL_FALSE);
     glDisable(GL_DEPTH_TEST);
+    ShaderState ss = s_;
     ss.color(color, alpha);
     ShaderUColor::instance().DrawRectCorners(ss, float2(0), view.sizePoints);
     glEnable(GL_DEPTH_TEST);
@@ -568,7 +679,7 @@ void PostProc::BindWriteFramebuffer()
 
 void PostProc::UnbindWriteFramebuffer()
 {
-    getWrite().UnbindFramebuffer(m_res);
+    getWrite().UnbindFramebuffer();
 }
 
 void PostProc::Draw(bool bindFB)
@@ -634,6 +745,7 @@ ShaderState View::getWorldShaderState(float3 offset) const
 ShaderState View::getScreenShaderState() const
 {
     ShaderState ss;
+    static DEFINE_CVAR(float, kScreenFrustumDepth, 100.f);
 
 #if 0
     cpBB screenBB = getScreenPointBB();
@@ -643,12 +755,12 @@ ShaderState View::getScreenShaderState() const
     const float fovy   = M_PI_2f;
     const float aspect = sizePoints.x / sizePoints.y;
     const float dist   = pos.y;
-    const float mznear  = max(dist - 10.f, 1.f);
+    const float mznear  = max(dist - kScreenFrustumDepth, 1.f);
 
     const glm::mat4 view = glm::lookAt(float3(pos, dist),
                                        float3(pos, 0.f),
                                        float3(0, 1, 0));
-    const glm::mat4 proj = glm::perspective(fovy, aspect, mznear, dist + 10.f);
+    const glm::mat4 proj = glm::perspective(fovy, aspect, mznear, dist + kScreenFrustumDepth);
     ss.uTransform = proj * view;
 #endif
 

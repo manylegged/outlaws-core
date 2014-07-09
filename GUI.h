@@ -92,6 +92,8 @@ struct Button : public ButtonBase
     uint   inactiveLineColor = kGUIInactive;
     uint   textColor         = kGUIText;
     uint   inactiveTextColor = kGUIInactive;
+    uint   style             = S_CORNERS;
+    float2 padding           = float2(2.f * kPadDist, 4.f * kPadDist);
 
     Button() {}
     Button(const string& str) : text(str) {}
@@ -113,14 +115,15 @@ struct Button : public ButtonBase
                                                    (hovered||selected) ? hoveredLineColor : defaultLineColor); }
     
     void render(const ShaderState *s_, bool selected=false);
+    void renderButton(VertexPusherTri &tri, VertexPusherLine &line);
+    void renderText(const ShaderState &s_) const;
+};
 
-    void renderText(const ShaderState &s_)
-    {
-        if (!visible)
-            return;
-        const uint tcolor = MultAlphaAXXX((!active) ? inactiveTextColor : textColor, alpha);
-        size = max(size, GLText::DrawStr(s_, position, GLText::MID_CENTERED, tcolor, textSize, text));
-    }
+struct ToggleButton : public Button {
+
+    bool enabled = false;
+
+    bool HandleEvent(const Event* event);
 };
 
 
@@ -202,42 +205,60 @@ struct TextInputBase : public WidgetBase {
 struct TextInputCommandLine : public TextInputBase {
 
     typedef string (*CommandFunc)(void* data, const char* name, const char* args);
-
+    typedef vector<string> (*CompleteFunc)(void* data, const char* name, const char* args);
+    
     struct Command {
-        CommandFunc func;
-        void*       data;
-        string      description;
+        string       name;
+        CommandFunc  func;
+        CompleteFunc comp;
+        void*        data;
+        string       description;
     };
 
     vector<string>            commandHistory;
     int                       historyIndex = 0;
     std::map<string, Command> commands;
     string                    prompt;
+    
+    static vector<string> comp_help(void* data, const char* name, const char* args)
+    {
+        vector<string> options;
+        TextInputCommandLine *self = (TextInputCommandLine*) data;
+        for (std::map<string, Command>::iterator it=self->commands.begin(), end=self->commands.end(); it != end; ++it)
+        {
+            options.push_back(it->first);
+        }
+        return options;
+    }
+
 
     TextInputCommandLine()
     {
         sizeChars.y = 10;
         prompt = "> ";
 
-        registerCommand(helpCmd, this, "help", "[command]: list help for specified command, or all commands if unspecified");
+        registerCommand(helpCmd, comp_help, this, "help", "[command]: list help for specified command, or all commands if unspecified");
         setLineText("");
     }
 
     static string helpCmd(void* data, const char* name, const char* args);
 
-    void registerCommand(CommandFunc func, void *data, const char* name, const char* desc)
+    void registerCommand(CommandFunc func, CompleteFunc comp, void *data, const char* name, const char* desc)
     {
         Command c;
+        c.name         = name;
         c.func         = func;
+        c.comp         = comp;
         c.data         = data;
         c.description  = desc;
-        ASSERT(!commands.count(name));
-        commands[str_tolower(name)] = c;
+        const string lname = str_tolower(name);
+        ASSERT(!commands.count(lname));
+        commands[lname] = c;
     }
 
     string getLineText() const
     {
-        return lines[lines.size()-1].substr(2);
+        return lines[lines.size()-1].substr(prompt.size());
     }
 
     void setLineText(const char* text)
@@ -245,6 +266,8 @@ struct TextInputCommandLine : public TextInputBase {
         lines[lines.size()-1] = prompt + text;
         cursor = int2(lines[lines.size()-1].size(), lines.size()-1);
     }
+
+    const Command *getCommand(const string &abbrev) const;
 
     void pushCmdOutput(const char *format, ...);
     void saveHistory(const char *fname);
@@ -564,7 +587,7 @@ struct TabWindow : public WidgetBase {
 
     float getTabHeight() const { return 2.f * kPadDist + 1.5f * GLText::getScaledSize(textSize); }
     float2 getContentsCenter() const { return position - float2(0.f, 0.5f * getTabHeight()); }
-    float2 getContentsSize() const { return size - float2(2.f * kPadDist) - float2(0.f, getTabHeight()); }
+    float2 getContentsSize() const { return size - float2(4.f * kPadDist) - float2(0.f, getTabHeight()); }
     float2 getContentsStart() const { return getContentsCenter() - 0.5f * getContentsSize(); }
     
     void render(const ShaderState &ss);
@@ -573,5 +596,107 @@ struct TabWindow : public WidgetBase {
 
 };
 
+
+struct ButtonLayout {
+
+    float2 startPos;
+    int2   buttonCount = int2(1, 1);
+    float2 buttonSize;
+    float2 buttonFootprint;
+
+    float2 pos;
+    int2   index;
+
+    int getScalarIndex() const
+    {
+        return index.y * buttonCount.x + index.x;
+    }
+
+    float getButtonAlpha(float introAnim) const
+    {
+        const int i = getScalarIndex();
+        const int count = buttonCount.x * buttonCount.y;
+        return (introAnim * count > i) ? min(1.f, (introAnim * count - i)) : 0.f;
+    }
+
+    float2 getButtonPos() const
+    {
+        return startPos + float2(index.x+0.5f, -(index.y+0.5f)) * buttonFootprint;
+    }
+
+    // upper left corner
+    void start(float2 ps)
+    {
+        startPos = ps;
+        pos      = ps;
+        index    = int2(0);
+    }
+
+    void row()
+    {
+        pos.x = startPos.x;
+        pos.y -= buttonFootprint.y;
+        index.y++;
+    }
+
+    void setTotalSize(float2 size)
+    {
+        setButtonFootprint(size / float2(buttonCount));
+    }
+
+    float2 getTotalSize() const
+    {
+        return float2(buttonCount) * buttonFootprint;
+    }
+
+    void setButtonFootprint(float2 size)
+    {
+        buttonFootprint = size;
+        buttonSize = size - 2.f * kButtonPad;
+    }
+
+    void setButtonCount(int count, int width)
+    {
+        buttonCount = int2(width, (count + width - 1) / width);
+    }
+
+    void setScalarIndex(int idx)
+    {
+        index = int2(idx % buttonCount.x, idx / buttonCount.x);
+    }
+
+    void setupPosSize(WidgetBase *wi) const
+    {
+        wi->position = getButtonPos();
+        wi->size = buttonSize;
+    }
+
+    void setupMultiPosSize(WidgetBase *wi, int2 slots) const
+    {
+        const float2 base = startPos + float2(flipY(index)) * buttonFootprint;
+        wi->position = base + 0.5f * flipY(float2(slots) * buttonFootprint);
+        wi->size     = float2(slots) * buttonFootprint - kButtonPad;
+    }
+
+};
+
+struct MessageBoxWidget : public WidgetBase {
+
+    string title = "Message";  
+    string message;
+    int    messageFont = kDefaultFont;
+    Button okbutton;
+    float  alpha2   = 1.f;
+
+    MessageBoxWidget()
+    {
+        okbutton.text = "OK";
+        okbutton.keys = "\r\033 ";
+    }
+
+    void updateFade();
+    void render(const ShaderState &ss, const View& view);
+    bool HandleEvent(const Event* event);
+};
 
 #endif

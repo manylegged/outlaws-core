@@ -53,6 +53,9 @@
 // lambda((int* a), return *a + 3)
 #define lambda(X, Y) [&] X { return (Y); }
 
+template <typename T> T or_(const T& a, const T& b) { return a ? a : b; }
+template <typename T> T or_(const T& a, const T& b, const T& c) { return a ? a : b ? b : c; }
+
 // return bit index of leading 1 (0x80000000 == 0x80030100 == 31, 0x1 == 0, 0x0 == -1)
 inline int findLeadingOne(uint v, int i=0)
 {
@@ -132,7 +135,21 @@ namespace std {
                                              std::hash<T>()(pt.z)));
         }
     };
+
+
+    // allow foreach(foo &, make_pair(array_of_foo, array_of_foo + size))
+
+    template <typename T> T* begin(std::pair<T*, T*> const& p)
+    {
+        return p.first;
+    }
+
+    template <typename T> T* end(std::pair<T*, T*> const& p)
+    {
+        return p.second;
+    }
 }
+
 
 template <typename T>
 void* copy_explicit_owner(const T* ptr) { return NULL; }
@@ -442,8 +459,20 @@ inline bool vector_extend(V &v, const V1& t)
     return t.size();
 }
 
+template <typename V, typename V1>
+inline V vector_intersection(const V &v, const V1& t)
+{
+    V ret;
+    foreach (auto &x, v) {
+        if (vector_contains(t, x))
+            vector_add(ret, x);
+    }
+    return ret;
+}
+
 template <typename Vec>
-const typename Vec::value_type &vector_index(const Vec &v, size_t i, const typename Vec::value_type &def)
+const typename Vec::value_type &vector_at(const Vec &v, size_t i,
+                                          const typename Vec::value_type &def=typename Vec::value_type())
 {
     return (i < v.size()) ? v[i] : def;
 }
@@ -529,6 +558,42 @@ inline bool vector_remove_index(V &v, typename V::size_type i)
     return false;
 }
 
+// remove v[i], return true if i < v.size()
+// fill down - maintains order (but O(N))
+template <typename V>
+inline bool vector_erase(V &v, typename V::size_type i)
+{
+    if (i < v.size()) {
+        v.erase(v.begin() + i);
+        return true;
+    }
+    return false;
+}
+
+// remove v[i] if test, otherwise increment i. return test
+template <typename V, typename I>
+inline bool vector_remove_increment(V& v, I &idx, bool test)
+{
+    if (test) {
+        return vector_remove_index(v, idx);
+    } else {
+        idx++;
+        return false;
+    }
+}
+
+// remove v[i] if test, otherwise increment i. return test
+template <typename V, typename I>
+inline bool vector_remove_increment_deep(V& v, I &idx, bool test)
+{
+    if (test) {
+        return vector_remove_index_deep(v, idx);
+    } else {
+        idx++;
+        return false;
+    }
+}
+
 // remove and delete v[i], return true if i < v.size()
 // swap from end to fill - does not maintain order!
 template <typename V>
@@ -550,6 +615,12 @@ template <typename T>
 inline void vector_deallocate(T &t)
 {
     T().swap(t);
+}
+
+template <typename V>
+inline void vector_swap(V& vec, size_t i, size_t j)
+{
+    std::swap(vec[i], vec[j]);
 }
 
 // delete all elements and clear v
@@ -738,6 +809,17 @@ inline std::vector<R> vector_map(const T &inv, Fun fun)
     return outs;
 }
 
+template <typename R, typename Vec, typename Fun>
+inline R vector_foldl(const Vec &vec, const Fun & fun)
+{
+    R ret{};
+    foreach (auto &x, vec)
+    {
+        ret = fun(ret, x);
+    }
+    return ret;
+}
+
 template <typename R, typename V, typename Fun>
 inline R vector_average(const V& vec, Fun fun)
 {
@@ -754,11 +836,8 @@ inline int vector_remove_if(T &vec, F pred)
     int count = 0;
     for (uint i=0; i<vec.size();)
     {
-        if (pred(vec[i])) {
-            vector_remove_index(vec, i);
+        if (vector_remove_increment(vec, i, pred(vec[i])))
             count++;
-        } else
-            i++;
     }
     return count;
 }
@@ -770,11 +849,8 @@ inline int vector_remove_if_not(T &vec)
     int count = 0;
     for (uint i=0; i<vec.size();)
     {
-        if (!vec[i]) {
-            vector_remove_index(vec, i);
+        if (vector_remove_increment(vec, i, !vec[i]))
             count++;
-        } else
-            i++;
     }
     return count;
 }
@@ -808,11 +884,8 @@ inline int vector_remove_unless(T &vec, F pred)
     int count = 0;
     for (uint i=0; i<vec.size();)
     {
-        if (!pred(vec[i])) {
-            vector_remove_index(vec, i);
+        if (vector_remove_increment(vec, i, !pred(vec[i])))
             count++;
-        } else
-            i++;
     }
     return count;
 }
@@ -1100,16 +1173,59 @@ inline void SetThreadName(DWORD dwThreadID, const char* threadName)
 }
 #endif
 
+inline std::mutex& _thread_name_mutex()
+{
+    static std::mutex m;
+    return m;
+}
+
+inline std::map<uint64, std::string> &_thread_name_map()
+{
+    static std::map<uint64, std::string> names;
+    return names;
+}
+
 inline void set_current_thread_name(const char* name)
 {
+    uint64 tid = 0;
 #if _WIN32
-    SetThreadName(GetCurrentThreadId(), name);
+    tid = GetCurrentThreadId();
+    SetThreadName(tid, name);
 #elif __APPLE__
+    pthread_threadid_np(pthread_self(), &tid);
     pthread_setname_np(name);
 #else
+    tid = pthread_self();
     pthread_setname_np(pthread_self(), name);
 #endif
+
+    {
+        std::lock_guard<std::mutex> l(_thread_name_mutex());
+        _thread_name_map()[tid] = name;
+    }
+
+    ReportMessagef("Thread 0x%llx is named '%s'", tid, name);
 }
+
+#if OL_USE_PTHREADS
+inline pthread_t create_pthread(void *(*start_routine)(void *), void *arg)
+{
+    int            err = 0;
+    pthread_attr_t attr;
+    pthread_t      thread;
+
+    err = pthread_attr_init(&attr);
+    if (err)
+        ReportMessagef("pthread_attr_init error: %s", strerror(err));
+    err = pthread_attr_setstacksize(&attr, 8 * 1024 * 1024);
+    if (err)
+        ReportMessagef("pthread_attr_setstacksize error: %s", strerror(err));
+    err = pthread_create(&thread, &attr, start_routine, arg);
+    if (err)
+        ReportMessagef("pthread_create error: %s", strerror(err));
+    return thread;
+}
+#endif
 
 
 // adapted from boost::reverse_lock
@@ -1225,5 +1341,6 @@ public:
         used--;
     }
 };
+
 
 #endif

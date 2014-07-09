@@ -19,5 +19,8 @@
 #define __printflike(X, Y)
 #endif
 
+#ifndef __has_feature
+#define __has_feature(X) (0)
+#endif
 
 #endif

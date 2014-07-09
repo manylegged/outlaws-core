@@ -36,7 +36,57 @@ struct Event {
     long   rawkey;
     float2 pos;
     float2 vel;
-    float  delta;  
+
+    string toString() const
+    {
+        const string skey = isprint(key) ? string(1, key) : str_format("%d", (int)key);
+        switch(type)
+        {
+        case KEY_DOWN:      return str_format("KEY_DOWN %s",     skey.c_str());
+        case KEY_UP:        return str_format("KEY_UP %s",       skey.c_str());
+        case MOUSE_DOWN:    return str_format("MOUSE_DOWN %d (%.f, %.f)", (int)key, pos.x, pos.y);
+        case MOUSE_UP:      return str_format("MOUSE_UP %d (%.f, %.f)", (int)key, pos.x, pos.y);
+        case MOUSE_DRAGGED: return str_format("MOUSE_DRAGGED %d (%.f, %.f)",(int)key, pos.x, pos.y);
+        case MOUSE_MOVED:   return str_format("MOUSE_MOVED %d, (%.f, %.f)",  (int)key, pos.x, pos.y);
+        case SCROLL_WHEEL:  return str_format("SCROLL_WHEEL %f", vel.y);
+        case LOST_FOCUS:    return str_format("LOST_FOCUS");
+        default:            return "unknown";
+        }
+    }
+
+    bool isMouse() const
+    {
+        switch (type) {
+        case MOUSE_DOWN:
+        case MOUSE_UP:
+        case MOUSE_DRAGGED:
+        case MOUSE_MOVED:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    bool isKey() const
+    {
+        switch (type) {
+        case KEY_DOWN:
+        case KEY_UP:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    bool isDown() const
+    {
+        return type == KEY_DOWN || type == MOUSE_DOWN;
+    }
+
+    bool isUp() const
+    {
+        return type == KEY_UP || type == MOUSE_UP;
+    }
 };
 
 enum {

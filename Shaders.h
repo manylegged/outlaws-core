@@ -169,7 +169,8 @@ private:
         
     ShaderUColor()
     {
-        LoadProgram("varying vec4 DestinationColor;\n"
+        LoadProgram("ShaderUColor",
+                    "varying vec4 DestinationColor;\n"
                     , 
                     "uniform vec4 SourceColor;\n"
                     "void main(void) {\n"
@@ -239,7 +240,8 @@ private:
     
     ShaderUIridescent()
     {
-        LoadProgram("varying vec4 DestinationColor;\n"
+        LoadProgram("ShaderUIridescent",
+                    "varying vec4 DestinationColor;\n"
                     ,
                     "uniform vec4 SourceColor0;\n"
                     "uniform vec4 SourceColor1;\n"
@@ -290,21 +292,21 @@ struct ShaderTextureBase: public ShaderProgramBase {
 
     void BindTexture(const OutlawTexture& texture, int slot) const
     {
-        ASSERT(texture.width);
+        ASSERT(texture.width && texture.texnum);
         glActiveTexture(GL_TEXTURE0 + slot);
         glBindTexture(GL_TEXTURE_2D, texture.texnum);
     }
 
     // a b
     // c d
-    void DrawQuad(const ShaderState& ss, const OutlawTexture& texture,
+    void DrawQuad(const ShaderState& ss, const OutlawTexture& texture, float2 scale, 
                   float2 a, float2 b, float2 c, float2 d) const;
 
     void DrawRectCorners(const ShaderState &ss, const OutlawTexture& texture, float2 a, float2 b) const
     {
         float2 bl(min(a.x, b.x), min(a.y, b.y));
         float2 ur(max(a.x, b.x), max(a.y, b.y));
-        DrawQuad(ss,texture, float2(bl.x, ur.y), ur, bl, float2(ur.x, bl.y));
+        DrawQuad(ss, texture, float2(1.f), float2(bl.x, ur.y), ur, bl, float2(ur.x, bl.y));
     }
 
     void DrawRectCornersUpsideDown(const ShaderState &ss, const OutlawTexture& texture, float2 a, float2 b) const
@@ -315,12 +317,17 @@ struct ShaderTextureBase: public ShaderProgramBase {
 
         float2 bl(min(a.x, b.x), min(a.y, b.y));
         float2 ur(max(a.x, b.x), max(a.y, b.y));
-        DrawQuad(ss,texture, bl, float2(ur.x, bl.y), float2(bl.x, ur.y), ur);
+        DrawQuad(ss, texture, float2(1.f), bl, float2(ur.x, bl.y), float2(bl.x, ur.y), ur);
     }
 
     void DrawRect(const ShaderState &ss, const OutlawTexture& texture, float2 pos, float2 rad) const
     {
         DrawRectCorners(ss, texture, pos - rad, pos + rad);
+    }
+
+    void DrawRectScale(const ShaderState &ss, const OutlawTexture& texture, float2 scale, float2 pos, float2 rad) const
+    {
+        DrawQuad(ss, texture, scale, pos + flipX(rad), pos + rad, pos - rad, pos + flipY(rad));
     }
 
     void DrawRectWidth(const ShaderState &ss, const OutlawTexture& texture, float2 pos, float width) const
@@ -347,7 +354,8 @@ private:
 public:
     ShaderTexture()
     {
-        LoadProgram("varying vec2 DestTexCoord;\n"
+        LoadProgram("ShaderTexture",
+                    "varying vec2 DestTexCoord;\n"
                     "varying vec4 DestColor;\n"
                     ,
                     "attribute vec2 SourceTexCoord;\n"
@@ -475,7 +483,8 @@ private:
 
     MetaballRenderer()
     {
-        LoadProgram(""
+        LoadProgram("Metaball",
+                    ""
                     , 
                     "void main(void) {\n"
                     "    gl_Position = Transform * Position;\n"
@@ -525,7 +534,7 @@ public:
         m_balls.resize(kballs, float3(0, 0, 0));
         
         DrawRectCorners(ss, float2(0), m_view.sizePoints);
-        m_tex.UnbindFramebuffer(view.sizePixels);
+        m_tex.UnbindFramebuffer();
 
         ShaderTexture::instance().DrawRectCorners(ss, m_tex.getTexture(), float2(0), m_view.sizePoints);
     }
@@ -539,7 +548,8 @@ private:
 
     ShaderColor()
     {
-        LoadProgram(//"#extension GL_EXT_gpu_shader4 : require\n"
+        LoadProgram("ShaderColor",
+                    //"#extension GL_EXT_gpu_shader4 : require\n"
                     //"flat varying vec4 DestinationColor;\n"
                     "varying vec4 DestinationColor;\n"
                     ,
@@ -605,7 +615,8 @@ private:
 
     ShaderSmoothColor()
     {
-        LoadProgram("varying vec4 DestinationColor;\n"
+        LoadProgram("ShaderSmoothColor",
+                    "varying vec4 DestinationColor;\n"
                     ,
                     "attribute vec4 SourceColor;\n"
                     "void main(void) {\n"
@@ -643,7 +654,8 @@ struct ShaderNoise : public ShaderProgramBase {
         
     ShaderNoise()
     {
-        LoadProgram("varying vec4 DestinationColor;\n"
+        LoadProgram("ShaderNoise",
+                    "varying vec4 DestinationColor;\n"
                     , 
                     "attribute vec4 SourceColor;\n"
                     "void main(void) {\n"

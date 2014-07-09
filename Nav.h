@@ -32,10 +32,8 @@
 struct snConfig {
     float2 position;
     float2 velocity;
-    float  angle;
-    float  angVel;
-
-    snConfig() : angle(0), angVel(0) {}
+    float  angle = 0.f;
+    float  angVel = 0.f;
 };
 
 
@@ -85,10 +83,8 @@ struct snPrecision {
 };
 
 struct snConfigDims {
-    uint     dims;
+    uint     dims = 0;
     snConfig cfg;
-
-    snConfigDims() : dims(0) {}
 };
 
 // actions take us between configurations    
@@ -116,25 +112,7 @@ struct snMover {
     float  angAccelEnabled;     // how much are we accelerating rotationally this step? [-1,1]
 
 
-    void reset(float2 offset, float angle, float force, float mass, float torque, float moment)
-    {
-        float2 direction = angleToVector(angle);
-        accel           = direction * force / mass;
-        accelNorm       = direction;
-        accelAngAccel   = isZero(offset) ? 0.f : cross(offset, direction * force) / moment;
-        angAccel        = torque / moment;
-
-        // FIXME we actually want a different threshhold depending on total torque available
-        // if we have only a few thrusters we need to use them all to rotate
-        // but at some point the minimal additional rotation speed is not worth the slew
-        useForRotation  = ((fabsf(accelAngAccel) / length(accel)) > 0.001) || (angAccel > epsilon);
-
-        // FIXME we can't even hack this by itself - we need to look at all the movers.
-        useForTranslation = !isZero(accel);
-
-        accelEnabled    = 0;
-        angAccelEnabled = 0;
-    }
+    void reset(float2 offset, float angle, float force, float mass, float torque, float moment);
 
     snMover() { memset(this, 0, sizeof(*this)); }
 };
@@ -145,7 +123,8 @@ struct sNav {
     // input/output
 	vector<snMover*> movers;
     float2           maxAccel;  // dependent on movers
-    float            maxAngAccel;
+    float            maxPosAngAccel;
+    float            maxNegAngAccel;
 
     // inputs
     snPrecision      precision;

@@ -26,9 +26,29 @@
 #include "StdAfx.h"
 #include "Nav.h"
 
-static const float kLinearPosThreshold  = 0.6; // how closely should we thrust to the direction we are trying to thrust?
-static const float kLinearVelThreshhold = 0.3; // when adjusting velocity only, accuracy of thrust direction
-static const float kMaxLinearAngAccel   = 0.1;
+static DEFINE_CVAR(float, kLinearPosThreshold, 0.6); // how closely should we thrust to the direction we are trying to thrust?
+static DEFINE_CVAR(float, kLinearVelThreshold, 0.3); // when adjusting velocity only, accuracy of thrust direction
+static DEFINE_CVAR(float, kMaxLinearAngAccel, 0.1);
+
+void snMover::reset(float2 offset, float angle, float force, float mass, float torque, float moment)
+{
+    float2 direction = angleToVector(angle);
+    accel           = direction * force / mass;
+    accelNorm       = direction;
+    accelAngAccel   = isZero(offset) ? 0.f : cross(offset, direction * force) / moment;
+    angAccel        = torque / moment;
+
+    // FIXME we actually want a different threshhold depending on total torque available
+    // if we have only a few thrusters we need to use them all to rotate
+    // but at some point the minimal additional rotation speed is not worth the slew
+    useForRotation  = ((fabsf(accelAngAccel) / length(accel)) > 0.001) || (angAccel > epsilon);
+
+    // FIXME we can't even hack this by itself - we need to look at all the movers.3
+    useForTranslation = !isZero(accel);
+
+    accelEnabled    = 0;
+    angAccelEnabled = 0;
+}
 
 void sNav::moversDisable()
 {
@@ -108,9 +128,12 @@ float2 sNav::moversForLinearAccel(float2 dir, float threshold, float angAccel, b
 // enable movers to rotate in the desired direction
 float sNav::moversForAngAccel(float angAccel, bool enable)
 {
+    if (fabsf(angAccel) < epsilon)
+        return 0.f;
+
     ASSERT(!fpu_error(angAccel));
     ASSERT(fabsf(angAccel) < 1.01f);
-
+    
     float totalAngAccel = 0;
     foreach (snMover *m, movers)
     {
@@ -123,12 +146,6 @@ float sNav::moversForAngAccel(float angAccel, bool enable)
                 m->accelEnabled = fabsf(angAccel);
             totalAngAccel += fabsf(angAccel) * m->accelAngAccel;
         }
-#if 0
-        else if (enable) {
-            // turn off thrusters in the wrong direction
-            m->accelEnabled = 0.f;
-        }
-#endif
 
         if (m->angAccel > 0)
         {
@@ -144,26 +161,28 @@ float sNav::moversForAngAccel(float angAccel, bool enable)
 void sNav::onMoversChanged()
 {
     // FIXME we are assuming forwards...
-    maxAccel    = moversForLinearAccel(float2(1, 0), kLinearPosThreshold, 0.f, false);
-    maxAngAccel = moversForAngAccel(+1, false);
+    maxAccel       = moversForLinearAccel(float2(1, 0), kLinearPosThreshold, 0.f, false);
+    maxPosAngAccel = moversForAngAccel(+1, false);
+    maxNegAngAccel = moversForAngAccel(-1, false);
 }
 
 
 // use a pd controller to rotate the body into the correct rotationally
 float sNav::angAccelForTarget(float destAngle, float destAngVel) const
 {
-    // nothing to do if we can't rotate
-    if (maxAngAccel < epsilon)
-        return 0;
-
     if (precision.angleEqual(state.angle, destAngle) &&
         precision.angVelEqual(state.angVel, destAngVel))
         return 0;
+
+    const float angleError  = dot(angleToVector(destAngle), angleToVector(state.angle + M_PI_2f));
+    const float maxAngAccel = fabsf(angleError > 0.f ? maxPosAngAccel : maxNegAngAccel);
     
-    float approxRotPeriod = 2 * sqrt(2 * M_PI / maxAngAccel);
+    if (maxAngAccel < epsilon)
+        return 0.f;
+
+    const float approxRotPeriod = 2.f * sqrt(2.f * M_PIf / maxAngAccel);
 
     const float kp=1.5, kd=-0.3*approxRotPeriod;
-    float angleError = dot(angleToVector(destAngle), angleToVector(state.angle + M_PI/2));
     const float angVelError = state.angVel - destAngVel;
     const float angAction = (kp * angleError) + (kd * angVelError);
 
@@ -198,8 +217,8 @@ bool sNav::update()
     }
     else if ((dest.dims&SN_POSITION) && !precision.posEqual(state.position, dest.cfg.position))
     {
-        float2 destp    = this->dest.cfg.position;
-        float2 destv    = (dest.dims&(SN_VELOCITY|SN_TARGET_VEL)) ? this->dest.cfg.velocity : float2(0);
+        const float2 destp = this->dest.cfg.position;
+        const float2 destv = (dest.dims&(SN_VELOCITY|SN_TARGET_VEL)) ? this->dest.cfg.velocity : float2(0);
 
         float2 u;
         if (dest.dims&SN_TARGET_VEL) {
@@ -214,8 +233,8 @@ bool sNav::update()
         bool needsRotation = false;
         if (length(u) > 0.00001)
         {
-            const float2 uBody          = rotate(u, -state.angle);
-            const float2 uBodyDir       = normalize(uBody);
+            const float2 uBody    = rotate(u, -state.angle);
+            const float2 uBodyDir = normalize(uBody);
        
             this->action.accel = moversForLinearAccel(uBodyDir, kLinearPosThreshold, 0.f, true);
             needsRotation = isZero(this->action.accel) || (dot(normalize(this->action.accel), uBodyDir) < 0.99);
@@ -253,7 +272,7 @@ bool sNav::update()
             float2 ve = dest.cfg.velocity - state.velocity;
             ve /= max(length(ve), 0.05f * length(this->maxAccel));
             float2 accel = rotate(float2(clamp(ve.x, -1.f, 1.f), clamp(ve.y, -1.f, 1.f)), -state.angle);
-            action.accel = moversForLinearAccel(accel, kLinearVelThreshhold, 0.f, true);
+            action.accel = moversForLinearAccel(accel, kLinearVelThreshold, 0.f, true);
             if (isZero(action.accel) && (dest.dims&SN_VEL_ALLOW_ROTATION)) {
                 moversDisable();
                 float angAccel = angAccelForTarget(vectorToAngle(accel), 0.f);

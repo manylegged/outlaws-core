@@ -55,26 +55,30 @@ static NSString* pathForFileName(const char* fname, const char* flags)
     if (fname[0] == '/')
         return fullFileName;
 
-#if DEBUG || DEVELOP
-    getBaseSavePath();
-    
-    // read and write output files directly from source code repository
-    NSString *base = [[[NSString stringWithCString:__FILE__ encoding:NSUTF8StringEncoding]
-                         stringByAppendingPathComponent: @"../../../"]
-                         stringByStandardizingPath];
-    NSString *path = [base stringByAppendingPathComponent:fullFileName];
-#else
-    NSString *savepath = [getBaseSavePath() stringByAppendingPathComponent:fullFileName];
-    
-    if (savepath && (flags[0] == 'w' || 
-                     [[NSFileManager defaultManager] fileExistsAtPath:savepath]))
+    NSString *path = nil;
+    if (OLG_UseDevSavePath())
     {
-        return savepath;
+        getBaseSavePath();
+        
+        // read and write output files directly from source code repository
+        NSString *base = [[[NSString stringWithCString:__FILE__ encoding:NSUTF8StringEncoding]
+                           stringByAppendingPathComponent: @"../../../"]
+                          stringByStandardizingPath];
+        path = [base stringByAppendingPathComponent:fullFileName];
     }
-
-    NSString *resourcePath = [[NSBundle mainBundle] resourcePath];
-    NSString *path = [resourcePath stringByAppendingPathComponent:fullFileName];
-#endif
+    else
+    {
+        NSString *savepath = [getBaseSavePath() stringByAppendingPathComponent:fullFileName];
+        
+        if (savepath && (flags[0] == 'w' ||
+                         [[NSFileManager defaultManager] fileExistsAtPath:savepath]))
+        {
+            return savepath;
+        }
+        
+        NSString *resourcePath = [[NSBundle mainBundle] resourcePath];
+        path = [resourcePath stringByAppendingPathComponent:fullFileName];
+    }
     ASSERT(path);
     return path;
 }
@@ -210,6 +214,47 @@ struct OutlawTexture OL_LoadTexture(const char* fname)
     return t;
 }
 
+int OL_SaveTexture(const OutlawTexture *tex, const char* fname)
+{
+    if (!tex || !tex->texnum || tex->width <= 0 || tex->height <= 0)
+        return 0;
+
+    const size_t size = tex->width * tex->height * 4;
+    char *data = malloc(size);
+    
+    glBindTexture(GL_TEXTURE_2D, tex->texnum);
+    glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+    glReportError();
+
+    CGColorSpaceRef color_space = CGColorSpaceCreateDeviceRGB();
+    CGDataProviderRef provider = CGDataProviderCreateWithData(NULL, data, size, NULL);
+    CGImageRef cimg = CGImageCreate(tex->width, tex->height, 8, 32, tex->width * 4,
+                                    color_space, kCGImageAlphaLast, provider,
+                                    NULL, FALSE, kCGRenderingIntentDefault);
+
+    CGDataProviderRelease(provider);
+    CFRelease(color_space);
+
+    NSString* path = pathForFileName(fname, "w");
+    if (!createParentDirectories(path))
+        return 0;
+    CFURLRef url = CFURLCreateWithFileSystemPath(NULL, (__bridge CFStringRef)path, kCFURLPOSIXPathStyle, false);
+    CGImageDestinationRef dest = CGImageDestinationCreateWithURL(url, kUTTypePNG, 1, NULL);
+    CGImageDestinationAddImage(dest, cimg, NULL);
+    
+    BOOL success = CGImageDestinationFinalize(dest);
+    free(data);
+    
+    CFRelease(dest);
+    if (!success) {
+        LogMessage([NSString stringWithFormat:@"Failed to write texture %d-%dx%d to '%s'",
+                             tex->texnum, tex->width, tex->height, fname]);
+        return 0;
+    }
+
+    return 1;
+}
+
 static NSString *g_fontNames[10];
 
 static NSFont* getFont(int fontName, float size)
@@ -218,6 +263,9 @@ static NSFont* getFont(int fontName, float size)
     //                   (fontName == OF_Serif) ? @"DejaVu Serif" :
     //                   @"DejaVu Sans Mono");
     NSFont* font = [NSFont fontWithName:g_fontNames[fontName] size:size];
+    if (!font) {
+        LogMessage([NSString stringWithFormat:@"Failed to load font %d '%@' size %g", fontName, g_fontNames[fontName], size]);
+    }
     return font;
 }
 
@@ -271,6 +319,9 @@ int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int fontNa
         
     NSMutableDictionary *attribs = [NSMutableDictionary dictionary];
     NSFont* font = getFont(fontName, size);
+    if (!font)
+        return 0;
+        
     [attribs setObject:font forKey: NSFontAttributeName];
     [attribs setObject:[NSColor whiteColor] forKey: NSForegroundColorAttributeName];
 
@@ -382,19 +433,20 @@ void OL_ThreadEndIteration(int i)
     }
 }
 
+static FILE *g_logfile = NULL;
+
 void OL_ReportMessage(const char *str)
 {
-    static FILE *logfile = NULL;
 #if DEBUG
     if (!str)
         __builtin_trap();
 #endif
-    if (!logfile) {
+    if (!g_logfile) {
         NSString *fname = pathForFileName("data/log.txt", "w");
         if (createParentDirectories(fname))
         {
-            logfile = fopen([fname UTF8String], "a");
-            if (logfile)
+            g_logfile = fopen([fname UTF8String], "w");
+            if (g_logfile)
                 LogMessage([NSString stringWithFormat:@"Opened log at %@", fname]);
             else
                 NSLog(@"Error opening log at %@: %s", fname, strerror(errno));
@@ -402,11 +454,10 @@ void OL_ReportMessage(const char *str)
     }
     //NSLog(@"[DBG] %s\n", str);
     fprintf(stderr, "[DBG] %s\n", str);
-    if (logfile) {
-        fprintf(logfile, "%s\n", str);
+    if (g_logfile) {
+        fprintf(g_logfile, "%s\n", str);
     }
 }
-
 
 const char* OL_GetPlatformDateInfo(void)
 {

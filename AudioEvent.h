@@ -39,7 +39,7 @@
     F(CLUSTER,     1<<5)                             \
     
 
-DEFINE_ENUM(EnumAudioFlags, AUDIO_FLAGS);
+DEFINE_ENUM(uint64, EnumAudioFlags, AUDIO_FLAGS);
 
 static const uint kStreamSources = 2;
 static const uint kSoundSources = 32 - kStreamSources;
@@ -359,7 +359,7 @@ public:
 // loaded per-event type data
 struct EventDescription {
 
-    enum { AUDIO_FLAGS(TO_ENUM) };
+    enum { AUDIO_FLAGS(SERIAL_TO_ENUM) };
 
     // read from audio.lua
     vector< vector<lstring> >  samples;
@@ -371,6 +371,7 @@ struct EventDescription {
     float                      minDist        = 1.f;
     float                      maxDist        = 9999999999.f;
     int                        priority       = 0;
+    float2                     delay;
 
     lstring                    name;
 
@@ -418,6 +419,7 @@ struct EventDescription {
                 vis.VISIT(minDist) &&
                 vis.VISIT(maxDist) &&
                 vis.VISIT(flags) &&
+                vis.VISIT(delay) &&
                 vis.VISIT(priority));
     }
 };
@@ -462,7 +464,6 @@ public:
             cAudio::IAudioBuffer *buf = AudioAllocator::instance().getBuffer(getSample());
             if (!buf) {
                 m_source->stop();
-                m_source->drop();
                 m_source = NULL;
                 return NULL;
             }

@@ -23,8 +23,14 @@ static const string& getDataDir()
         datadir = g_binaryName;
         datadir = dirname((char*)datadir.c_str());
         datadir += "/../../../";
-        char buf1[256];
-        datadir = realpath(datadir.c_str(), buf1);
+        char buf1[PATH_MAX];
+        const char* path = realpath(datadir.c_str(), buf1);
+        if (!path) {
+            ReportMessagef("[linux] realpath(%s) error: %s\n", datadir.c_str(), strerror(errno));
+            return datadir;
+        }
+
+        datadir = path;
         datadir += "/";
     }
     return datadir;
@@ -88,24 +94,24 @@ int OL_SaveFile(const char *name, const char* data)
     FILE *f = fopen(fnameb.c_str(), "w");
     if (!f)
     {
-        ReportMessagef("error opening '%s' for writing\n", fnameb.c_str());
+        ReportMessagef("[linux] error opening '%s' for writing\n", fnameb.c_str());
         return 0;
     }
     int bytesWritten = fprintf(f, "%s", data);
     if (bytesWritten != strlen(data))
     {
-        ReportMessagef("writing to '%s', wrote %d bytes of expected %d\n", fnameb.c_str(), bytesWritten, strlen(data));
+        ReportMessagef("[linux] writing to '%s', wrote %d bytes of expected %d\n", fnameb.c_str(), bytesWritten, strlen(data));
         return 0;
     }
     if (fclose(f) != 0)
     {
-        ReportMessagef("error closing temp file from '%s': %s'\n", fnameb.c_str(), strerror(errno));
+        ReportMessagef("[linux] error closing temp file from '%s': %s'\n", fnameb.c_str(), strerror(errno));
         return 0;
     }
     
     if (rename(fnameb.c_str(), fname) != 0)
     {
-        ReportMessagef("error renaming temp file from '%s' to '%s': %s'\n", fnameb.c_str(), fname, strerror(errno));
+        ReportMessagef("[linux]error renaming temp file from '%s' to '%s': %s'\n", fnameb.c_str(), fname, strerror(errno));
         return 0;
     }
 
@@ -117,7 +123,7 @@ int unlink_cb(const char *fpath, const struct stat *sb, int typeflag, struct FTW
     int rv = remove(fpath);
 
     if (rv) {
-        ReportMessagef("Error removing '%s'", fpath, strerror(errno));
+        ReportMessagef("[linux] Error removing '%s'", fpath, strerror(errno));
     }
 
     return rv;
@@ -135,45 +141,26 @@ int OL_FileDirectoryPathExists(const char* fname)
     const char *path = OL_PathForFile(fname, "r");
     struct stat buf;
     if (stat(path, &buf)) {
-        ReportMessagef("Error stating path: '%s'", strerror(errno));
+        ReportMessagef("[linux]Error stating '%s': '%s'", fname, strerror(errno));
         return 0;
     }
 
     return S_ISREG(buf.st_mode) || S_ISDIR(buf.st_mode);
 }
 
-const char *OL_LoadFile(const char *name)
+void os_errormessage(const char* msg)
 {
-    const char *fname = OL_PathForFile(name, "r");
-    int bufsize = 257;
-    char *buffer = (char *) malloc(bufsize);
-    FILE *f = fopen(fname, "r");
-    if (!f)
-    {
-        //ReportMessagef("error opening '%s' for reading\n", fname);
-        return NULL;
-    }
-    int c, indx=0;
-    while ((c = fgetc(f)) != EOF) {
-		if (c != '\r')
-			buffer[indx++] = (char) c;
-		if (indx >= bufsize) {
-            bufsize *= 2;
-            buffer = (char *) realloc(buffer, bufsize);
-        }
-    }
-    fclose(f);
-    buffer[indx++] = '\0';
-
-    buffer = (char *) realloc(buffer, indx);
-    return buffer;
+    OL_ReportMessage(msg);
 }
-
 
 
 int main(int argc, char** argv)
 {
     g_binaryName = argv[0];
 
-    return sdl_os_main(argc, argv);
+    try {
+        return sdl_os_main(argc, argv);
+    } catch (const std::exception &e) {
+        ReportMessagef("[linux] unhandled exception: %s", e.what());
+    }
 }

@@ -37,16 +37,11 @@ GLenum glReportError1(const char *file, uint line, const char *function);
 GLenum glReportFramebufferError1(const char *file, uint line, const char *function);
 void   glReportValidateShaderError1(const char* file, uint line, const char* function, GLuint program);
 
-#if DEBUG
 #define glReportError() glReportError1(__FILE__, __LINE__, __func__)
 #define glReportFramebufferError() glReportFramebufferError1(__FILE__, __LINE__, __func__)
 #define glReportValidateShaderError(PROG) glReportValidateShaderError1(__FILE__, __LINE__, __func__, (PROG))
-#else
-#define glReportError() (GL_NO_ERROR)
-#define glReportFramebufferError() (GL_NO_ERROR)
-#define glReportValidateShaderError(PROG)
-#endif
 
+bool isGLExtensionSupported(const char *name);
 
 class ShaderProgramBase;
 
@@ -181,7 +176,7 @@ public:
     void resize(int2 size, uint def=0xffffffff)
     {
         m_size = size;
-        m_data.resize(size.x * (size.y+1), def);
+        m_data.resize(size.x * size.y, def);
     }
 
     void setData(uint* data, int2 size)
@@ -270,6 +265,7 @@ public:
 
     void TexImage2D(int2 size, GLenum format, const uint *data);
 
+    void SetTexWrap(bool enable);
     void SetTexMagFilter(GLint filter);
     void GenerateMipmap();
 };
@@ -327,8 +323,8 @@ struct ShaderState {
 // RIAA for a render target
 class GLRenderTexture : public GLTexture {
     
-    GLuint m_fbname;
-    GLuint m_zrbname;
+    GLuint m_fbname = 0;
+    GLuint m_zrbname = 0;
     
     static vector<GLRenderTexture*> s_bound;
     
@@ -338,16 +334,15 @@ class GLRenderTexture : public GLTexture {
     void DrawFSEnd() const;
     
 public:
-    GLRenderTexture() : m_fbname(0), m_zrbname(0) {}
     ~GLRenderTexture() { clear(); }
     
     void clear();
     
-    bool   empty() const { return !(m_fbname && m_texname && m_zrbname); }
+    bool empty() const { return !(m_fbname && m_texname && m_zrbname); }
     
     void BindFramebuffer(float2 sizePixels, bool keepz=false);
     void RebindFramebuffer();
-    void UnbindFramebuffer(float2 vpsize) const;
+    void UnbindFramebuffer() const;
     
     template <typename Shader>
     void DrawFullscreen() const
@@ -559,6 +554,7 @@ private:
     GLuint m_programHandle    = 0;
     GLint  m_transformUniform = -1;
     GLint  m_positionSlot     = -1;
+    string m_name;
     
     mutable vector<GLuint> m_enabledAttribs;
 
@@ -570,38 +566,26 @@ private:
 
 protected:
     ShaderProgramBase() {}
-    virtual ~ShaderProgramBase(){}
+    virtual ~ShaderProgramBase();
     
     GLuint getProgram() const { return m_programHandle; }
     
-    bool LoadProgram(const char* shared, const char *vert, const char *frag);
-    
-    GLint getAttribLocation(const char *name) const
-    {
-        if (!isLoaded())
-            return -1;
-        GLint v = glGetAttribLocation(m_programHandle, name);
-        ASSERT(v >= 0);
-        glReportError();
-        return v;
-    }
+    bool LoadProgram(const char* name, const char* shared, const char *vert, const char *frag);
 
-    GLint getUniformLocation(const char *name) const
-    {
-        if (!isLoaded())
-            return -1;
-        GLint v = glGetUniformLocation(m_programHandle, name);
-        ASSERT(v >= 0);
-        glReportError();
-        return v;
-    }
+    // load based on file
+    bool LoadProgram(const char* name);
+
+    GLint getAttribLocation(const char *name) const;
+    GLint getUniformLocation(const char *name) const;
     
     template <typename V, typename T>
     void vertexAttribPointer(GLuint slot, const V *ptr, const T* base) const
     {
         glEnableVertexAttribArray(slot);
+        glReportError();
         m_enabledAttribs.push_back(slot);
         vap1(slot, sizeof(T), (const V*) ((const char*) ptr - (const char*) base));
+        glReportError();
     }
 
 
@@ -617,9 +601,16 @@ protected:
 
 public:
 
+    bool ReloadProgram() { return LoadProgram(m_name.c_str()); }
     void UnuseProgram() const;
 
     bool isLoaded() const { return m_programHandle != 0; }
+    string getName() const { return m_name; }
+};
+
+struct IShader : public ShaderProgramBase {
+
+    virtual void UseProgram(const ShaderState& ss)=0;
 };
 
 
@@ -1045,6 +1036,13 @@ struct PrimMesh : public Mesh<Vtx1> {
     }
 };
 
+enum SpiralType {
+    SPRIAL_ARCHIMEDEAN,
+    SPIRAL_FERMAT,
+    SPRIAL_HYPERBOLIC,
+    SPIRAL_LOG
+};
+
 template <typename Vtx>
 struct LineMesh : public PrimMesh<Vtx, 2> {
 
@@ -1115,6 +1113,33 @@ struct LineMesh : public PrimMesh<Vtx, 2> {
             ipv[i] = cardinal(pv, count, 1 + interval * i, c);
         }
         this->PushStrip(&ipv[0], icount);
+    }
+
+    void PushSpiral(const float2 &pos, SpiralType type, float maxTheta, float a, float b,
+                    int numVerts=32, float startAngle=0.f)
+    {
+        static const int maxVerts = 64;
+        ASSERT(numVerts >= 3);
+        numVerts = min(maxVerts, numVerts);
+        float2 verts[maxVerts];
+
+        const float angleIncr = maxTheta / (float) numVerts;
+    
+        for (int i=0; i != numVerts; ++i)
+        {
+            const float theta = startAngle + i * angleIncr;
+            float r = 0.f;
+            switch (type) {
+            case SPRIAL_ARCHIMEDEAN: r = b + a * theta; break;
+            case SPIRAL_FERMAT:      r = a * sqrt(theta); break;
+            case SPRIAL_HYPERBOLIC:  r = a / theta; break;
+            case SPIRAL_LOG:         r = a * exp(b * theta); break;
+            }
+
+            verts[i] = pos + r * angleToVector(theta);
+        }
+
+        PushStrip(verts, numVerts);
     }
 
     // widthRadians is on either side of angleStart
@@ -1541,15 +1566,17 @@ struct MeshPair {
 };
 
 
+enum ButtonStyle { S_BOX=1, S_CORNERS=2, S_FIXED=4 };
+
 void PushButton(TriMesh<VertexPosColor>* triP, LineMesh<VertexPosColor>* lineP, float2 pos, float2 r, 
                 uint bgColor, uint fgColor, float alpha);
 
 void DrawButton(const ShaderState *data, float2 pos, float2 r, uint bgColor, uint fgColor, float alpha=1);
 
-void PushBox(TriMesh<VertexPosColor>* triP, LineMesh<VertexPosColor>* lineP, float2 pos, float2 r, uint bgColor, uint fgColor, float alpha);
-void DrawBox(ShaderState *data, float2 pos, float2 r, uint bgColor, uint fgColor, float alpha=1);
+void PushRect(TriMesh<VertexPosColor>* triP, LineMesh<VertexPosColor>* lineP, float2 pos, float2 r, uint bgColor, uint fgColor, float alpha);
+void DrawFilledRect(const ShaderState &data, float2 pos, float2 r, uint bgColor, uint fgColor, float alpha=1);
 
-void fadeFullScreen(ShaderState &ss, const View& view, uint color, float alpha);
+void fadeFullScreen(const ShaderState &ss, const View& view, uint color, float alpha);
 
 void DrawAlignedGrid(ShaderState &wss, const View& view, float size, float z); 
 

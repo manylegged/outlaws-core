@@ -142,3 +142,27 @@ std::string str_align(const std::string& input, char token)
     }
     return str;
 }
+
+
+#if _MSC_VER
+
+std::string str_demangle(const char *str)
+{
+    return str;
+}
+
+#else
+
+#include <cxxabi.h>
+
+std::string str_demangle(const char *str)
+{
+    int status;
+    char* result = abi::__cxa_demangle(str, NULL, NULL, &status);
+    string name = result;
+    free(result);
+    name = str_replace(name, "std::__1::", "std::");
+    return name;
+}
+
+#endif

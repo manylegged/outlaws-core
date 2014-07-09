@@ -16,9 +16,33 @@ size_t ParticleSystem::count() const
     return m_vertices.size() / kParticleVerts; 
 }
 
+void ParticleSystem::setParticles(vector<Particle>& particles)
+{
+    std::lock_guard<std::mutex> l(m_mutex);
+    
+    m_vertices.resize(kParticleVerts * particles.size());
+
+    int i = 0;
+    foreach (const Particle &pr, particles)
+    {
+        const int vert = i * kParticleVerts;
+        m_vertices[vert] = pr;
+        m_vertices[vert].offset = float2(0.f);
+        for (uint j=1; j<kParticleVerts; j++) {
+            m_vertices[vert + j] = pr;
+            m_vertices[vert + j].offset = pr.offset.x * getCircleVertOffset<kParticleEdges>(j-1);
+            m_vertices[vert + j].color  = 0x0;
+        }
+        i++;
+    }
+    
+    m_addFirst = 0;
+    m_addPos = m_vertices.size();
+}
+
 void ParticleSystem::add(const Particle &p, bool gradient)
 {
-    ASSERT_UPDATE_THREAD();
+    //ASSERT_UPDATE_THREAD();
     if (m_maxParticles == 0 || (m_lastMaxedStep == globals.simStep))
         return;
 
@@ -71,7 +95,9 @@ void ParticleSystem::add(const Particle &p, bool gradient)
     m_addPos = m_vertices.size();
     {
         std::lock_guard<std::mutex> l(m_mutex);
-        m_vertices.resize(max(kMinParticles * kParticleVerts, (uint) m_vertices.size() * 2));
+        const uint size = max(kMinParticles * kParticleVerts, (uint) m_vertices.size() * 2);
+        DPRINT(SHADER, ("Changing particle count from %d to %d", (int) m_vertices.size(), size));
+        m_vertices.resize(size);
     }
 
     add(p, true);
@@ -100,19 +126,20 @@ ParticleSystem::~ParticleSystem()
 {
 }
 
-struct ShaderParticles : public ShaderProgramBase {
+struct ShaderParticles : public IShader {
 
-    uint offset;
-    uint startTime;
-    uint endTime;
-    uint velocity;
-    uint angle;
-    uint color;
-    uint currentTime;
+    GLint offset;
+    GLint startTime;
+    GLint endTime;
+    GLint velocity;
+    GLint angle;
+    GLint color;
+    GLint currentTime;
     
     ShaderParticles()
     {
-        LoadProgram("varying vec4 DestinationColor;\n"
+        LoadProgram("ShaderParticles",
+                    "varying vec4 DestinationColor;\n"
                     ,
                     "attribute vec2  Offset;\n"
                     "attribute float StartTime;\n"
@@ -153,12 +180,6 @@ struct ShaderParticles : public ShaderProgramBase {
 
     typedef ParticleSystem::Particle Particle;
 
-    void vertexAttrib(uint slot, uint count, uint type, uint normalized, uintptr_t offset_)
-    {
-        glEnableVertexAttribArray(slot);
-        glVertexAttribPointer(slot, count, type, normalized, sizeof(Particle), (void*) offset_);
-    }
-
     void UseProgram(const ShaderState& ss)
     {
         const Particle* ptr = NULL;
@@ -173,6 +194,12 @@ struct ShaderParticles : public ShaderProgramBase {
 
         glUniform1f(currentTime, OLG_GetRenderSimTime());
         glReportError();
+    }
+
+    static ShaderParticles& instance()
+    {
+        ShaderParticles *p = new ShaderParticles;
+        return *p;
     }
 };
 
@@ -230,12 +257,12 @@ void ParticleSystem::update()
     }
 }
 
-void ParticleSystem::render(float3 origin, ShaderState s, const View& view)
+void ParticleSystem::render(float3 origin, const ShaderState &ss, const View& view)
 {
 	m_planeZ = origin.z;
     m_view   = view;
 
-    if (m_vertices.size() == 0)
+    if (m_vertices.size() == 0 || m_maxParticles == 0)
     {
         if (m_vbo.size())
             clear();
@@ -295,13 +322,14 @@ void ParticleSystem::render(float3 origin, ShaderState s, const View& view)
         }
         m_addFirst = m_addPos;
     }
-    
-    static ShaderParticles *program = new ShaderParticles;
+
+    if (!m_program)
+        m_program = &ShaderParticles::instance(); 
 
     m_vbo.Bind();
-    program->UseProgram(s);
-    s.DrawElements(GL_TRIANGLES, m_ibo);
-    program->UnuseProgram();
+    m_program->UseProgram(ss);
+    ss.DrawElements(GL_TRIANGLES, m_ibo);
+    m_program->UnuseProgram();
     m_vbo.Unbind();
 }
 

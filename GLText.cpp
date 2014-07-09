@@ -185,7 +185,7 @@ void DrawTextBox(const ShaderState& ss1, const View& view, float2 point, float2 
         bgColor = 0x0d0715|ALPHAF(0.6);
 
     ShaderState ss = ss1;    
-    const GLText* st = GLText::get(font, tSize, text);
+    const GLText* st = GLText::get(font, GLText::getScaledSize(tSize), text);
     float2 boxSz = 5.f + 0.5f * st->getSize();
 
     float2 corneroffset = rad + st->getSize();

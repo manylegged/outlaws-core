@@ -31,10 +31,9 @@
 
 #ifdef __clang__
 #pragma clang diagnostic push
-#pragma GCC diagnostic ignored "-Wshadow"
 #endif
 
-#ifdef __GNUC__
+#if defined(__clang__) || defined(__GNUC__)
 #pragma GCC diagnostic ignored "-Wshadow"
 #endif
 
@@ -69,6 +68,7 @@
 #include <random>
 
 
+typedef unsigned char uchar;
 typedef unsigned char uint8;
 typedef unsigned short uint16;
 typedef unsigned int uint32;
@@ -193,6 +193,71 @@ inline bool isZero(float2 v) { return fabsf(v.x) < epsilon && fabsf(v.y) < epsil
 inline bool isZero(float3 v) { return fabsf(v.x) < epsilon && fabsf(v.y) < epsilon && fabsf(v.z) < epsilon; }
 inline bool isZero(float v)  { return fabsf(v) < epsilon; }
 
+// modulo (%), but result is [0-y) even for negative numbers
+inline int modulo(int x, int y)
+{
+    ASSERT(y > 0);
+
+    if (x >= 0)
+        return x % y;
+
+    const int m = x - y * (x / y);
+    return ((m < 0) ? y+m :
+            (m == y) ? 0 : m);
+}
+
+// adapted from http://stackoverflow.com/questions/4633177/c-how-to-wrap-a-float-to-the-interval-pi-pi
+// floating point modulo function. Output is always [0-y)
+template <typename T>
+inline T modulo(T x, T y)
+{
+    static_assert( std::numeric_limits<T>::is_iec559, "expected floating-point");
+
+    const double m = x - y * floor(x / y);
+
+    return ((y > 0) ?
+            ((m >= y) ? 0 :
+             (m < 0) ? ((y+m == y) ? 0 : y+m) :
+             m) :
+            ((m <= y) ? 0 : 
+             (m > 0) ? ((y+m == y) ? 0 : y+m) :
+             m));
+}
+
+
+template <typename T>
+inline glm::detail::tvec2<T, glm::defaultp> modulo(glm::detail::tvec2<T, glm::defaultp> val,
+                                                   glm::detail::tvec2<T, glm::defaultp> div)
+{
+    return glm::detail::tvec2<T, glm::defaultp>(modulo(val.x, div.x), modulo(val.y, div.y));
+}
+
+template <typename T>
+inline glm::detail::tvec2<T, glm::defaultp> modulo(glm::detail::tvec2<T, glm::defaultp> val, T div)
+{
+    return glm::detail::tvec2<T, glm::defaultp>(modulo(val.x, div), modulo(val.y, div));
+}
+
+inline float min_abs(float a, float b)
+{
+    return (fabsf(a) <= fabsf(b)) ? a : b;
+}
+
+inline float max_abs(float a, float b)
+{
+    return (fabsf(a) >= fabsf(b)) ? a : b;
+}
+
+inline float2 min_abs(float2 a, float2 b)
+{
+    return float2(min_abs(a.x, b.x), min_abs(a.y, b.y));
+}
+
+inline float2 max_abs(float2 a, float2 b)
+{
+    return float2(max_abs(a.y, b.y), max_abs(a.y, b.y));
+}
+
 // prevent nans
 inline float2 normalize(float2 a)
 {
@@ -301,6 +366,12 @@ inline float logerp1(float from, float to, float v) { return pow(from, 1-v) * po
 inline float2 logerp1(float2 from, float2 to, float v) { return float2(pow(from.x, 1-v) * pow(to.x, v), pow(from.y, 1-v) * pow(to.y, v)); }
 
 template <typename T>
+inline bool isBetween(const T &val, const T &lo, const T &hi) 
+{
+    return lo <= val && val <= hi;
+}
+
+template <typename T>
 inline T lerp(const T &from, const T &to, float v) 
 {
     return (1.f - v) * from + v * to; 
@@ -342,7 +413,9 @@ inline float lerpAngles(float a, float b, float v)
 }
 
 // return 0-1 depending how close value is to inputs zero and one
-inline float inv_lerp(float zero, float one, float val)
+// inv_lerp(a, b, lerp(a, b, v)) == v, for 0 <= v <= 1
+template <typename T>
+inline T inv_lerp(T zero, T one, float val)
 {
     bool inv = false;
     if (zero > one) {
@@ -351,12 +424,12 @@ inline float inv_lerp(float zero, float one, float val)
     }
     float unorm;
     if (val >= one)
-        unorm = 1.f;
+        unorm = 1.0;
     else if (val <= zero)
-        unorm = 0.f;
+        unorm = 0.0;
     else
         unorm = (val - zero) / (one - zero);
-    return inv ? 1.f - unorm : unorm;
+    return inv ? 1.0 - unorm : unorm;
 }
 
 // reduced VAL to 0.0 within FADELEN of either START or END (or beyond), and 1.0 if in the middle
@@ -366,6 +439,19 @@ inline float smooth_clamp(float start, float end, float val, float fadelen)
     val = clamp(start, end, val);
     return min(1.f, min((val - start) / fadelen,
                         (end - val) / fadelen));
+}
+
+// reduced VAL to 0.0 within FADESTART of START or FADEEND of END (or beyond), and 1.0 if in the middle
+inline float smooth_clamp(float start, float end, float val, float fadestart, float fadeend)
+{
+    ASSERT(end - start > fadeend);
+    val = clamp(start, end, val);
+    float ret = 1.f;
+    if (val < start + fadestart)
+        ret = min(ret, (val - start) / fadestart);
+    if (val > end - fadeend)
+        ret = min(ret, (end - val) / fadeend);
+    return ret;
 }
 
 // cardinal spline, interpolating with 't' between y1 and y2 with control points y0 and y3 and tension 'c'
@@ -456,62 +542,17 @@ inline float unorm_sin(float a)
 
 ///////////////////////////////////////////// intersection
 
-struct AABBox {
-    
-    float2 mn, mx;
+template <typename T>
+inline bool isInRange(T p, T mn, T mx)
+{
+    return mn <= p && p < mx;
+}
 
-    float2 getRadius() const { return 0.5f * (mx-mn); }
-    float2 getCenter() const { return 0.5f * (mx+mn); }
-
-    void start(float2 pt) 
-    {
-        if (mn != mx)
-            return;
-        mn = pt;
-        mx = pt;
-    }
-
-    void reset()
-    {
-        mn = float2(0);
-        mx = float2(0);
-    }
-    
-    void insertPoint(float2 pt)
-    {
-        start(pt);
-        mx = max(mx, pt);
-        mn = min(mn, pt);
-    }
-
-    void insertCircle(float2 pt, float rad)
-    {
-        start(pt);
-        mx = max(mx, pt + float2(rad));
-        mn = min(mn, pt - float2(rad));
-    }
-
-    void insertRect(float2 pt, float2 rad)
-    {
-        start(pt);
-        mx = max(mx, pt + rad);
-        mn = min(mn, pt - rad);
-    }
-
-    void insertRectCorners(float2 p0, float2 p1)
-    {
-        start(p0);
-        mx = max(mx, max(p0, p1));
-        mn = min(mn, min(p0, p1));
-    }
-
-    void insertAABBox(const AABBox &bb)
-    {
-        start(bb.getCenter());
-        mx = max(mx, bb.mx);
-        mn = min(mn, bb.mn);
-    }
-};
+template <typename T>
+inline bool isInRange(glm::detail::tvec2<T, glm::defaultp> p, glm::detail::tvec2<T, glm::defaultp> mn, glm::detail::tvec2<T, glm::defaultp> mx)
+{
+    return isInRange(p.x, mn.x, mx.x) && isInRange(p.y, mn.x, mx.x);
+}
 
 inline bool intersectPointCircle(const float2 &p, const float2 &c, float r)
 {
@@ -669,22 +710,32 @@ inline bool intersectRaySegment(float2 rpt, float2 rdir, float2 sa, float2 sb)
 // a and b are the center of each rectangle, and ar and br are the distance from the center to each edge
 inline bool intersectRectangleRectangle(const float2 &a, const float2 &ar, const float2 &b, const float2 &br)
 {
-    return (fabsf(a.x - b.x) <= (ar.x + br.x) &&
-            fabsf(a.y - b.y) <= (ar.y + br.y));
+    const float2 delt = abs(a - b);
+    return (delt.x <= (ar.x + br.x) &&
+            delt.y <= (ar.y + br.y));
+}
+
+inline bool _intersectCircleRectangle1(const float2 &circleDistance, float circleR, const float2& rectR)
+{
+    if (circleDistance.x > (rectR.x + circleR) ||
+        circleDistance.y > (rectR.y + circleR))
+    {
+        return false;
+    }
+
+    if (circleDistance.x <= rectR.x ||
+        circleDistance.y <= rectR.y)
+    {
+        return true;
+    }
+
+    return intersectPointCircle(circleDistance, rectR, circleR);
 }
 
 inline bool intersectCircleRectangle(const float2 &circle, float circleR, const float2 &rectP, const float2 &rectR)
 {
-    const float2 circleDistance(fabsf(circle.x - rectP.x),
-                                fabsf(circle.y - rectP.y));
-
-    if (circleDistance.x > (rectR.x + circleR)) { return false; }
-    if (circleDistance.y > (rectR.y + circleR)) { return false; }
-
-    if (circleDistance.x <= (rectR.x)) { return true; } 
-    if (circleDistance.y <= (rectR.y)) { return true; }
-
-    return intersectPointCircle(circleDistance, rectR, circleR);
+    const float2 circleDistance = abs(circle - rectP);
+    return _intersectCircleRectangle1(circleDistance, circleR, rectR);
 }
 
 inline bool intersectPointRectangle(float2 p, float2 b, float2 br)
@@ -693,10 +744,85 @@ inline bool intersectPointRectangle(float2 p, float2 b, float2 br)
     return v.x > -br.x && v.y > -br.y && v.x <= br.x && v.y <= br.y;
 }
 
+inline bool intersectPointRectangleCorners(float2 p, float2 a, float2 b)
+{
+    float2 mn = min(a, b);
+    float2 mx = max(a, b);
+    return p.x >= mn.x && p.y >= mn.y && p.x <= mx.x && p.y <= mx.y;
+}
+
 inline bool containedCircleInRectangle(const float2 &circle, float circleR, const float2 &rectP, const float2 &rectR)
 {
     return intersectPointRectangle(circle, rectP, rectR - float2(circleR));
 }
+
+struct AABBox {
+    
+    float2 mn, mx;
+
+    float2 getRadius() const { return 0.5f * (mx-mn); }
+    float2 getCenter() const { return 0.5f * (mx+mn); }
+
+    void start(float2 pt) 
+    {
+        if (mn != mx)
+            return;
+        mn = pt;
+        mx = pt;
+    }
+
+    void reset()
+    {
+        mn = float2(0);
+        mx = float2(0);
+    }
+    
+    void insertPoint(float2 pt)
+    {
+        start(pt);
+        mx = max(mx, pt);
+        mn = min(mn, pt);
+    }
+
+    void insertCircle(float2 pt, float rad)
+    {
+        start(pt);
+        mx = max(mx, pt + float2(rad));
+        mn = min(mn, pt - float2(rad));
+    }
+
+    void insertRect(float2 pt, float2 rad)
+    {
+        start(pt);
+        mx = max(mx, pt + rad);
+        mn = min(mn, pt - rad);
+    }
+
+    void insertRectCorners(float2 p0, float2 p1)
+    {
+        start(p0);
+        mx = max(mx, max(p0, p1));
+        mn = min(mn, min(p0, p1));
+    }
+
+    void insertAABBox(const AABBox &bb)
+    {
+        start(bb.getCenter());
+        mx = max(mx, bb.mx);
+        mn = min(mn, bb.mn);
+    }
+
+    bool intersectPoint(float2 pt) const
+    {
+        return intersectPointRectangle(pt, getCenter(), getRadius());
+    }
+    
+    bool intersectCircle(float2 pt, float r) const
+    {
+        return intersectCircleRectangle(pt, r, getCenter(), getRadius());
+    }
+};
+
 
 float intersectBBSegmentV(float bbl, float bbb, float bbr, float bbt, float2 a, float2 b);
 
@@ -753,6 +879,69 @@ inline bool intersectSectorPoint(float2 ap, float ar, float ad, float aa, float2
 
 // sector position, radius, direction, angle
 bool intersectSectorCircle(float2 ap, float ar, float ad, float aa, float2 cp, float cr);
+
+
+// toroidally wrapped 2d space
+
+// shortest vector pointing from q to p (p-q)
+inline float2 toroidalDelta(const float2 &p, const float2 &q, const float2 &w)
+{
+    ASSERT(w.x > 0 && w.y > 0 &&
+           intersectPointRectangleCorners(p, float2(0.f), w) &&
+           intersectPointRectangleCorners(q, float2(0.f), w));
+
+    const float2 v = p - q;
+
+    return min_abs(v, min_abs(v-w, v+w));
+}
+
+// closest mapped position for POS relative to VIEW
+inline float2 toroidalPosition(const float2 &pos, const float2 &view, const float2 &w)
+{
+    const float2 delta = toroidalDelta(pos, modulo(view, w), w);
+    return view + delta;
+}
+
+inline float toroidalDistanceSqr(const float2 &p, const float2 &q, const float2 &w)
+{
+    const float2 d = toroidalDelta(p, q, w);
+    return d.x * d.x + d.y * d.y;
+}
+
+inline float toroidalDistance(const float2 &p, const float2 &q, const float2 &w)
+{
+    return sqrt(toroidalDistanceSqr(p, q, w));
+}
+
+inline bool toroidalIntersectPointCircle(const float2 &p, const float2 &c, float r, const float2 &w)
+{
+    return toroidalDistanceSqr(p, c, w) <= (r*r);
+}
+
+inline bool toroidalIntersectCircleCircle(const float2 &p, const float pr,
+                                          const float2 &c, float cr,
+                                          const float2 &w)
+{
+    const float r = pr + cr;
+    return toroidalDistanceSqr(p, c, w) <= (r*r);
+}
+
+inline bool toroidalIntersectCircleRectangle(const float2 &p, const float pr,
+                                             const float2 &c, const float2 &cr,
+                                             const float2 &w)
+{
+    const float2 delt = abs(toroidalDelta(p, c, w));
+    return _intersectCircleRectangle1(delt, pr, cr);
+}
+
+inline bool toroidalIntersectRectangleRectangle(const float2 &p, const float2 &pr,
+                                                const float2 &c, const float2 &cr,
+                                                const float2 &w)
+{
+    const float2 delt = abs(toroidalDelta(p, c, w));
+    return delt.x <= (pr.x + cr.x) && delt.y <= (pr.y + cr.y);
+}
+
 
 ////////////////////////////////////////////////////////////////////////////
 

@@ -312,12 +312,11 @@ float2 clamp_rect(float2 v, float2 rad)
 
 float2 circle_in_rect(float2 pos, float rad, float2 rcenter, float2 rrad)
 {
-    if (rad > min_dim(rrad))
-        return rcenter;
-
     float2 npos = pos;
     for (uint i=0; i<2; i++) {
-        if (npos[i] - rad < rcenter[i] - rrad[i])
+        if (rad > rrad[i])
+            npos[i] = rcenter[i];
+        else if (npos[i] - rad < rcenter[i] - rrad[i])
             npos[i] = rcenter[i] - rrad[i] + rad;
         else if (npos[i] + rad > rcenter[i] + rrad[i])
             npos[i] = rcenter[i] + rrad[i] - rad;

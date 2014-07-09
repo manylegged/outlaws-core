@@ -26,18 +26,18 @@
 #ifndef SERIALCORE_H
 #define SERIALCORE_H
 
-typedef pair<lstring, uint64> SaveEnum;
-#define TO_SAVEENUM(K, V) SaveEnum(#K, V),
-#define TO_ENUM(X, V) X=V,
-#define DEFINE_ENUM(NAME, FIELDS)                                       \
-    struct NAME {                                                       \
-        enum Fields : uint64 { FIELDS(TO_ENUM) };                                \
-        static const SaveEnum *getFields()                              \
-        {                                                               \
-            static const SaveEnum val[] = { FIELDS(TO_SAVEENUM) { NULL, 0}  }; \
-            return val;                                                 \
-        }                                                               \
-    }
+/////////////////////////////////////////////////////////////////////////////////
+// Reflective enum macros
+// Easily declare enums that serialize and deserialize, list members at runtime, etc.
+//
+// For example:
+//
+// #define BLOCK_SHAPES(F)                         \
+//    F(SQUARE,   0)                               \
+//    F(OCTAGON,  1)                               \
+//
+// DEFINE_ENUM(SerialShape, char, BLOCK_SHAPES);
+//
 
 #define DEFINE_ENUM_OP(X)                                          \
     U operator X(U val) const { return value X val; }    \
@@ -46,10 +46,8 @@ typedef pair<lstring, uint64> SaveEnum;
     U operator X##=(SerialEnum val) { return value X##= val.value; }
 
 template <typename T, typename U=uint64>
-struct SerialEnum {
+struct SerialEnum : public T {
 
-    typedef T Type;
-    
     SerialEnum() {}
     SerialEnum(U init) : value(init) {}
     
@@ -71,30 +69,52 @@ struct SerialEnum {
     string toString() const;
 };
 
+#undef DEFINE_ENUM_OP
+
+typedef std::pair<lstring, uint64> SaveEnum;
+#define SERIAL_TO_SAVEENUM(K, V) SaveEnum(#K, V),
+#define SERIAL_TO_ENUM(X, V) X=V,
+
+#define DEFINE_ENUM(TYPE, NAME, FIELDS)                                 \
+    struct NAME ## _ {                                                  \
+        enum Fields : TYPE { FIELDS(SERIAL_TO_ENUM) };              \
+        static const SaveEnum *getFields()                              \
+        {                                                               \
+            static const SaveEnum val[] = { FIELDS(SERIAL_TO_SAVEENUM) { NULL, 0}  }; \
+            return val;                                                 \
+        }                                                               \
+    };                                                                  \
+    typedef SerialEnum< NAME ## _, TYPE > NAME
+
 
 /////////////////////////////////////////////////////////////////////////////////
 // Reflective struct macros
-// Easily declare structs that automatically 
-//
-// fields in function like macro like this:
-// F(TYPE, NAME, DEFAULT)
+// Easily declare structs that automatically serialize and deserialize, etc
 //
 // For example:
+//
 // #define SERIAL_BLOCK_FIELDS(F)                                       \
 //     F(uint,              ident,                   0)                 \
 //     F(float2,            offset,                  float2(0))         \
 //     F(float,             angle,                   0.f)               \
+//
+// DECLARE_SERIAL_STRUCT(SerialBlock, SERIAL_BLOCK_FIELDS);
+//
+// (in cpp file)
+// DEFINE_SERIAL_STRUCT(SerialBlock, SERIAL_BLOCK_FIELDS);
+//
 
-#define SERIAL_TO_STRUCT_FIELD(TYPE, NAME, _DEFAULT) TYPE NAME;
+#define SERIAL_TO_STRUCT_FIELD(TYPE, NAME, DEFAULT) TYPE NAME = DEFAULT;
 #define SERIAL_VISIT_FIELD_AND(TYPE, NAME, DEFAULT) vis.visit(#NAME, (NAME), TYPE(DEFAULT)) &&
 #define SERIAL_INITIALIZE_FIELD(_TYPE, NAME, DEFAULT) NAME = (DEFAULT);
 #define SERIAL_COPY_FIELD(TYPE, NAME, _DEFAULT) NAME = sb.NAME;
 #define SERIAL_ELSE_FIELD_NEQUAL(_TYPE, NAME, _DEFAULT) else if ((this->NAME) != (sb.NAME)) return 0;
 #define VISIT(FIELD) visit(#FIELD, (FIELD))
+#define VISIT_DEF(FIELD, DEF) visit(#FIELD, (FIELD), (DEF))
 
 #define DECLARE_SERIAL_STRUCT_CONTENTS(STRUCT_NAME, FIELDS_MACRO)   \
     FIELDS_MACRO(SERIAL_TO_STRUCT_FIELD);                           \
-    STRUCT_NAME();                                                  \
+    STRUCT_NAME() {}                                                \
     STRUCT_NAME(const STRUCT_NAME& o) { *this = o; }                \
     template <typename V>                                           \
     bool accept(V& vis)                                             \
@@ -116,10 +136,6 @@ struct SerialEnum {
 
 
 #define DEFINE_SERIAL_STRUCT(STRUCT_NAME, FIELDS_MACRO)         \
-    STRUCT_NAME::STRUCT_NAME()                                  \
-    {                                                           \
-        FIELDS_MACRO(SERIAL_INITIALIZE_FIELD);                  \
-    }                                                           \
     bool STRUCT_NAME::operator==(const STRUCT_NAME& sb) const   \
     {                                                           \
         if (0); FIELDS_MACRO(SERIAL_ELSE_FIELD_NEQUAL) else return 1;   \

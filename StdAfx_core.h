@@ -47,8 +47,16 @@ inline void ReportMessagef(const char *format, ...)
     va_end(vl);
 }
 
-
+#if _MSC_VER
 #define TYPE_NAME(X) (typeid(X).name())
+#else
+#define TYPE_NAME(X) (str_demangle(typeid(X).name()).c_str())
+#endif
+
+// use pthreads instead of std::thread on mac because the default stack size is really small and
+// there is no way to change it using std::thread
+#define OL_USE_PTHREADS defined(__APPLE__)
+
 
 #define arraySize(X) (sizeof(X) / sizeof(X[0]))
 
@@ -60,8 +68,8 @@ inline void ReportMessagef(const char *format, ...)
 #define SIZEOF_ARR(X, Y) ((X) ? (sizeof(X[0]) * (Y)) : 0)
 
 // assertions are enabled even in release builds
-#define ASSERT(X) (__builtin_expect(!(X), 0) ? OLG_OnAssertFailed(__FILE__, __LINE__, __func__, #X, ""), 1 : 0)
-#define ASSERTF(X, Y, ...) (__builtin_expect(!(X), 0) ? OLG_OnAssertFailed(__FILE__, __LINE__, __func__, #X, (Y), __VA_ARGS__), 1 : 0)
+#define ASSERT(X) (__builtin_expect(!(X), 0) ? OLG_OnAssertFailed(__FILE__, __LINE__, __func__, #X, "") : 0)
+#define ASSERTF(X, Y, ...) (__builtin_expect(!(X), 0) ? OLG_OnAssertFailed(__FILE__, __LINE__, __func__, #X, (Y), __VA_ARGS__) : 0)
 
 
 #if !defined(DEBUG) && !defined(DEVELOP)

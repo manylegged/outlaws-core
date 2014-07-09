@@ -39,10 +39,12 @@ struct lstring
 private:
     struct Lexicon
     {
-        std::set<std::string> strings;
+        std::mutex                      mutex;
+        std::unordered_set<std::string> strings;
 
         const char* intern(const std::string& str)
         {
+            std::lock_guard<std::mutex> l(mutex);
             return strings.insert(str).first->c_str();
         }
 
@@ -64,9 +66,12 @@ public:
     std::string str()   const { return m_ptr ? std::string(m_ptr) : ""; }
     const char* c_str() const { return m_ptr; }
     bool empty()        const { return !m_ptr || m_ptr[0] == '\0'; }
+    
+    void clear() { m_ptr = NULL; }
 
     bool operator<(const lstring& o) const 
     {
+        // could just do pointer compare here for speed, but sometimes nice to be alphabetical
         return !m_ptr ? true : !o.m_ptr ? false : strcmp(m_ptr, o.m_ptr) < 0;
     }
     
@@ -77,6 +82,20 @@ public:
     
     bool operator==(const lstring &o) const { return m_ptr == o.m_ptr; }
     bool operator!=(const lstring &o) const { return m_ptr != o.m_ptr; }
+
+    static size_t lexicon_size() { return Lexicon::instance().strings.size(); }
+    
+    static size_t lexicon_bytes()
+    {
+        size_t sz = 0;
+        std::lock_guard<std::mutex> l(Lexicon::instance().mutex);
+        for (const std::string &str : Lexicon::instance().strings)
+        {
+            sz += str.size();
+        }
+        return sz;
+    }
+    
 };
 
 namespace std {
@@ -89,7 +108,6 @@ namespace std {
         }
     };
 }
-
 
 template <typename T>
 inline std::string str_replace(T&& s, const char* a, const char* b)
@@ -182,13 +200,13 @@ inline std::vector<std::string> str_split(const std::string &s, char delim)
 
 inline std::string str_tostr(float a) { return str_format("%f", a); }
 inline std::string str_tostr(int a)   { return str_format("%d", a); }
-inline std::string str_tostr(uint a)  { return a < 10000 ? str_format("%d", a) : str_format("0x%x", a); }
+inline std::string str_tostr(uint a)  { return a < 0xfffff ? str_format("%d", a) : str_format("0x%x", a); }
 inline std::string str_tostr(const char *a) { return a ? a : ""; }
 inline std::string str_tostr(const std::string &a) { return a; }
 inline std::string str_tostr(lstring a) { return a.str(); }
 
 template <class A>
-std::string str_join(const A &cont, const std::string &sep)
+std::string str_join( const std::string &sep, const A &cont)
 {
     std::string result;
     for (typename A::const_iterator it=cont.begin(), end=cont.end(); it!=end; ++it)
@@ -201,7 +219,7 @@ std::string str_join(const A &cont, const std::string &sep)
 }
 
 template <class A>
-std::string str_join(const A &begin, const A &end, const std::string &sep)
+std::string str_join(const std::string &sep, const A &begin, const A &end)
 {
     std::string result;
     for (A it=begin; it!=end; it++)
@@ -214,7 +232,7 @@ std::string str_join(const A &begin, const A &end, const std::string &sep)
 }
 
 template <class A>
-std::string str_join_keys(const A &begin, const A &end, const std::string &sep)
+std::string str_join_keys(const std::string &sep, const A &begin, const A &end)
 {
     std::string result;
     for (A it=begin; it!=end; it++)
@@ -260,6 +278,25 @@ inline std::string str_tolower(const std::string &str)
     return s;
 }
 
+inline bool str_contains(const std::string& str, const std::string& substr)
+{
+    return str.find(substr) != std::string::npos;
+}
+
+inline bool str_contains(const std::string& str, const char *substr)
+{
+    return str.find(substr) != std::string::npos;
+}
+
 long chr_unshift(long chr);
+
+std::string str_demangle(const char* str);
+
+inline bool issym(const char v)
+{
+    return v != '\0' && (isalpha(v) || strchr("_.", v));
+}
+
+
 
 #endif

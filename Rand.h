@@ -55,25 +55,21 @@ inline bool randbool() { return randrange(0, 2); }
 template <typename T>
 inline const T &randselect(std::initializer_list<T> l)
 {
+    static_assert(!l.empty(), "Can't select from empty list");
     return *(l.begin() + randrange(0, l.size()));
-}
-
-template <typename Vec>
-inline typename Vec::value_type& randselect(Vec& vec)
-{
-    ASSERT(vec.size());
-    if (vec.size() == 1)
-        return vec[0];
-    return vec[randrange(0, vec.size())];
 }
 
 template <typename Vec>
 inline const typename Vec::value_type& randselect(const Vec& vec)
 {
-    ASSERT(vec.size());
-    if (vec.size() == 1)
+    if (vec.empty()) {
+        static const typename Vec::value_type dummy{};
+        return dummy;
+    } else if (vec.size() == 1) {
         return vec[0];
-    return vec[randrange(0, vec.size())];
+    } else {
+        return vec[randrange(0, vec.size())];
+    }
 }
 
 

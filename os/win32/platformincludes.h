@@ -50,10 +50,6 @@
 #undef MOUSE_MOVED
 #endif
 
-#ifdef GetCurrentTime
-#undef GetCurrentTime
-#endif
-
 typedef unsigned int uint;
 typedef unsigned short ushort;
 
@@ -63,6 +59,11 @@ typedef unsigned short ushort;
 
 #ifndef __has_feature
 #define __has_feature(X) (0)
+#endif
+
+#if defined(NULL)
+#undef NULL
+#define NULL nullptr
 #endif
 
 #endif

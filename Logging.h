@@ -80,8 +80,8 @@ struct FrameLogger {
     // RAII phase timing wrapper
     struct Phase {
         FrameLogger &logger;
-        lstring      name;
-        Phase(FrameLogger& l, lstring n) : logger(l), name(n)
+        const char  *name;
+        Phase(FrameLogger& l, const char *n) : logger(l), name(n)
         {
             logger.beginPhase(name);
         }
@@ -100,15 +100,15 @@ struct FrameLogger {
         m_current.clear();
     }
 
-    void beginPhase(lstring phase)
+    void beginPhase(const char *phase)
     {
         if (m_paused)
             return;
         ASSERT(m_currentPhases.empty());
-        m_currentPhases.push_back(std::make_pair(phase.str(), OL_GetCurrentTime()));
+        m_currentPhases.push_back(std::make_pair(phase, OL_GetCurrentTime()));
     }
 
-    void endPhase(lstring phase)
+    void endPhase(const char *phase)
     {
         if (m_paused)
             return;
@@ -117,7 +117,7 @@ struct FrameLogger {
         m_currentPhases.pop_back();
     }
 
-    void addPhase(lstring phase, double length)
+    void addPhase(const char *phase, double length)
     {
         if (m_paused)
             return;
