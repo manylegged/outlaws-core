@@ -40,7 +40,7 @@ void ParticleSystem::setParticles(vector<Particle>& particles)
     m_addPos = m_vertices.size();
 }
 
-void ParticleSystem::add(const Particle &p, bool gradient)
+void ParticleSystem::add(const Particle &p, float angle, bool gradient)
 {
     //ASSERT_UPDATE_THREAD();
     if (m_maxParticles == 0 || (m_lastMaxedStep == globals.simStep))
@@ -56,7 +56,7 @@ void ParticleSystem::add(const Particle &p, bool gradient)
             if (m_vertices[m_addPos].endTime <= globals.simTime)
             {
                 Particle p1 = p;
-                p1.angle += M_TAOf / (2.f * kParticleEdges);
+                const float2 rot = angleToVector(angle + M_TAOf / (2.f * kParticleEdges));
 
                 if (kBluryParticles)
                 {
@@ -65,7 +65,7 @@ void ParticleSystem::add(const Particle &p, bool gradient)
                     m_vertices[m_addPos].offset = float2(0.f);
                     for (uint j=1; j<kParticleVerts; j++) {
                         m_vertices[m_addPos + j] = p1;
-                        m_vertices[m_addPos + j].offset = p.offset.x * getCircleVertOffset<kParticleEdges>(j-1);
+                        m_vertices[m_addPos + j].offset = rotate(p.offset.x * getCircleVertOffset<kParticleEdges>(j-1), rot);
                         if (gradient)
                             m_vertices[m_addPos + j].color  = 0x0;
                     }
@@ -74,7 +74,7 @@ void ParticleSystem::add(const Particle &p, bool gradient)
                 {
                     for (uint j=0; j<kParticleVerts; j++) {
                         m_vertices[m_addPos + j] = p;
-                        m_vertices[m_addPos + j].offset = p.offset.x * getCircleVertOffset<kParticleVerts>(j);
+                        m_vertices[m_addPos + j].offset = rotate(p.offset.x * getCircleVertOffset<kParticleVerts>(j), rot);
                     }
                 }
             
@@ -100,7 +100,7 @@ void ParticleSystem::add(const Particle &p, bool gradient)
         m_vertices.resize(size);
     }
 
-    add(p, true);
+    add(p, angle, gradient);
 }
 
 void ParticleSystem::clear()
@@ -145,7 +145,6 @@ struct ShaderParticles : public IShader {
                     "attribute float StartTime;\n"
                     "attribute float EndTime;\n"
                     "attribute vec3  Velocity;\n"
-                    "attribute float Angle;\n"
                     "attribute vec4  Color;\n"
                     "uniform   float CurrentTime;\n"
                     "void main(void) {\n"
@@ -154,11 +153,8 @@ struct ShaderParticles : public IShader {
                     "        return;\n"
                     "    }\n"
                     "    float deltaT = CurrentTime - StartTime;\n"
-                    "    vec2  rot    = vec2(cos(Angle), sin(Angle));\n"
-                    "    vec3  offset = vec3(rot.x * Offset.x - rot.y * Offset.y,\n"
-                    "                        rot.y * Offset.x + rot.x * Offset.y, 0);\n"
                     "    vec3  velocity = pow(0.8, deltaT) * Velocity;\n"
-                    "    vec3  position = Position.xyz + offset + deltaT * velocity;\n"
+                    "    vec3  position = Position.xyz + vec3(Offset, 0.0) + deltaT * velocity;\n"
                     "    float v = deltaT / (EndTime - StartTime);\n"
                     "    DestinationColor = (1.0 - v) * Color;\n"
                     "    gl_Position = Transform * vec4(position, 1);\n"
@@ -172,7 +168,6 @@ struct ShaderParticles : public IShader {
         startTime   = getAttribLocation("StartTime");
         endTime     = getAttribLocation("EndTime");
         velocity    = getAttribLocation("Velocity");
-        angle       = getAttribLocation("Angle");
         color       = getAttribLocation("Color");
         currentTime = getUniformLocation("CurrentTime");
         glReportError();
@@ -189,7 +184,6 @@ struct ShaderParticles : public IShader {
         vertexAttribPointer(startTime, &ptr->startTime, ptr);
         vertexAttribPointer(endTime, &ptr->endTime, ptr);
         vertexAttribPointer(velocity, &ptr->velocity, ptr);
-        vertexAttribPointer(angle, &ptr->angle, ptr);
         vertexAttribPointer(color, &ptr->color, ptr);
 
         glUniform1f(currentTime, OLG_GetRenderSimTime());
@@ -198,7 +192,7 @@ struct ShaderParticles : public IShader {
 
     static ShaderParticles& instance()
     {
-        ShaderParticles *p = new ShaderParticles;
+        static ShaderParticles *p = new ShaderParticles;
         return *p;
     }
 };
@@ -239,7 +233,6 @@ void ParticleSystem::update()
                 const float v = ((float)globals.simTime - tr.startTime) / (tr.endTime - tr.startTime);
 
                 pr.position  = pos;
-                pr.angle     = randangle();
                 pr.velocity  = float3(rotate(float2(lerp(pr.velocity, tr.particle1.velocity, v)),
                                              randangle()), 0.f);
                 pr.startTime = globals.simTime;
@@ -247,7 +240,7 @@ void ParticleSystem::update()
                 pr.offset    = lerp(pr.offset, tr.particle1.offset, v);
                 pr.color     = lerpAXXX(pr.color, tr.particle1.color, v);
             
-                add(pr, true);
+                add(pr, randangle(), true);
 
                 tr.lastParticleTime = globals.simTime;
             }

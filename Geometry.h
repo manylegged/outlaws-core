@@ -139,7 +139,17 @@ namespace std {
 template <typename T>
 inline bool fpu_error(T x) { return (std::isinf(x) || std::isnan(x)); }
 
-inline float round(float a, float v) { return v * round(a / v); }
+
+static const float epsilon = 0.0001f;
+
+
+inline float round(float a, float v)
+{
+    if (fabsf(v) < epsilon)
+        return a;
+    return v * round(a / v);
+}
+
 inline float2 round(float2 a, float v) { return float2(round(a.x, v), round(a.y, v)); }
 
 inline double round(double a, double v) { return v * round(a / v); }
@@ -186,8 +196,6 @@ float2 circle_in_rect(float2 pos, float rad, float2 rcenter, float2 rrad);
 
 inline float max_dim(float2 v) { return max(v.x, v.y); }
 inline float min_dim(float2 v) { return min(v.x, v.y); }
-
-static const float epsilon = 0.0001f;
 
 inline bool isZero(float2 v) { return fabsf(v.x) < epsilon && fabsf(v.y) < epsilon; }
 inline bool isZero(float3 v) { return fabsf(v.x) < epsilon && fabsf(v.y) < epsilon && fabsf(v.z) < epsilon; }
@@ -762,10 +770,16 @@ struct AABBox {
 
     float2 getRadius() const { return 0.5f * (mx-mn); }
     float2 getCenter() const { return 0.5f * (mx+mn); }
+    
+    float getArea() const
+    {
+        const float2 rad = getRadius();
+        return 4.f * rad.x * rad.y;
+    }
 
     void start(float2 pt) 
     {
-        if (mn != mx)
+        if (mn.x != 0.f || mn.y != 0.f || mx.x != 0.f || mx.y != 0.f)
             return;
         mn = pt;
         mx = pt;
@@ -803,6 +817,18 @@ struct AABBox {
         start(p0);
         mx = max(mx, max(p0, p1));
         mn = min(mn, min(p0, p1));
+    }
+
+    void insertPoly(const float2 *pts, int count)
+    {
+        if (count <= 0)
+            return;
+        start(pts[0]);
+        for (int i=1; i<count; i++)
+        {
+            mx = max(mx, pts[i]);
+            mn = min(mn, pts[i]);
+        }
     }
 
     void insertAABBox(const AABBox &bb)

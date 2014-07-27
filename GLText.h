@@ -50,9 +50,8 @@ class GLText {
     {
         memset(&texture, 0, sizeof(texture));
     }
-    ~GLText();
 
-    void   load();
+    void load();
 
     float2 getAdvancement(char c) const;
 
@@ -73,6 +72,7 @@ public:
     static const GLText* get(int font, float size, const string& str);
 
     static float getScaledSize(float sizeUnscaled);
+    static float getFontHeight(int font, float size);
 
     enum Align {
         LEFT,

@@ -289,6 +289,7 @@ struct ShaderState {
     void translateZ(float z) { uTransform = glm::translate(uTransform, float3(0, 0, z)); }
     void translate(const float3 &t) { uTransform = glm::translate(uTransform, t); }
     void rotate(float a)     { uTransform = glm::rotate(uTransform, a, float3(0, 0, 1)); }
+    void scale(const float3 &s) { uTransform = glm::scale(uTransform, s); }
 
     void translateRotate(float2 t, float a)
     {
@@ -352,9 +353,6 @@ public:
         DrawFSEnd();
     }
 };
-
-static float kScaleMin = 0.05f;
-static float kScaleMax = 5.f;
 
 // camera/view data
 struct View {
@@ -439,7 +437,6 @@ struct View {
         scale    = v.scale;
         angle    = v.angle;
     }
-    void adjustZoom(float v) { scale = clamp(scale * v, kScaleMin, kScaleMax); }
 
     float  toScreenSize(float  p, float z=0.f) const { return p / getScale(z); }
     float2 toScreenSize(float2 p, float z=0.f) const { return p / getScale(z); }
@@ -541,6 +538,21 @@ struct View {
         const float lineWidth = clamp(width, 0.1f, 1.5f * pointSize);
         glLineWidth(lineWidth);
         glReportError();
+    }
+
+    void setWorldRadius(float rad)
+    {
+        scale = max_dim((2.f * rad) / sizePoints);
+    }
+
+    float getWorldRadius() const
+    {
+        return max_dim(getWorldSize(0.f)) / 2.f;
+    }
+
+    float worldRadiusToScale(float rad) const
+    {
+        return max_dim((2.f * rad) / sizePoints);
     }
 };
 
@@ -916,6 +928,7 @@ public:
             program.UseProgram(s, &m_vl[0], &m_vl[0]);
             s.DrawElements(type, m_ibo);
             m_vbo.Unbind();
+            program.UnuseProgram();
         }
         else if (!m_vl.empty())
         {
@@ -923,12 +936,8 @@ public:
             
             program.UseProgram(s, &m_vl[0], (Vtx*)NULL);
             s.DrawElements(type, m_il.size(), &m_il[0]);
+            program.UnuseProgram();
         }
-        else
-        {
-            return;
-        }
-        program.UnuseProgram();
     }
 };
 
@@ -1513,10 +1522,6 @@ struct TriMesh : public PrimMesh<Vtx, 3> {
     }
 };
 
-typedef Mesh<VertexPosColor> VertexPusher;
-typedef TriMesh<VertexPosColor> VertexPusherTri;
-typedef LineMesh<VertexPosColor> VertexPusherLine;
-
 template <typename TriV, typename LineV>
 struct MeshPair {
     
@@ -1546,10 +1551,25 @@ struct MeshPair {
         }
     };
 
+    void start()
+    {
+        ASSERT(tri.empty() && line.empty());
+    }
+
+    void finish()
+    {
+        clear();
+    }
+
     void clear()
     {
         tri.clear();
         line.clear();
+    }
+
+    bool empty() const
+    {
+        return tri.empty() && line.empty();
     }
 
     size_t getSizeof() const
@@ -1566,6 +1586,19 @@ struct MeshPair {
 };
 
 
+typedef Mesh<VertexPosColor> VertexPusher;
+typedef TriMesh<VertexPosColor> VertexPusherTri;
+typedef LineMesh<VertexPosColor> VertexPusherLine;
+typedef MeshPair<VertexPosColor, VertexPosColor>  DMesh;
+
+// generic shared dmesh
+inline DMesh& theDMesh()
+{
+    ASSERT_MAIN_THREAD();
+    static DMesh mesh;
+    return mesh;
+}
+
 enum ButtonStyle { S_BOX=1, S_CORNERS=2, S_FIXED=4 };
 
 void PushButton(TriMesh<VertexPosColor>* triP, LineMesh<VertexPosColor>* lineP, float2 pos, float2 r, 
@@ -1579,6 +1612,14 @@ void DrawFilledRect(const ShaderState &data, float2 pos, float2 r, uint bgColor,
 void fadeFullScreen(const ShaderState &ss, const View& view, uint color, float alpha);
 
 void DrawAlignedGrid(ShaderState &wss, const View& view, float size, float z); 
+
+template <typename Prog, typename Vtx>
+void DrawElements(const Prog& prog, const ShaderState &ss, GLenum type, const Vtx *verts, const uint *il, uint ilc)
+{
+    prog.UseProgram(ss, verts, (Vtx*)NULL);
+    ss.DrawElements(type, ilc, il);
+    prog.UnuseProgram();
+}
 
 
 // encapsulate full screen blur 
@@ -1603,6 +1644,8 @@ public:
     void BindWriteFramebuffer();
     void UnbindWriteFramebuffer();
     void Draw(bool drawFinal);
+
+    bool isWriteReady() const { return !const_cast<PostProc*>(this)->getWrite().empty(); }
 };
 
 

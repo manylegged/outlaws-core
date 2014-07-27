@@ -39,11 +39,11 @@ enum OLModKeys {
 };
 
 struct OLEvent {
-    enum Type { KEY_DOWN=0, KEY_UP, MOUSE_DOWN, MOUSE_UP, MOUSE_DRAGGED, 
-                MOUSE_MOVED, SCROLL_WHEEL, LOST_FOCUS, GAINED_FOCUS,
-                TOUCH_BEGIN, TOUCH_MOVED, TOUCH_STATIONARY, TOUCH_ENDED, TOUCH_CANCELLED,
-                INVALID };
-    enum Type type;
+    enum EventType { KEY_DOWN=0, KEY_UP, MOUSE_DOWN, MOUSE_UP, MOUSE_DRAGGED, 
+                     MOUSE_MOVED, SCROLL_WHEEL, LOST_FOCUS, GAINED_FOCUS,
+                     TOUCH_BEGIN, TOUCH_MOVED, TOUCH_STATIONARY, TOUCH_ENDED, TOUCH_CANCELLED,
+                     INVALID };
+    enum EventType type;
     long key;
     float x, y;
     float dx, dy;
@@ -67,8 +67,11 @@ int OLG_vOnAssertFailed(const char* file, int line, const char* func, const char
 // get current time, for animated shaders, etc
 double OLG_GetRenderSimTime(void);
 
+// return target frame rate. e.g. 60 fps
+float OLG_GetTargetFPS(void);
+
 // get name of game (for save path)
-const char* OGL_GetName(void);
+const char* OLG_GetName(void);
 
 int OLG_UseDevSavePath(void);
 
@@ -86,12 +89,20 @@ void OL_ReportMessage(const char *str);
 // time since start of game in seconds
 double OL_GetCurrentTime(void);
 
+const char* OL_GetUserName(void);
+
 // return string describing runtime platform and current time, for log
 const char* OL_GetPlatformDateInfo(void);
 
 // quit gracefully
 void OL_DoQuit(void);
 
+// read string from clipboard (may return null)
+const char* OL_ReadClipboard(void);
+
+// move cursor
+void OL_WarpCursorPosition(float x, float y);
+    
 ////////// Graphics
 
 // swap the OpenGL buffers and display the frame
@@ -138,6 +149,9 @@ int OL_StringTexture(OutlawTexture *tex, const char* string, float size, int fon
 // get a table of character sizes for font
 void OL_FontAdvancements(int font, float size, struct OLSize* advancements); // advancements must be at least size 127
 
+// get height from one line to the next
+float OL_FontHeight(int fontName, float size);
+
 
 /////////// File IO
 // All functions take paths relative to main game directory
@@ -147,6 +161,9 @@ const char *OL_LoadFile(const char *fname);
 
 // write text file to disk, atomically. Creates directories as needed.
 int OL_SaveFile(const char* fname, const char* data);
+
+// Return list of files in a directory
+const char** OL_ListDirectory(const char* path);
 
 // get complete path for data file in utf8, searching through save directory and application resource directory
 // mode should be "w" or "r"

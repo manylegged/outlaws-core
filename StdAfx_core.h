@@ -72,26 +72,29 @@ inline void ReportMessagef(const char *format, ...)
 #define ASSERTF(X, Y, ...) (__builtin_expect(!(X), 0) ? OLG_OnAssertFailed(__FILE__, __LINE__, __func__, #X, (Y), __VA_ARGS__) : 0)
 
 
-#if !defined(DEBUG) && !defined(DEVELOP)
+#if defined(DEBUG) || defined(DEVELOP)
+#  define WARN(X) ReportMessagef X
+#  define DPRINTVAR(X) DebugPrintVar(#X, (X))
+#  define IS_DEVEL (1)
+#else
 #  define DPRINTVAR(X) do{(void)sizeof(X);}while(0)
 #  define WARN(X) do{(void) sizeof(X);}while(0)
 #  define NDEBUG 1
-#else
-#  define WARN(X) ReportMessagef X
-#  define DPRINTVAR(X) DebugPrintVar(#X, (X))
+#  define IS_DEVEL (0)
 #endif
 
 // special assertion only enabled in debug builds
-#if !defined(DEBUG)
-#  define DASSERT(X) do{(void) sizeof(X);}while(0)
-#else
+#if defined(DEBUG)
 #  define DASSERT(X) ASSERT(X)
+#else
+#  define DASSERT(X) do{(void) sizeof(X);}while(0)
 #endif
 
 
 // base class for deferred deletion by main thread
 struct IDeletable {
 
+    virtual void onQueueForDelete() {}
     virtual ~IDeletable() {}
 }; 
 

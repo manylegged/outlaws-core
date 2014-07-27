@@ -39,11 +39,12 @@ static const float2 kButtonPad         = float2(4.f);
 #define COLOR_BG_GRID 0x3f1935
 #define COLOR_ORANGE  0xff6f1f
 #define COLOR_BLACK 0x000000
+#define COLOR_WHITE 0xffffff
 
 static const uint kGUIBg       = 0xb0202020;
 static const uint kGUIBgActive = 0xf0404040;
-static const uint kGUIFg       = 0xff404040;
-static const uint kGUIFgActive = 0xfff0f0f0;
+static const uint kGUIFg       = 0xf0909090;
+static const uint kGUIFgActive = 0xffffffff;
 static const uint kGUIText     = 0xfff0f0f0;
 static const uint kGUITextLow  = 0xffa0a0a0;
 static const uint kGUIInactive = 0xa0a0a0a0;
@@ -71,6 +72,10 @@ struct ButtonBase : public WidgetBase {
     bool        pressed = false;
     bool        visible = true;
     string      tooltip;
+    int         ident = 0;
+
+    ButtonBase() {}
+    ButtonBase(const char* ks) : keys(ks) {}
 
     bool HandleEvent(const Event* event, bool* isActivate, bool* isPress=NULL);
     
@@ -93,10 +98,10 @@ struct Button : public ButtonBase
     uint   textColor         = kGUIText;
     uint   inactiveTextColor = kGUIInactive;
     uint   style             = S_CORNERS;
-    float2 padding           = float2(2.f * kPadDist, 4.f * kPadDist);
+    float2 padding           = float2(4.f * kPadDist, 4.f * kPadDist);
 
     Button() {}
-    Button(const string& str) : text(str) {}
+    Button(const string& str, const char* keys, int ky=0) : ButtonBase(keys), text(str) { ident = ky; }
 
     void setColors(uint txt, uint defBg, uint pressBg, uint defLine, uint hovLine)
     {
@@ -114,9 +119,9 @@ struct Button : public ButtonBase
     uint getFGColor(bool selected) const { return ((!active) ? inactiveLineColor :
                                                    (hovered||selected) ? hoveredLineColor : defaultLineColor); }
     
-    void render(const ShaderState *s_, bool selected=false);
-    void renderButton(VertexPusherTri &tri, VertexPusherLine &line);
-    void renderText(const ShaderState &s_) const;
+    void render(const ShaderState &s_, bool selected=false);
+    void renderButton(DMesh& mesh);
+     void renderText(const ShaderState &s_) const;
 };
 
 struct ToggleButton : public Button {
@@ -128,26 +133,28 @@ struct ToggleButton : public Button {
 
 
 struct TextInputBase : public WidgetBase {
-    float2        position;     // center
-    float2        sizePoints;   // width x height
+    
     deque<string> lines;
-    int           textSize;
+    int           textSize = 12;
 
-    int2          sizeChars;
-    int2          startChars;
-    int2          cursor;
-    bool          active;       // is currently editable?
-    bool          locked;       // set to true to disable editing
-    bool          forceActive;  // set to true to enable editing regardless of mouse position
+    int2 sizeChars = int2(80, 2);
+    int2 startChars;
+    int2 cursor;
+    bool active      = false;   // is currently editable?
+    bool locked      = false;   // set to true to disable editing
+    bool forceActive = false;   // set to true to enable editing regardless of mouse position
 
-    uint          defaultBGColor;
-    uint          activeBGColor;
-    uint          defaultLineColor;
-    uint          activeLineColor;
-    uint          textColor;
-    float         alpha;
+    uint  defaultBGColor   = ALPHA(0x90)|COLOR_TEXT_BG;
+    uint  activeBGColor    = ALPHA(0xa0)|COLOR_BG_GRID;
+    uint  defaultLineColor = kGUIFg;
+    uint  activeLineColor  = kGUIFgActive;
+    uint  textColor        = kGUIText;
+    float alpha            = 1.f;
 
-    TextInputBase();
+    TextInputBase()
+    {
+        lines.push_back(string());
+    }
     
     virtual ~TextInputBase() {}
 
@@ -164,21 +171,10 @@ struct TextInputBase : public WidgetBase {
 
     void setText(const char* text, bool setSize=false);
 
-    bool HandleEventUpdateValue(const Event* event, string *value)
-    {
-        bool textChanged = false;
-        if (HandleEvent(event, &textChanged)) {
-            if (textChanged) {
-                *value = getText();
-            }
-            return true;
-        }
-        return false;
-    }
-
     bool HandleEvent(const Event* event, bool *textChanged=NULL);
 
-    void pushText(const char *format, ...);
+    void pushText(const char *txt);
+    void insertText(const char *txt);
 
     void scrollForInput()
     {
@@ -189,16 +185,16 @@ struct TextInputBase : public WidgetBase {
     {
         bool isPress = (event->key == 0) && 
                        ((event->type == Event::MOUSE_DOWN) /*|| (event->type == Event::MOUSE_DRAGGED)*/) &&
-                       intersectPointRectangle(event->pos, position, 0.5f*sizePoints);
+                       intersectPointRectangle(event->pos, position, 0.5f*size);
         return isPress;
     }
 
     int2 getSizeChars() const    { return sizeChars; }
-    float2 getSizePoints() const { return sizePoints; }
+    float2 getSizePoints() const { return size; }
 
     virtual void updateState(int line, ShaderState* ss){}
 
-    void render(const ShaderState *s_);
+    void render(const ShaderState &s_);
 
 };
 
@@ -216,6 +212,7 @@ struct TextInputCommandLine : public TextInputBase {
     };
 
     vector<string>            commandHistory;
+    string                    lastSearch;
     int                       historyIndex = 0;
     std::map<string, Command> commands;
     string                    prompt;
@@ -398,103 +395,6 @@ struct RightClickContextMenu : public ContextMenuBase {
     }
 };
 
-struct LineSelectionBox : public WidgetBase {
-    
-    vector<string> lines;
-    int            textSize     = 14;
-    int            hoveredLine  = -1; // hovered line or -1 for not hovered
-    int            selectedLine = -1; // selected line or -1 for no selection
-
-    uint defaultBGColor    = ALPHA(0x90)|COLOR_TEXT_BG;
-    uint hoveredBGColor    = ALPHA(0xa0)|COLOR_BG_GRID;
-    uint defaultLineColor  = kGUIFg;
-    uint hoveredLineColor  = kGUIFgActive;
-    uint textColor         = kGUIText;
-    uint selectedTextColor = ALPHA_OPAQUE|COLOR_TARGET;
-    
-    void setLine(int line, const char* txt)
-    {
-        if (line >= lines.size())
-            lines.resize(line + 1);
-        lines[line] = txt;
-    }
-
-    float getLineHeight() const { return 1.1f * GLText::getScaledSize(textSize) + 6.f; }
-
-    int getHoverSelection(float2 p) const
-    {
-        if (lines.empty() ||  !intersectPointRectangle(p, position, 0.5f*size)) {
-            return -1;
-        }
-        const float2 relp = p - (position + flipX(0.5f * size));
-        const int selected = (int) floor(-relp.y / getLineHeight());
-        return selected;
-    }
-
-    bool HandleEvent(const Event* event, int* select=NULL)
-    {
-        if (event->type != Event::MOUSE_DOWN && event->type != Event::MOUSE_UP)
-            return false;
-
-        if (active && intersectPointRectangle(event->pos, position, 0.5f*size))
-        {
-            int selected = getHoverSelection(event->pos);
-            if (event->type == Event::MOUSE_UP) {
-                selectedLine = selected;
-                if (select)
-                    *select = selected;
-            }
-            return selected >= 0;
-        }
-        return false;
-    }
-
-    void render(const ShaderState &ss);
-};
-
-struct ValueEditorBase {
-
-    float2        position;     // center
-    float2        sizePoints;   // width x height
-
-    uint          textColor;
-    uint          defaultBGColor;
-    uint          defaultLineColor;
-    uint          activeLineColor;
-    
-    string        prompt;
-    TextInputBase edit;
-    bool          editErr;
-
-    float2 getSizePoints() const { return sizePoints; }
-    
-    ValueEditorBase()
-    {
-        textColor        = edit.textColor;
-        defaultBGColor   = edit.defaultBGColor;
-        defaultLineColor = edit.defaultLineColor;
-        activeLineColor  = edit.activeLineColor;
-        prompt           = "Value:";
-        editErr          = false;
-
-        edit.sizeChars        = int2(8, 1);
-        edit.defaultBGColor   = edit.activeBGColor;
-        edit.activeLineColor  = 0x0;
-        edit.defaultLineColor = 0x0;
-    }
-
-    bool HandleEvent(const Event* event, bool *textChanged=NULL)
-    {
-        // hover over any part of the editor activates the field
-        edit.forceActive = intersectPointRectangle(event->pos, position, 0.5f * sizePoints);
-
-        return edit.HandleEvent(event, textChanged);
-    }
-
-    void render(ShaderState *s_);
-
-};
-
 
 // select an option from a list of buttons
 // selected button stays pressed
@@ -540,12 +440,58 @@ struct OptionSlider : public WidgetBase {
     void render(const ShaderState &s_);
 };
 
+
+struct ColorPicker : public WidgetBase {
+
+    OptionSlider hueSlider;
+    uint         initialColor;
+
+    float2       svRectSize;
+    float2       svRectPos;
+    bool         svDragging = false;
+    bool         svHovered = false;
+
+    float3       hsvColor;
+
+    ColorPicker(uint initial=0)
+    {
+        hueSlider.values = 360;
+        setInitialColor(initial);
+    }
+
+    void setInitialColor(uint initial)
+    {
+        hsvColor = hsvOfRgb(RGB2RGBf(initial));
+        hueSlider.setValueFloat(hsvColor.x / 360.f);
+        initialColor = initial;
+    }
+    
+    uint getColor() const { return RGBf2RGB(rgbOfHsv(hsvColor)); }
+
+    void render(const ShaderState &s_);
+    bool HandleEvent(const Event* event, bool *valueChanged=NULL);
+    
+};
+
+struct ITabInterface {
+
+    virtual bool HandleEvent(const Event* event)=0;
+    virtual void renderTab(float2 center, float2 size, float foreground, float introAnim)=0;
+    virtual void onSwapOut() {}
+    virtual void onStep() {}
+    
+    virtual ~ITabInterface(){}
+    
+};
+
+
 struct TabWindow : public WidgetBase {
 
     struct TabButton : public ButtonBase {
-        string text;
+        string         text;
+        ITabInterface *interface = NULL;
 
-        void render(LineMesh<VertexPosColor> &lmesh, TriMesh<VertexPosColor> &tmesh) const
+        void render(DMesh &mesh) const
         {
             static const float o = 0.05f;
             const float2 r = size / 2.f;
@@ -557,27 +503,28 @@ struct TabWindow : public WidgetBase {
                 position + float2(r),
                 position + float2(r.x, -r.y), 
             };
-            tmesh.PushPoly(v, arraySize(v));
-            lmesh.PushStrip(v, arraySize(v));
+            mesh.tri.PushPoly(v, arraySize(v));
+            mesh.line.PushStrip(v, arraySize(v));
         }
     };
     
-    float textSize          = 14.f;
+    float textSize          = 16.f;
+    uint  inactiveBGColor   = kGUIBgActive;
     uint  defaultBGColor    = kGUIBg;
-    uint  pressedBGColor    = kGUIBgActive;
     uint  defaultLineColor  = kGUIFg;
     uint  hoveredLineColor  = kGUIFgActive; 
     uint  inactiveLineColor = kGUIInactive;
     uint  textColor         = kGUIText;
-    uint  inactiveTextColor = kGUIInactive;
     
     vector<TabButton> buttons;
     int               selected = 0;
+    float             alpha2 = 1.f;
 
-    int addTab(string txt)
+    int addTab(string txt, ITabInterface *inf)
     {
         const int idx = buttons.size();
         buttons.push_back(TabButton());
+        buttons.back().interface = inf;
         buttons.back().text = txt;
         buttons.back().keys = lstring(str_format("%d", idx)).c_str();
         return idx;
@@ -653,6 +600,21 @@ struct ButtonLayout {
     {
         buttonFootprint = size;
         buttonSize = size - 2.f * kButtonPad;
+    }
+
+    void flowCountTotalSize(int count, float2 tsize)
+    {
+        if (count > 0)
+        {
+            buttonCount = int2(0);
+            float2 bsize;
+            do {
+                buttonCount.x++;
+                buttonCount.y = ceil(float(count) / buttonCount.x);
+                bsize = tsize / float2(buttonCount);
+            } while (bsize.x > 2.f * bsize.y);
+        }
+        setTotalSize(tsize);
     }
 
     void setButtonCount(int count, int width)

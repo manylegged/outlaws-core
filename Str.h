@@ -297,6 +297,23 @@ inline bool issym(const char v)
     return v != '\0' && (isalpha(v) || strchr("_.", v));
 }
 
+inline std::string str_get_extension(const std::string &str)
+{
+    size_t pt = str.rfind(".");
+    if (pt == std::string::npos)
+        return "";
+    else
+        return str.substr(pt+1);
+}
+
+inline std::string str_no_extension(const std::string &str)
+{
+    size_t pt = str.rfind(".");
+    if (pt == std::string::npos)
+        return str;
+    else
+        return str.substr(0, pt);
+}
 
 
 #endif

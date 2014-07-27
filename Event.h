@@ -48,7 +48,7 @@ struct Event {
         case MOUSE_UP:      return str_format("MOUSE_UP %d (%.f, %.f)", (int)key, pos.x, pos.y);
         case MOUSE_DRAGGED: return str_format("MOUSE_DRAGGED %d (%.f, %.f)",(int)key, pos.x, pos.y);
         case MOUSE_MOVED:   return str_format("MOUSE_MOVED %d, (%.f, %.f)",  (int)key, pos.x, pos.y);
-        case SCROLL_WHEEL:  return str_format("SCROLL_WHEEL %f", vel.y);
+        case SCROLL_WHEEL:  return str_format("SCROLL_WHEEL %g", vel.y);
         case LOST_FOCUS:    return str_format("LOST_FOCUS");
         default:            return "unknown";
         }

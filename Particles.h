@@ -19,7 +19,6 @@ public:
 
         float3 position;
         float3 velocity;
-        float  angle = 0.f;
 
         float2 offset;
         
@@ -85,7 +84,7 @@ protected:
         return forceVisible || m_view.intersectCircle(float3(pos.x, pos.y, m_planeZ), 10.f * size);
     }
 
-    void add(const Particle &p, bool gradient);
+    void add(const Particle &p, float angle, bool gradient);
     void setParticles(vector<Particle>& particles);
     void addTrail(const ParticleTrail& p) { m_trails.push_back(p); }
 

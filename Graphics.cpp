@@ -191,11 +191,8 @@ void GLRenderTexture::UnbindFramebuffer() const
     }
     else
     {
-        float2 psize;
-        float2 vpsize;
-        OL_GetWindowSize(&vpsize.x, &vpsize.y, &psize.x, &psize.y);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
-        glViewport(0, 0, vpsize.x, vpsize.y);
+        glViewport(0, 0, globals.windowSizePixels.x, globals.windowSizePixels.y);
         glReportError();
     }
 }
@@ -290,7 +287,13 @@ GLTexture PixImage::uploadTexture() const
     return tex;
 }
 
-static string kNoErrors("No errors.\n");
+static bool ignoreShaderLog(const char* buf)
+{
+    // damnit ATI driver
+    static string kNoErrors = "No errors.\n";
+    static string kValidationSuccessful = "Validation successful.\n";
+    return buf == kNoErrors || buf == kValidationSuccessful;
+}
 
 static bool checkShaderInfoLog(const char* txt, GLuint prog)
 {
@@ -298,7 +301,7 @@ static bool checkShaderInfoLog(const char* txt, GLuint prog)
     char buf[bufsize];
     GLsizei length = 0;
     glGetShaderInfoLog(prog, bufsize, &length, buf);
-    if (length && buf != kNoErrors) {
+    if (length && !ignoreShaderLog(buf)) {
         string st = str_addLineNumbers(txt);
         ReportMessagef("GL Shader Info Log:\n%s\n%s", st.c_str(), buf);
         ASSERT(length < bufsize);
@@ -313,7 +316,7 @@ static bool checkProgramInfoLog(GLuint prog, const char* name)
     char buf[bufsize];
     GLsizei length = 0;
     glGetProgramInfoLog(prog, bufsize, &length, buf);
-    if (length && buf != kNoErrors) {
+    if (length && !ignoreShaderLog(buf)) {
         ReportMessagef("GL Program Info log %s: %s", name, buf);
         ASSERT(length < bufsize);
         return 1;
@@ -536,7 +539,7 @@ void ShaderProgramBase::UnuseProgram() const
     glUseProgram(0);
 }
 
-void ShaderState::DrawElements(uint dt, size_t ic, const ushort* i) const
+void ShaderState::DrawElements(GLenum dt, size_t ic, const ushort* i) const
 {
     ASSERT_MAIN_THREAD();
     glDrawElements(dt, (GLsizei) ic, GL_UNSIGNED_SHORT, i);

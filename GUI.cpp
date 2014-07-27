@@ -92,7 +92,7 @@ bool ButtonBase::renderTooltip(const ShaderState &ss, const View& view, uint col
 
     DrawTextBox(ss, view, position, size / 2.f, tooltip, 13,
                 MultAlphaAXXX(color, alpha),
-                ALPHAF(0.5f * alpha)|COLOR_BLACK, kMonoFont);
+                ALPHAF(0.75f * alpha)|COLOR_BLACK, kMonoFont);
     return true;
 }
 
@@ -107,21 +107,21 @@ void ButtonBase::renderSelected(const ShaderState &ss, uint bgcolor, uint lineco
     ShaderUColor::instance().DrawLineTri(s, p + float2(0, sz.y), p + float2(sz.y / 2, 0), p + float2(0, -sz.y));
 }
 
-void Button::render(const ShaderState *s_, bool selected)
+void Button::render(const ShaderState &s_, bool selected)
 {
     if (!visible)
         return;
-    ShaderState ss = *s_;
-    const GLText* tx = NULL;
+    ShaderState ss = s_;
+    const GLText* tx = GLText::get(textFont, GLText::getScaledSize(textSize), text);
     if (text.size() && !(style&S_FIXED)) {
-        tx = GLText::get(textFont, GLText::getScaledSize(textSize), text);
-        size.x = max(size.x, tx->getSize().x + padding.x);
         size.y = tx->getSize().y + padding.y;
+        size.x = max(max(size.x, tx->getSize().x + padding.x),
+                     size.y * (float)kGoldenRatio);
     }
 
-    if (style == S_BOX) {
+    if (style&S_BOX) {
         DrawFilledRect(ss, position, 0.5f * size, getBGColor(), getFGColor(selected), alpha);
-    } else if (style == S_CORNERS) {
+    } else if (style&S_CORNERS) {
         DrawButton(&ss, position, 0.5f * size, getBGColor(), getFGColor(selected), alpha);
     }
 
@@ -138,7 +138,7 @@ void Button::render(const ShaderState *s_, bool selected)
     }
 }
 
-void Button::renderButton(VertexPusherTri &tri, VertexPusherLine &line)
+void Button::renderButton(DMesh& mesh)
 {
     if (!visible)
         return;
@@ -151,9 +151,9 @@ void Button::renderButton(VertexPusherTri &tri, VertexPusherLine &line)
     }
     
     if (style&S_BOX) {
-        PushRect(&tri, &line, position, 0.5f * size, getBGColor(), getFGColor(false), alpha);
+        PushRect(&mesh.tri, &mesh.line, position, 0.5f * size, getBGColor(), getFGColor(false), alpha);
     } else if (style&S_CORNERS) {
-        PushButton(&tri, &line,  position, 0.5f * size, getBGColor(), getFGColor(false), alpha);
+        PushButton(&mesh.tri, &mesh.line,  position, 0.5f * size, getBGColor(), getFGColor(false), alpha);
     }
 }
 
@@ -163,28 +163,6 @@ void Button::renderText(const ShaderState &s_) const
         return;
     const uint tcolor = MultAlphaAXXX((!active) ? inactiveTextColor : textColor, alpha);
     GLText::DrawStr(s_, position, GLText::MID_CENTERED, tcolor, textSize, text);
-}
-
-
-TextInputBase::TextInputBase()
-{
-    lines.push_back(string());
-    textSize = 12;
-
-    sizeChars  = int2(80, 2);
-    startChars = int2(0, 0);
-    cursor     = int2(0, 0);
-
-    active  = false;
-    locked  = false;
-    forceActive = false;
-
-    defaultBGColor   = ALPHA(0x90)|COLOR_TEXT_BG;
-    activeBGColor    = ALPHA(0xa0)|COLOR_BG_GRID;
-    defaultLineColor = kGUIFg;
-    activeLineColor  = kGUIFgActive;
-    textColor        = kGUIText;
-    alpha            = 1.f;
 }
 
 void TextInputBase::setText(const char* text, bool setSize)
@@ -211,11 +189,14 @@ void TextInputBase::setText(const char* text, bool setSize)
     }
 }
 
-static void forward_char(int2& cursor, deque<string> &lines, int offset)
+static bool forward_char(int2& cursor, deque<string> &lines, int offset)
 {
     if (offset == -1)
     {
         if (cursor.x == 0) {
+            if (cursor.y <= 0)
+                return false;
+
             cursor.y--;
             cursor.x = lines[cursor.y].size();
         } else
@@ -224,11 +205,14 @@ static void forward_char(int2& cursor, deque<string> &lines, int offset)
     else if (offset == 1)
     {
         if (cursor.x == lines[cursor.y].size()) {
+            if (cursor.y >= lines.size()-1)
+                return false;
             cursor.y++;
             cursor.x = 0;
         } else
             cursor.x++; 
     }
+    return true;
 }
 
 static void forward_when(int2& cursor, deque<string> &lines, int offset, int (*pred)(int))
@@ -236,8 +220,8 @@ static void forward_when(int2& cursor, deque<string> &lines, int offset, int (*p
     forward_char(cursor, lines, offset);
     while (cursor.y < lines.size() &&
            (cursor.x >= lines[cursor.y].size() ||
-            pred(lines[cursor.y][cursor.x])))
-        forward_char(cursor, lines, offset);
+            pred(lines[cursor.y][cursor.x])) &&
+           forward_char(cursor, lines, offset));
 }
 
 static char delete_char(int2& cursor, deque<string> &lines, int offset)
@@ -273,7 +257,7 @@ bool TextInputBase::HandleEvent(const Event* event, bool *textChanged)
 
     active = forceActive || 
              (!locked && intersectPointRectangle(KeyState::instance().cursorPosScreen, 
-                                                 position, 0.5f * sizePoints));
+                                                 position, 0.5f * size));
     hovered = active;
 
     if (textChanged)
@@ -298,6 +282,12 @@ bool TextInputBase::HandleEvent(const Event* event, bool *textChanged)
                     lines[cursor.y].erase(cursor.x); 
                 break;
             case 'd': lines[cursor.y].erase(cursor.x, 1); break;
+            case 'v':
+            case 'y':
+                insertText(OL_ReadClipboard());
+                if (textChanged)
+                    *textChanged = true;
+                break;
             }
         } else if (KeyState::instance()[OAltKey]) {
             switch (event->key)
@@ -308,8 +298,8 @@ bool TextInputBase::HandleEvent(const Event* event, bool *textChanged)
             case 'b': forward_when(cursor, lines, -1, isalnum); break;
             case NSDeleteCharacter:
             case NSBackspaceCharacter: {
-                const int2 scursor = cursor;
                 forward_when(cursor, lines, -1, isalnum);
+                const int2 scursor = cursor;
                 delete_region(cursor, lines, scursor);
                 if (textChanged)
                     *textChanged = true;
@@ -330,16 +320,16 @@ bool TextInputBase::HandleEvent(const Event* event, bool *textChanged)
             }
         } else if (event->key < 256 && std::isprint(event->key)) {
             lines[cursor.y].insert(cursor.x, 1, event->key);
+            cursor.x++;
             if (textChanged)
                 *textChanged = true;
-            cursor.x++;
-        } else 
+        } else {
             switch (event->key)
             {
             case NSLeftArrowFunctionKey:  forward_char(cursor, lines, -1); break;
             case NSRightArrowFunctionKey: forward_char(cursor, lines, +1); break;
-            case NSUpArrowFunctionKey:    cursor.y--; break;
-            case NSDownArrowFunctionKey:  cursor.y++; break;
+            case NSUpArrowFunctionKey:    cursor.y = max(0, cursor.y-1); break;
+            case NSDownArrowFunctionKey:  cursor.y = min((int)lines.size()-1, cursor.y+1); break;
             case NSDeleteCharacter:
             case NSBackspaceCharacter:
                 delete_char(cursor, lines, -1);
@@ -366,7 +356,11 @@ bool TextInputBase::HandleEvent(const Event* event, bool *textChanged)
             default:
                 return false;
             }
+        }
 
+        if (lines.size() == 0)
+            lines.push_back("");
+        
         if (cursor.y >= lines.size()) {
             cursor.x = lines.back().size();
             cursor.y = lines.size()-1;
@@ -379,20 +373,15 @@ bool TextInputBase::HandleEvent(const Event* event, bool *textChanged)
     }
     else if (active && event->type == Event::SCROLL_WHEEL)
     {
-        startChars.y += ceil(event->vel.y);
+        startChars.y += ceil(-event->vel.y);
         return true;
     }
 
     return false;
 }
 
-void TextInputBase::pushText(const char *format, ...)
+void TextInputBase::pushText(const char *txt)
 {
-    va_list vl;
-    va_start(vl, format);
-    string txt = str_vformat(format, vl);
-    va_end(vl);        
-
     vector<string> nlines = str_split(txt, '\n');
     lines.insert(lines.end()-1, nlines.begin(), nlines.end());
 
@@ -401,10 +390,25 @@ void TextInputBase::pushText(const char *format, ...)
     scrollForInput();
 }
 
-
-void TextInputBase::render(const ShaderState *s_)
+void TextInputBase::insertText(const char *txt)
 {
-    ShaderState s = *s_;
+    vector<string> nlines = str_split(txt, '\n');
+    if (nlines.size() == 0)
+        return;
+
+    lines[cursor.y].insert(cursor.x, nlines[0]);
+    cursor.x += nlines[0].size();
+
+    lines.insert(lines.begin() + cursor.y + 1, nlines.begin() + 1, nlines.end());
+    cursor.y += nlines.size()-1;
+    
+    scrollForInput();
+}
+
+
+void TextInputBase::render(const ShaderState &s_)
+{
+    ShaderState s = s_;
 
     startChars.x = 0;
     startChars.y = clamp(startChars.y, 0, max(0, (int)lines.size() - sizeChars.y));
@@ -421,13 +425,13 @@ void TextInputBase::render(const ShaderState *s_)
             longestChars     = lines[i].size();
         }
     }
-    const float charHeight = longestPointSize.y;
+    const float charHeight = GLText::getFontHeight(kMonoFont, GLText::getScaledSize(textSize));
     sizeChars.x = max(sizeChars.x, (int)longestChars + 1);
         
     //sizePoints.x = max(sizePoints.x, 2.f * kPadDist + longestPointSize.x);
-    sizePoints.y = charHeight * sizeChars.y;
+    size.y = charHeight * sizeChars.y + kPadDist;
 
-    const float2 sz = 0.5f * sizePoints;
+    const float2 sz = 0.5f * size;
 
     s.translate(position);
 
@@ -445,22 +449,28 @@ void TextInputBase::render(const ShaderState *s_)
 //            const string txt = lines[i].substr(startChars.x,
 //                                               min(lines[i].size(), startChars.x + sizeChars.x));
         const GLText* tx = GLText::get(kMonoFont, GLText::getScaledSize(textSize), lines[i].c_str());
-            
-        // draw cursor
-        if (active && cursor.y == i) {
-            ShaderState  s1    = s;
-            const float  start = tx->getCharStart(cursor.x);
-            const float2 size  = float2(tx->getCharSize(cursor.x).x, charHeight);
-            s1.translate(float2(start, 0));
-            s1.color(textColor, alpha);
-            ShaderUColor::instance().DrawRectCorners(s1, float2(0), size);
-        }
 
         if (lines[i].size())
         {
             updateState(i, &s);
             tx->render(&s);
         }
+        
+        // draw cursor
+        if (active && cursor.y == i) {
+            ShaderState  s1    = s;
+            const float  start = tx->getCharStart(cursor.x);
+            const float2 size  = tx->getCharSize(cursor.x);
+            s1.translate(float2(start, 0));
+            s1.color(textColor, alpha);
+            ShaderUColor::instance().DrawRectCorners(s1, float2(0), size);
+            if (cursor.x < lines[i].size()) {
+                GLText::DrawStr(s1, float2(0.f), GLText::LEFT, kMonoFont,
+                                ALPHA_OPAQUE|GetContrastWhiteBlack(textColor),
+                                textSize, lines[i].substr(cursor.x, 1));
+            }
+        }
+        
         s.translate(float2(0.f, -charHeight));
     }
 }
@@ -604,26 +614,67 @@ bool TextInputCommandLine::HandleEvent(const Event* event, bool *textChanged)
         switch (event->key)
         {
         case NSUpArrowFunctionKey:
-            if (commandHistory.size())
-            {
-                historyIndex = (historyIndex - 1) % commandHistory.size();
-                setLineText(commandHistory[historyIndex].c_str());
-            }
-            return true;
         case NSDownArrowFunctionKey:
             if (commandHistory.size())
             {
-                historyIndex = (historyIndex + 1) % commandHistory.size();
+                lastSearch = "";
+                const int delta = (event->key == NSUpArrowFunctionKey) ? -1 : 1;
+                historyIndex = (historyIndex + delta) % commandHistory.size();
                 setLineText(commandHistory[historyIndex].c_str());
             }
             return true;
         case '\r':
         {
+            lastSearch = "";
             doCommand(getLineText());
             return true;
         }
+        case 'r':
+        case 's':
+        case 'p':
+        case 'n':
+        {
+            int end = 0;
+            int delta = 0;
+
+            if ((KeyState::instance()[OAltKey] && event->key == 'p') ||
+                (KeyState::instance()[OControlKey] && event->key == 'r'))
+            {
+                end = 0;
+                delta = -1;
+            }
+            else if ((KeyState::instance()[OAltKey] && event->key == 'n') ||
+                     (KeyState::instance()[OControlKey] && event->key == 's'))
+            {
+                end = commandHistory.size();
+                delta = 1;
+            }
+
+            if (delta != 0)
+            {
+                if (lastSearch.empty())
+                    lastSearch = getLineText();
+                if (lastSearch.empty())
+                    return true;
+
+                for (int i=historyIndex; i != end; i += delta)
+                {
+                    if (i != historyIndex &&
+                        commandHistory[i].size() >= lastSearch.size() &&
+                        commandHistory[i].substr(0, lastSearch.size()) == lastSearch)
+                    {
+                        historyIndex = i;
+                        setLineText(commandHistory[i].c_str());
+                        break;
+                    }
+                }
+                return true;
+            }
+            break;
+        }
         case '\t':
         {
+            lastSearch = "";
             string line = getLineText();
             int start = line.rfind(' ');
             vector<string> options;
@@ -712,6 +763,9 @@ bool TextInputCommandLine::HandleEvent(const Event* event, bool *textChanged)
             lines[cursor.y][i] = prompt[i];
         }
     }
+
+    if (handled && textChanged)
+        lastSearch = "";
         
     return handled;
 }
@@ -772,72 +826,6 @@ void ContextMenuBase::render(ShaderState *s_)
     }
 }
 
-void LineSelectionBox::render(const ShaderState &ss)
-{
-    ShaderState s = ss;
-    hoveredLine = !active ? -1 : getHoverSelection(KeyState::instance().cursorPosScreen);
-    hovered = (hoveredLine != -1);
-
-    // draw box
-    {
-        ShaderState s1 = ss;
-        s1.color(defaultBGColor);
-        ShaderUColor::instance().DrawRect(s1, position, 0.5f * size);
-        s1.color((hoveredLine >= 0) ? hoveredLineColor : defaultLineColor);
-        ShaderUColor::instance().DrawLineRect(s1, position, 0.5f * size);
-    }
-        
-    if (lines.empty())
-        return;
-
-    const float lineHeight = getLineHeight();
-    float2 pos = position + flipX(0.5f * size);
-
-    for (uint i=0; i<lines.size(); i++)
-    {
-        // highlight hovered element
-        if (hoveredLine == i && (hoveredBGColor&ALPHA_OPAQUE)) {
-            s.color32(hoveredBGColor, alpha);
-            ShaderUColor::instance().DrawRectCorners(s, pos, pos + float2(size.x, -lineHeight));
-        }
-
-        const uint color = MultAlphaAXXX((selectedLine == i) ? selectedTextColor : textColor, alpha);
-        GLText::DrawStr(s, pos + float2(kPadDist, 0.f), GLText::DOWN_LEFT, color, textSize, lines[i]);
-        pos.y -= lineHeight;
-    }
-}
-
-void ValueEditorBase::render(ShaderState *s_)
-{
-    ShaderState s1 = *s_;
-
-    const GLText* glt = GLText::get(kDefaultFont, GLText::getScaledSize(edit.textSize), prompt.c_str());
-    const float2  ps  = glt->getSize();
-
-    sizePoints.x = ps.x + edit.sizePoints.x + kPadDist;
-    sizePoints.y = max(ps.y, edit.sizePoints.y);
-    const float2 sz = 0.5f * sizePoints;
-
-    edit.position.x = position.x - sz.x + ps.x + kPadDist + 0.5f * edit.sizePoints.x;
-    edit.position.y = position.y;
-
-    // draw outline
-    s1.translate(position);
-    const uint bgColor   = defaultBGColor;
-    const uint lineColor = edit.active ? activeLineColor : defaultLineColor;
-    ShaderUColor::instance().DrawColorRect(s1, bgColor, sz);
-    ShaderUColor::instance().DrawColorLineRect(s1, lineColor, sz);
-
-    // draw prompt
-    s1.translate(float2(-sz.x + kPadDist, -0.5f * ps.y));
-    s1.color32(textColor);
-    glt->render(&s1);
-
-    edit.textColor = editErr ? 0xffff0000 : textColor;
-    edit.render(s_);
-}
-
-
 bool OptionButtons::HandleEvent(const Event* event, int* butActivate, int* butPress)
 {
     Event ev = *event;
@@ -880,7 +868,7 @@ void OptionButtons::render(ShaderState *s_, const View& view)
 
     foreach (Button& but, buttons) {
         but.size = maxsize; // buttons are all the same size
-        but.render(&ss);
+        but.render(ss);
     }
 
     foreach (Button& but, buttons) {
@@ -909,7 +897,8 @@ bool OptionSlider::HandleEvent(const Event* event, bool *valueChanged)
         const int lastv = value;
         const float v = ((event->pos.x - position.x) / size.x) + 0.5f;
         setValueFloat(v);
-        *valueChanged = (value != lastv);
+        if (valueChanged)
+            *valueChanged = (value != lastv);
     }
 
     return handled;
@@ -931,17 +920,16 @@ void OptionSlider::render(const ShaderState &s_)
 
 void TabWindow::render(const ShaderState &ss)
 {
-    LineMesh<VertexPosColor> lmesh;
-    TriMesh<VertexPosColor>  tmesh;
+    DMesh mesh;
 
     const float2 opos = position - float2(0.f, 0.5f * getTabHeight());
     const float2 osz = 0.5f * (size - float2(0.f, getTabHeight()));
-    tmesh.color(pressedBGColor, alpha);
-    tmesh.PushRect(opos, osz);
-    lmesh.color(defaultLineColor, alpha);
+    mesh.tri.color32(defaultBGColor, alpha);
+    mesh.tri.PushRect(opos, osz);
+    mesh.line.color32(defaultLineColor, alpha);
 
-    const float2 tsize = float2((size.x - 2.f * kPadDist) / buttons.size(), getTabHeight());
-    float2 pos = opos + flipX(osz) + float2(kPadDist, 0.f);
+    const float2 tsize = float2(size.x / buttons.size(), getTabHeight());
+    float2 pos = opos + flipX(osz);
     int i=0;
     foreach (TabButton& but, buttons)
     {
@@ -949,55 +937,71 @@ void TabWindow::render(const ShaderState &ss)
         but.position = pos + 0.5f * tsize;
         pos.x += tsize.x;
 
-        lmesh.color(!but.active ? inactiveLineColor :
-                    but.hovered ? hoveredLineColor : defaultLineColor, alpha);
-        tmesh.color((selected == i) ? pressedBGColor : defaultBGColor, alpha);
-        but.render(lmesh, tmesh);
+        mesh.line.color32(!but.active ? inactiveLineColor :
+                        but.hovered ? hoveredLineColor : defaultLineColor, alpha);
+        mesh.tri.color32((selected == i) ? defaultBGColor : inactiveBGColor, alpha);
+        but.render(mesh);
             
         i++;
     }
         
     // 4 5 0 1
     // 3     2
-    const float2 vl[] = { //buttons[selected].position + flipY(buttons[selected].size),
+    const float2 vl[] = {
+        buttons[selected].position + flipY(buttons[selected].size / 2.f),
         opos + osz,
         opos + flipY(osz),
         opos - osz, 
         opos + flipX(osz), 
-        // buttons[selected].position - buttons[selected].size
+        buttons[selected].position - buttons[selected].size / 2.f
     };
-    lmesh.color(defaultLineColor, alpha);
-    lmesh.PushStrip(vl, arraySize(vl));
+    mesh.line.color32(defaultLineColor, alpha);
+    mesh.line.PushStrip(vl, arraySize(vl));
 
-    lmesh.Draw(ss, ShaderColor::instance());
-    tmesh.Draw(ss, ShaderColor::instance());
+    mesh.Draw(ss, ShaderColor::instance(), ShaderColor::instance());
 
     foreach (const TabButton& but, buttons)
     {
         GLText::DrawStr(ss, but.position, GLText::MID_CENTERED, MultAlphaAXXX(textColor, alpha),
                         textSize, but.text);
     }
+
+    buttons[selected].interface->renderTab(getContentsCenter(), getContentsSize(), alpha, alpha2);
 }
 
 bool TabWindow::HandleEvent(const Event* event)
 {
+    if ( buttons[selected].interface->HandleEvent(event))
+        return true;
+    
     int i=0;
     bool isActivate = false;
     foreach (TabButton& but, buttons)
     {
         if (but.HandleEvent(event, &isActivate))
         {
-            if (isActivate)
+            if (isActivate) {
+                if (i != selected)
+                    buttons[selected].interface->onSwapOut();
                 selected = i;
+            }
             return true;
         }
         i++;
     }
     if (event->type == Event::KEY_DOWN && event->key == '\t')
     {
-        selected = (selected+1) % buttons.size();
+        int next;
+        if (KeyState::instance()[OShiftKey])
+            next = modulo(selected-1, buttons.size());
+        else
+            next = (selected+1) % buttons.size();
+        if (next != selected)
+            buttons[selected].interface->onSwapOut();
+        selected = next;
         return true;
     }
+
     return false;
 }
 
@@ -1038,18 +1042,17 @@ void MessageBoxWidget::render(const ShaderState &ss, const View& view)
 
     pos.x = position.x - boxRad.x + boxPad.x;
 
-    DrawFilledRect(ss, position, msg->getSize() / 2.f + boxPad, kGUIBg, kGUIFg, alpha);
+    DrawFilledRect(ss, position, msg->getSize() / 2.f + boxPad, kGUIBg, kGUIFg, alpha2);
     
     {
         ShaderState s1 = ss;
-        s1.color(kGUIText, alpha2);
+        s1.color(kGUIText, alpha);
         msg->render(&s1, position - msg->getSize() / 2.f);
     }
 
     okbutton.position = position - justY(boxRad) + justY(boxPad) + 0.5f * okbutton.size.y;
-    okbutton.size.x = max(okbutton.size.x, okbutton.size.y * (float)kGoldenRatio);
-    okbutton.alpha = alpha;
-    okbutton.render(&ss, false);
+    okbutton.alpha = alpha2;
+    okbutton.render(ss, false);
 }
 
 bool MessageBoxWidget::HandleEvent(const Event* event)
@@ -1065,3 +1068,116 @@ bool MessageBoxWidget::HandleEvent(const Event* event)
     // always handle when active
     return true;
 }
+
+static void setupHsvRect(VertexPosColor* verts, float2 pos, float2 rad, float alpha,
+                         const std::initializer_list<float3> c)
+{
+    // 0 1
+    // 2 3
+    verts[0].pos = float3(pos + flipX(rad), 0.f);
+    verts[1].pos = float3(pos + rad, 0.f);
+    verts[2].pos = float3(pos - rad, 0.f);
+    verts[3].pos = float3(pos + flipY(rad), 0.f);
+
+    for (int i=0; i<4; i++)
+        verts[i].color = ALPHAF(alpha)|RGB2BGR(RGBf2RGB(c.begin()[i]));
+}
+
+void ColorPicker::render(const ShaderState &ss)
+{
+    DrawFilledRect(ss, position, size/2.f, kGUIBg, kGUIFg, alpha);
+
+    hueSlider.size = float2(size.x - 2.f * kButtonPad.x, 0.15f * size.y);
+    hueSlider.position.x = position.x - size.x / 2.f + hueSlider.size.x / 2.f + kButtonPad.x;
+    hueSlider.position.y = position.y + size.y / 2.f - hueSlider.size.y / 2.f - kButtonPad.y;
+
+    svRectSize.y = size.y - hueSlider.size.y - 3.f * kButtonPad.y;
+    svRectSize.x = svRectSize.y;
+    svRectPos = position - size/2.f + kButtonPad + svRectSize / 2.f;
+    
+    const float2 csize = size - float2(svRectSize.x, hueSlider.size.y) - 3.f * kButtonPad;
+    const float2 ccPos = position + flipY(size / 2.f) + flipX(kButtonPad + csize / 2.f);
+    
+    LineMesh<VertexPosColor> lmesh;
+    
+    // draw color picker
+    {
+        // 0 1
+        // 2 3
+        VertexPosColor verts[4];
+        const uint indices[] = { 0,1,3, 0,3,2 };
+        ShaderState s1 = ss;
+        s1.color(kGUIFg, alpha);
+
+        setupHsvRect(verts, hueSlider.position, hueSlider.size/2.f, alpha, {
+                float3(0.f, 1.f, 1.f), float3(M_TAOf, 1.f, 1.f),
+                float3(0.f, 1.f, 1.f), float3(M_TAOf, 1.f, 1.f) });
+
+        DrawElements(ShaderHsv::instance(), ss, GL_TRIANGLES, verts, indices, arraySize(indices));
+        s1.color(hueSlider.getFGColor(), alpha);
+        lmesh.color(hueSlider.getFGColor(), alpha);
+        lmesh.PushRect(hueSlider.position, hueSlider.size/2.f);
+
+        const float hn = hsvColor.x / 360.f;
+        setupHsvRect(verts, svRectPos, svRectSize/2.f, alpha, {
+                float3(hn, 0.f, 1.f), float3(hn, 1.f, 1.f),
+                float3(hn, 0.f, 0.f), float3(hn, 1.f, 0.f) });
+
+        DrawElements(ShaderHsv::instance(), ss, GL_TRIANGLES, verts, indices, arraySize(indices));
+        lmesh.color((svHovered || svDragging) ? kGUIFgActive : kGUIFg, alpha);
+        lmesh.PushRect(svRectPos, svRectSize/2.f);
+    }
+
+    // draw indicators
+    lmesh.color(GetContrastWhiteBlack(getColor()), alpha);
+    lmesh.PushCircle(svRectPos - svRectSize/2.f + float2(hsvColor.y, hsvColor.z) * svRectSize,
+                     4.f, 6);
+    lmesh.color(GetContrastWhiteBlack(rgbOfHsv(float3(hsvColor.x, 1.f, 1.f))), alpha);
+    lmesh.PushRect(float2(hueSlider.position.x - hueSlider.size.x / 2.f + hueSlider.size.x * (hsvColor.x / 360.f),
+                          hueSlider.position.y),
+                   float2(kPadDist, hueSlider.size.y / 2.f));
+    lmesh.Draw(ss, ShaderColor::instance());
+
+    // draw selected color box
+    DrawFilledRect(ss, ccPos, csize/2.f, ALPHA_OPAQUE|getColor(), kGUIFg, alpha);
+}
+
+
+bool ColorPicker::HandleEvent(const Event* event, bool *valueChanged)
+{
+    if (hueSlider.HandleEvent(event, valueChanged))
+    {
+        hsvColor.x = hueSlider.getValueFloat() * 360.f;
+        return true;
+    }
+
+    bool handled = false;
+    if (event->isMouse())
+        svHovered = intersectPointRectangle(event->pos, svRectPos, svRectSize/2.f);
+    if (svHovered)
+    {
+        if (event->type == Event::MOUSE_DRAGGED ||
+            event->type == Event::MOUSE_DOWN)
+            svDragging = true;
+        handled = (event->type != Event::MOUSE_MOVED);
+    }
+
+    if (event->isMouse() && svDragging)
+    {
+        if (event->type == Event::MOUSE_UP) {
+            svDragging = false;
+        } else {
+            float2 pos = clamp((event->pos - (svRectPos - svRectSize / 2.f)) / svRectSize,
+                               float2(0.f), float2(1.f));
+            hsvColor.y = pos.x;
+            hsvColor.z = pos.y;
+            if (valueChanged)
+                *valueChanged = true;
+        }
+        return true;
+    }
+
+    return handled;
+}
+
+

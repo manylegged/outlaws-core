@@ -25,7 +25,7 @@
 #define RGB_H
 
 inline uint ALPHA(uint X)   { return X << 24; }
-inline uint ALPHAF(float X) { return uint(X * 255.f) << 24; }
+inline uint ALPHAF(float X) { return uint(clamp(X, 0.f, 1.f) * 255.f) << 24; }
 #define ALPHA_OPAQUE 0xff000000
 
 
@@ -146,6 +146,16 @@ inline float GetLumaRGB(uint color)
     return GetLumaRGBf(RGB2RGBf(color));
 }
 
+inline uint GetContrastWhiteBlack(uint color)
+{
+    return GetLumaRGB(color) > 0.5f ? 0x000000 : 0xffffff;
+}
+
+inline uint GetContrastWhiteBlack(float3 color)
+{
+    return GetLumaRGBf(color) > 0.5f ? 0x000000 : 0xffffff;
+}
+
 inline uint SetLumaRGB(uint color, float luma)
 {
     float3 c = RGB2RGBf(color);
@@ -226,16 +236,20 @@ inline float3 hsvOfRgb(float3 rgb)
 
 inline float3 rgbOfHsv(float3 hsv)
 {
-    hsv.x = fmodf(hsv.x, 360.f);
+    hsv.x = modulo(hsv.x, 360.f);
     hsv.y = clamp(hsv.y, 0.f, 1.f);
     hsv.z = clamp(hsv.z, 0.f, 1.f);
     return glm::rgbColor(hsv);
 }
 
+inline uint HSVf2RGB(const float3 &hsv) { return RGBf2RGB(rgbOfHsv(hsv)); }
+inline float3 RGB2HSVf(uint rgb) { return hsvOfRgb(RGB2RGBf(rgb)); }
+
 inline float3 colorIntensify(float3 color)
 {
     float3 hsv = glm::hsvColor(color);
-    hsv.y = max(0.7f, hsv.y); // saturation
+    // if (hsv.y > 0.2f)
+        // hsv.y = max(0.7f, hsv.y); // saturation
     hsv.z = max(0.9f, hsv.z); // value
     return rgbOfHsv(hsv);
 }
@@ -285,7 +299,7 @@ inline uint SetValueRGB(uint color, float v)
 inline uint colorContrastValue(uint color)
 {
     float3 hsv = hsvOfRgb(RGB2RGBf(color));
-    hsv.z = fmodf(hsv.z + 0.5f, 1.f);
+    hsv.z = modulo(hsv.z + 0.5f, 1.f);
     return RGBf2RGB(rgbOfHsv(hsv));
 }
 

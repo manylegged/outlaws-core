@@ -10,8 +10,6 @@ GLenum glReportError (void);
 {
 	NSTimer* timer;
  
-	CFAbsoluteTime time;
-
     NSTrackingArea *trackingArea;
     BOOL            focused;
 

@@ -2,25 +2,13 @@
 // BasicOpenGLView.m - Outlaws.h platform view implementation for OSX
 
 #import "BasicOpenGLView.h"
+#include <sys/signal.h>
 
 #include "Outlaws.h"
 
-// ==================================
-
-// single set of interaction flags and states
 BasicOpenGLView * gTrackingViewInfo = NULL;
 
-// ==================================
-
-#pragma mark ---- Utilities ----
-
-static CFAbsoluteTime gStartTime = 0.0f;
-
-// set app start time
-static void setStartTime (void)
-{
-    gStartTime = CFAbsoluteTimeGetCurrent ();
-}
+static CFAbsoluteTime gStartTime = 0.0;
 
 
 // ---------------------------------
@@ -38,9 +26,6 @@ GLenum glReportError (void)
         OL_ReportMessage((const char *) gluErrorString(err));
     return err;
 }
-
-#pragma mark ---- Game Callbacks ----
-
 
 void OL_GetWindowSize(float *pixelWidth, float *pixelHeight, float *pointWidth, float *pointHeight)
 {
@@ -144,7 +129,6 @@ void OL_DoQuit(void)
 // per-window timer function, basic time based animation preformed here
 - (void)animationTimer:(NSTimer *)timer
 {
-    time = CFAbsoluteTimeGetCurrent (); //reset time in all cases
     [self drawRect:[self bounds]]; // redraw now instead dirty to enable updates during live resize
 }
 
@@ -217,94 +201,67 @@ static int getKeyForMods(int key, int mods)
     }
 }
 
-- (void)mouseDown:(NSEvent *)theEvent
+static void doMouseEvent(enum EventType type, NSEvent *theEvent)
 {
-    NSPoint location = [self convertPoint:[theEvent locationInWindow] fromView:nil];
+    NSPoint location = [gTrackingViewInfo convertPoint:[theEvent locationInWindow] fromView:nil];
     
     struct OLEvent e;
-    e.type = MOUSE_DOWN;
+    e.type = type;
     e.key = getKeyForMods([theEvent buttonNumber], [theEvent modifierFlags]);
     e.x = location.x;
-    e.y = [self bounds].size.height - location.y;
+    e.y = location.y;
+    e.dx = [theEvent deltaX];
+    e.dy = [theEvent deltaY];
+    
     OLG_OnEvent(&e);
 }
 
 // ---------------------------------
+
+- (void)mouseDown:(NSEvent *)theEvent
+{
+    doMouseEvent(MOUSE_DOWN, theEvent);
+}
 
 - (void)rightMouseDown:(NSEvent *)theEvent
 {
     [self mouseDown:theEvent];
 }
 
-// ---------------------------------
-
 - (void)otherMouseDown:(NSEvent *)theEvent
 {
     [self mouseDown:theEvent];
 }
 
-// ---------------------------------
-
 - (void)mouseUp:(NSEvent *)theEvent
 {
-    NSPoint location = [self convertPoint:[theEvent locationInWindow] fromView:nil];
-    
-    struct OLEvent e;
-    e.type = MOUSE_UP;
-    e.key = getKeyForMods([theEvent buttonNumber], [theEvent modifierFlags]);
-    e.x = location.x;
-    e.y = [self bounds].size.height - location.y;
-    OLG_OnEvent(&e);
+    doMouseEvent(MOUSE_UP, theEvent);
 }
-
-// ---------------------------------
 
 - (void)rightMouseUp:(NSEvent *)theEvent
 {
     [self mouseUp:theEvent];
 }
 
-// ---------------------------------
-
 - (void)otherMouseUp:(NSEvent *)theEvent
 {
     [self mouseUp:theEvent];
 }
 
-// ---------------------------------
-
 - (void)mouseDragged:(NSEvent *)theEvent
 {
-    NSPoint location = [self convertPoint:[theEvent locationInWindow] fromView:nil];
-    
-    struct OLEvent e;
-    e.type = MOUSE_DRAGGED;
-    e.key = getKeyForMods([theEvent buttonNumber], [theEvent modifierFlags]);
-    e.x = location.x;
-    e.y = [self bounds].size.height - location.y;
-    e.dx = [theEvent deltaX];
-    e.dy = -[theEvent deltaY];
-    OLG_OnEvent(&e);
+    doMouseEvent(MOUSE_DRAGGED, theEvent);
 }
-
-// ---------------------------------
 
 - (void)mouseMoved:(NSEvent *)theEvent
 {
-    if (!focused)
+    if (!focused) {
         CGDisplayHideCursor(kCGDirectMainDisplay);
+        hideCursorCount++;
+    }
     focused = true;
 
-    NSPoint location = [self convertPoint:[theEvent locationInWindow] fromView:nil];
-    
-    struct OLEvent e;
-    e.type = MOUSE_MOVED;
-    e.key = getKeyForMods([theEvent buttonNumber], [theEvent modifierFlags]);
-    e.x = location.x;
-    e.y = [self bounds].size.height - location.y;
-    e.dx = [theEvent deltaX];
-    e.dy = -[theEvent deltaY];
-    OLG_OnEvent(&e);
+    doMouseEvent(MOUSE_MOVED, theEvent);
 }
 
 // ---------------------------------
@@ -314,7 +271,7 @@ static int getKeyForMods(int key, int mods)
     struct OLEvent e;
     e.type = SCROLL_WHEEL;
     e.dx = [theEvent deltaX];
-    e.dy = [theEvent deltaY];
+    e.dy = -[theEvent deltaY];
 
     BOOL inverted = [theEvent isDirectionInvertedFromDevice];
     if (inverted) {
@@ -331,8 +288,6 @@ static int getKeyForMods(int key, int mods)
     [self mouseDragged: theEvent];
 }
 
-// ---------------------------------
-
 - (void)otherMouseDragged:(NSEvent *)theEvent
 {
     [self mouseDragged: theEvent];
@@ -340,18 +295,23 @@ static int getKeyForMods(int key, int mods)
 
 // ---------------------------------
 
+static int hideCursorCount = 0;
+
 - (void)mouseEntered:(NSEvent *)theEvent
 {
     // hide the bitmap mouse cursor (we draw one with opengl)
     CGDisplayHideCursor(kCGDirectMainDisplay);
+    hideCursorCount++;
+    
     focused = true;
 }
 
-// ---------------------------------
-
 - (void)mouseExited:(NSEvent *)theEvent
 {
-    CGDisplayShowCursor(kCGDirectMainDisplay);
+    while (hideCursorCount) {
+        CGDisplayShowCursor(kCGDirectMainDisplay);
+        hideCursorCount--;
+    }
     focused = false;
 }
 
@@ -385,6 +345,15 @@ static int getKeyForMods(int key, int mods)
         OLG_Draw();
     }
 }
+
+
+void OL_WarpCursorPosition(float x, float y)
+{
+    NSRect window = NSMakeRect(x, [gTrackingViewInfo bounds].size.height - y,  0, 0);
+    NSRect screen = [gTrackingViewInfo.window convertRectToScreen:window];
+    CGWarpMouseCursorPosition(screen.origin);
+}
+
 
 void OL_Present()
 {
@@ -435,14 +404,10 @@ void OL_SetSwapInterval(int interval)
     return YES;
 }
 
-// ---------------------------------
-
 - (BOOL)becomeFirstResponder
 {
     return  YES;
 }
-
-// ---------------------------------
 
 - (BOOL)resignFirstResponder
 {
@@ -484,13 +449,16 @@ void OL_SetSwapInterval(int interval)
     OLG_OnEvent(&e);
 }
 
+
+static void sigtermHandler()
+{
+    OL_ReportMessage("[OSX] Caught SIGTERM!");
+    fflush(NULL);
+}
+
 - (void) awakeFromNib
 {
-    setStartTime (); // get app start time
-    //getCurrentCaps (); // get current GL capabilites for all displays
-        
-    // set start values...
-    time = CFAbsoluteTimeGetCurrent ();  // set animation time start time
+    gStartTime = CFAbsoluteTimeGetCurrent();
 
     // start animation timer
     timer = [NSTimer timerWithTimeInterval:(1.0f/60.0f) target:self selector:@selector(animationTimer:) userInfo:nil repeats:YES];
@@ -503,6 +471,9 @@ void OL_SetSwapInterval(int interval)
            selector:@selector(handleResignKeyNotification:)
                name:NSWindowDidResignKeyNotification
              object:nil ];
+
+    signal(SIGTERM, sigtermHandler);
+    signal(SIGINT, sigtermHandler); 
     
     gTrackingViewInfo = self;
     focused = false;

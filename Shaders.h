@@ -583,6 +583,34 @@ public:
 
 };
 
+struct ShaderHsv : public ShaderProgramBase {
+
+private:
+    int m_colorSlot;
+
+    ShaderHsv()
+    {
+        LoadProgram("ShaderHsv");
+        m_colorSlot = getAttribLocation("ColorHSVA");
+    }
+
+public:
+
+    template <typename Vtx>
+    void UseProgram(const ShaderState&ss, const Vtx* ptr, const Vtx* base) const
+    {
+        UseProgramBase(ss, &ptr->pos, base);
+        vertexAttribPointer(m_colorSlot, &ptr->color, base);
+    }
+
+    static const ShaderHsv& instance()
+    {
+        static ShaderHsv* p = new ShaderHsv();
+        return *p;
+    }
+
+};
+
 struct ShaderColorLuma : public ShaderProgramBase {
 
 private:

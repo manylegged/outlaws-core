@@ -40,11 +40,30 @@ static NSString *getBaseSavePath()
             NSLog(@"Can't find Application Support directory");
             return nil;
         }
-        NSString *savePath = [[paths objectAtIndex:0] stringByAppendingPathComponent:
-                                                      [NSString stringWithUTF8String: OGL_GetName()]];
+
+        NSString *appsupport = [paths objectAtIndex:0];
+        NSString *savePath = [appsupport stringByAppendingPathComponent:
+                                         [NSString stringWithUTF8String: OLG_GetName()]];
+        
         path = [savePath stringByStandardizingPath];
         [path retain];
         NSLog(@"Save path is %@", path);
+
+        NSFileManager *fm = [NSFileManager defaultManager];
+        
+        if (![fm fileExistsAtPath:path])
+        {
+            NSString *oldPath = [appsupport stringByAppendingPathComponent:@"Outlaws"];
+            if ([fm fileExistsAtPath:oldPath])
+            {
+                NSError *error = nil;
+                BOOL success = [fm moveItemAtPath:oldPath toPath:savePath error:&error];
+                NSLog(@"Moved save directory from %@ to %@: %s%@",
+                      oldPath, savePath, success ? "OK" : "FAILED",
+                      error ? [error localizedFailureReason] : @"");
+            }
+        }
+        
     }
     return path;
 }
@@ -88,6 +107,37 @@ const char *OL_PathForFile(const char *fname, const char* mode)
     return [pathForFileName(fname, mode) UTF8String];
 }
 
+
+const char** OL_ListDirectory(const char* path)
+{
+    static const int kMaxElements = 100;
+    static const char* array[kMaxElements];
+
+    NSString *nspath = pathForFileName(path, "r");
+    NSError *error = nil;
+    NSArray *dirFiles = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:nspath error:&error];
+    if (!dirFiles || error)
+    {
+        LogMessage([NSString stringWithFormat:@"Error listing directory %@: %@",
+                             nspath, error ? [error localizedFailureReason] : @"unknown"]);
+        return NULL;
+    }
+
+    int i = 0;
+    for (NSString* file in dirFiles)
+    {
+        if (i >= kMaxElements)
+            break;
+        
+        array[i] = [file UTF8String];
+        i++;
+    }
+
+    array[i] = NULL;
+
+    return array;
+}
+ 
 const char *OL_LoadFile(const char *fname)
 {
     NSError *error = nil;
@@ -220,14 +270,27 @@ int OL_SaveTexture(const OutlawTexture *tex, const char* fname)
         return 0;
 
     const size_t size = tex->width * tex->height * 4;
-    char *data = malloc(size);
+    uint *pix = malloc(size);
     
     glBindTexture(GL_TEXTURE_2D, tex->texnum);
-    glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+    glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pix);
     glReportError();
 
+    // invert image
+    for (int y=0; y<tex->height/2; y++)
+    {
+        for (int x=0; x<tex->width; x++)
+        {
+            const int top = y * tex->width + x;
+            const int bot = (tex->height - y - 1) * tex->width + x;
+            const uint temp = pix[top];
+            pix[top] = pix[bot];
+            pix[bot] = temp;
+        }
+    }
+
     CGColorSpaceRef color_space = CGColorSpaceCreateDeviceRGB();
-    CGDataProviderRef provider = CGDataProviderCreateWithData(NULL, data, size, NULL);
+    CGDataProviderRef provider = CGDataProviderCreateWithData(NULL, pix, size, NULL);
     CGImageRef cimg = CGImageCreate(tex->width, tex->height, 8, 32, tex->width * 4,
                                     color_space, kCGImageAlphaLast, provider,
                                     NULL, FALSE, kCGRenderingIntentDefault);
@@ -243,7 +306,7 @@ int OL_SaveTexture(const OutlawTexture *tex, const char* fname)
     CGImageDestinationAddImage(dest, cimg, NULL);
     
     BOOL success = CGImageDestinationFinalize(dest);
-    free(data);
+    free(pix);
     
     CFRelease(dest);
     if (!success) {
@@ -294,6 +357,17 @@ void OL_FontAdvancements(int fontName, float size, struct OLSize* advancements)
         advancements[i].x = adv[i].width;
         advancements[i].y = adv[i].height;
     }
+}
+
+float OL_FontHeight(int fontName, float size)
+{
+    static NSLayoutManager *lm = nil;
+    if (!lm)
+    {
+        lm = [[NSLayoutManager alloc] init];
+    }
+    NSFont* font = getFont(fontName, size);
+    return [lm defaultLineHeightForFont: font];
 }
 
 int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int fontName, float maxw, float maxh)
@@ -446,10 +520,11 @@ void OL_ReportMessage(const char *str)
         if (createParentDirectories(fname))
         {
             g_logfile = fopen([fname UTF8String], "w");
+            NSString *tildeFname = [fname stringByAbbreviatingWithTildeInPath];
             if (g_logfile)
-                LogMessage([NSString stringWithFormat:@"Opened log at %@", fname]);
+                LogMessage([NSString stringWithFormat:@"Opened log at %@", tildeFname]);
             else
-                NSLog(@"Error opening log at %@: %s", fname, strerror(errno));
+                NSLog(@"Error opening log at %@: %s", tildeFname, strerror(errno));
         }
     }
     //NSLog(@"[DBG] %s\n", str);
@@ -483,4 +558,22 @@ const char* OL_GetPlatformDateInfo(void)
     return [buf UTF8String];
 }
 
+const char* OL_ReadClipboard()
+{
+    NSPasteboard *pasteboard = [NSPasteboard generalPasteboard];
+    NSArray *classes = [[NSArray alloc] initWithObjects:[NSString class], nil];
+    NSDictionary *options = [NSDictionary dictionary];
+    NSArray *copiedItems = [pasteboard readObjectsForClasses:classes options:options];
+    
+    if (copiedItems == nil || [copiedItems count] == 0)
+        return nil;
+
+    NSString *data = [copiedItems firstObject];
+    return [data UTF8String];
+}
+
+const char* OL_GetUserName(void)
+{
+    return [NSUserName() UTF8String];
+}
 

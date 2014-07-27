@@ -29,13 +29,6 @@
 #include "GLText.h"
 #include "Shaders.h"
 
-
-GLText::~GLText()
-{
-    if (texture.width > 0)
-        glDeleteTextures(1, &texture.texnum);
-}
-
 void GLText::load()
 {
     float pointSize = OL_GetCurrentBackingScaleFactor();
@@ -80,6 +73,8 @@ const GLText* GLText::vget(int font, float size, const char *format, va_list vl)
 float2 GLText::Draw(const ShaderState &s_, float2 p, Align align, int font, uint color,
                     float sizeUnscaled, const std::string &str)
 {
+    if (str.empty())
+        return float2(0.f);
     const GLText* st = get(font, sizeUnscaled, str);
 
     float2 scale;
@@ -118,6 +113,7 @@ float2 GLText::getAdvancement(char c) const
 
 float GLText::getCharStart(uint chr) const
 {
+    chr = min(chr, (uint)chars.size());
     float pos = 0;
     for (uint i=0; i<chr; i++)
         pos += getAdvancement(chars[i]).x;
@@ -127,24 +123,41 @@ float GLText::getCharStart(uint chr) const
 
 float2 GLText::getCharSize(uint chr) const
 {
-    return getAdvancement(chars[chr]);
+    char c = chr < chars.size() ? chars[chr] : ' ';
+    return float2(getAdvancement(c).x, getFontHeight(font, fontSize));
+}
+
+static std::unordered_map< pair<int, int>, float > s_fontHeights;
+
+float GLText::getFontHeight(int font, float size)
+{
+    float& height = s_fontHeights[make_pair(font, (int) ceil(size))];
+    if (height == 0)
+        height = OL_FontHeight(font, size);
+    return height;
 }
 
 float GLText::getScaledSize(float sizeUnscaled)
 {
-    View view;
-    OL_GetWindowSize(&view.sizePixels.x, &view.sizePixels.y,
-                  &view.sizePoints.x, &view.sizePoints.y);
-    return sizeUnscaled * view.sizePoints.y / 720.f;
+    return sizeUnscaled * globals.windowSizePoints.y / 720.f;
 }
 
 const GLText* GLText::get(int font, float size, const string& s)
 {
     float pointSize = OL_GetCurrentBackingScaleFactor();
     //ReportMessagef("scale: %g", pointSize);
+
+    static DEFINE_CVAR(int, kGLTextCacheSize, 128);
+
+    static int cacheSize = kGLTextCacheSize;
+    static GLText *cache = new GLText[cacheSize];
+    if (cacheSize != kGLTextCacheSize) {
+        GLText *ncache = new GLText[kGLTextCacheSize];
+        for (int i=0; i<min(cacheSize, kGLTextCacheSize); i++)
+            ncache[i] = cache[i];
+        cacheSize = kGLTextCacheSize;
+    }
     
-    static const int cacheSize = 64;
-    static GLText cache[cacheSize];
     for (uint i=0; i<cacheSize; i++)
     {
         if (cache[i].chars == s && 

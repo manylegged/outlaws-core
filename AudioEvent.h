@@ -122,6 +122,7 @@ public:
         m_mgr = cAudio::createAudioManager(true);
         if (!m_mgr)
             return false;
+
         m_mgr->setSpeedOfSound(5000.f);
         m_mgr->setDopplerFactor(1.f);
         return true;

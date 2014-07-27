@@ -42,10 +42,10 @@ void sdl_os_oncrash()
 
     string lpath = os_copy_to_desktop(g_logpath.c_str());
     os_errormessage(str_format(
-        "Oops! Gamma Void crashed.\n"
+        "Oops! %s crashed.\n"
         "Please email\n"
-        "%s\nto arthur@anisopteragames.com", 
-        lpath.c_str()).c_str());
+        "%s\nto arthur@anisopteragames.com",
+        OLG_GetName(), lpath.c_str()).c_str());
     exit(1);
 }
 
@@ -309,13 +309,26 @@ int OL_SaveTexture(const OutlawTexture *tex, const char* fname)
         return 0;
 
     const size_t size = tex->width * tex->height * 4;
-    char *data = malloc(size);
+    uint *pix = (uint*) malloc(size);
     
     glBindTexture(GL_TEXTURE_2D, tex->texnum);
-    glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+    glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pix);
     glReportError();
 
-    SDL_Surface *surf = SDL_CreateRGBSurfaceFrom(data, tex->width, tex->height, 32, width*4,
+    // invert image
+    for (int y=0; y<tex->height/2; y++)
+    {
+        for (int x=0; x<tex->width; x++)
+        {
+            const int top = y * tex->width + x;
+            const int bot = (tex->height - y - 1) * tex->width + x;
+            const uint temp = pix[top];
+            pix[top] = pix[bot];
+            pix[bot] = temp;
+        }
+    }
+
+    SDL_Surface *surf = SDL_CreateRGBSurfaceFrom(pix, tex->width, tex->height, 32, tex->width*4,
                                                  0x000000ff, 0x0000FF00, 0x00FF0000, 0xFF000000);
 
     const char *path = OL_PathForFile(fname, "w");
@@ -325,7 +338,7 @@ int OL_SaveTexture(const OutlawTexture *tex, const char* fname)
                        tex->texnum, tex->width, tex->height, fname, SDL_GetError());
     }
     SDL_FreeSurface(surf);
-    free(data);
+    free(pix);
     
     return success;
 }
@@ -363,7 +376,6 @@ void OL_SetFont(int index, const char* file, const char* name)
 void OL_FontAdvancements(int fontName, float size, struct OLSize* advancements)
 {
     TTF_Font* font = getFont(fontName, size);
-	const int font_pixel_height = TTF_FontLineSkip(font);
 	for (uint i=0; i<128; i++)
 	{
 		int minx,maxx,miny,maxy,advance;
@@ -376,8 +388,14 @@ void OL_FontAdvancements(int fontName, float size, struct OLSize* advancements)
 			ReportMessagef("[SDL] Error getting glyph size for glyph %d/'%c'", i, i);
 			advancements[i].x = 0.f;
 		}
-		advancements[i].y = font_pixel_height;
+		advancements[i].y = 0.f;
 	}
+}
+
+float OL_FontHeight(int fontName, float size)
+{
+    TTF_Font* font = getFont(fontName, size);
+	return TTF_FontLineSkip(font);
 }
 
 struct Strip {
@@ -686,7 +704,7 @@ static void HandleEvents()
             int x, y;
             const Uint8 state = SDL_GetMouseState(&x, &y);
             e.x = x;
-            e.y = y;
+            e.y = g_screenSize.y - y;
             e.key = ((state&SDL_BUTTON_LMASK) ? 0 : 
                      (state&SDL_BUTTON_RMASK) ? 1 :
                      (state&SDL_BUTTON_MMASK) ? 2 : -1);
@@ -706,7 +724,7 @@ static void HandleEvents()
         case SDL_MOUSEBUTTONUP:
         {
             e.x = evt.button.x;
-            e.y = evt.button.y;
+            e.y = g_screenSize.y - evt.button.y;
             e.type = evt.type == SDL_MOUSEBUTTONDOWN ? OLEvent::MOUSE_DOWN : OLEvent::MOUSE_UP;
             switch (evt.button.button)
             {
@@ -779,6 +797,18 @@ void OL_ThreadEndIteration(int i)
     g_autorelease[tid].clear();
 }
 
+void OL_WarpCursorPosition(float x, float y)
+{
+    SDL_WarpMouseInWindow(g_displayWindow, (int)x, g_screenSize.y - (int)y);
+}
+
+const char* OL_ReadClipboard()
+{
+    char *ptr = SDL_GetClipboardText();
+    string str(ptr);
+    SDL_free(ptr);
+    return sdl_os_autorelease(str);
+}
 
 int sdl_os_main(int argc, char **argv)
 {
@@ -793,7 +823,7 @@ int sdl_os_main(int argc, char **argv)
     g_screenSize.x = 960;
     g_screenSize.y = 600;
 
-    g_displayWindow = SDL_CreateWindow("Gamma Void", 100, 100,
+    g_displayWindow = SDL_CreateWindow(OLG_GetName(), 100, 100,
                                        g_screenSize.x, g_screenSize.y, 
                                        SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
     SDL_GLContext _glcontext = SDL_GL_CreateContext(g_displayWindow);

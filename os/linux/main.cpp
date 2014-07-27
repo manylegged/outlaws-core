@@ -12,6 +12,7 @@
 #include <errno.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <dirent.h>
 
 char *g_binaryName;
 
@@ -22,7 +23,7 @@ static const string& getDataDir()
     {
         datadir = g_binaryName;
         datadir = dirname((char*)datadir.c_str());
-        datadir += "/../../../";
+        datadir += "/../";
         char buf1[PATH_MAX];
         const char* path = realpath(datadir.c_str(), buf1);
         if (!path) {
@@ -148,9 +149,59 @@ int OL_FileDirectoryPathExists(const char* fname)
     return S_ISREG(buf.st_mode) || S_ISDIR(buf.st_mode);
 }
 
+const char** OL_ListDirectory(const char* path1)
+{
+    // not thread safe!!
+    static vector<const char*> elements;
+    const char* path = OL_PathForFile(path1, "r");
+    DIR *dir = opendir(path);
+    if (!dir) {
+        ReportMessagef("[linux] Error opening directory '%s': %s", path, strerror(errno));
+        return NULL;
+    }
+    elements.clear();
+    dirent *entry = NULL;
+    while ((entry = readdir(dir)))
+    {
+        elements.push_back(lstring(entry->d_name).c_str());
+    }
+    closedir(dir);
+    elements.push_back(NULL);
+    return &elements[0];
+}
+
 void os_errormessage(const char* msg)
 {
     OL_ReportMessage(msg);
+}
+
+
+string os_copy_to_desktop(const char* path)
+{
+    const char *data = OL_LoadFile(path);
+    if (!data)
+        return path;
+    
+    string npath = "~/Desktop";
+    if (!OL_FileDirectoryPathExists(npath.c_str()))
+        npath = "~/";
+
+    char *path1 = strdup(path);
+    const char* base = basename(path1);
+    npath += base;
+    free(path1);
+    
+    if (!OL_SaveFile(npath.c_str(), data))
+        return path;
+    return sdl_os_autorelease(npath);
+}
+
+const char* OL_GetUserName(void)
+{
+    const char* name = getenv("USERNAME");
+    if (!name || !strlen(name))
+        name = getenv("USER");
+    return name;
 }
 
 

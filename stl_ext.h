@@ -278,7 +278,7 @@ struct watch_ptr_base {
     watch_ptr_base*  prev;
 };
 
-struct Watchable {
+struct Watchable : public IDeletable {
 
     mutable watch_ptr_base watch_list;
 
@@ -293,15 +293,16 @@ struct Watchable {
         }
     }
 
-    virtual ~Watchable()
+    void onQueueForDelete()
+    {
+        nullReferencesTo();
+    }
+
+    ~Watchable()
     {
         nullReferencesTo();
     }
 };
-
-inline void nullReferencesToWatch(Watchable& it) { it.nullReferencesTo(); }
-template <typename T> void nullReferencesToWatch(T& it) { }
-
 
 // smart pointer that automatically becomes NULL when it's pointee is deleted
 template <typename T>
@@ -936,35 +937,6 @@ inline const V *map_get_addr(const std::map<K, V> &m, const K& key)
 {
     const typename std::map<K, V>::const_iterator it = m.find(key);
     return (it != m.end()) ? &it->second : NULL;
-}
-
-
-template <typename T, typename K>
-inline auto map_get_ptr(const T &m, const K& key) -> const typename T::mapped_type
-{
-    const typename T::const_iterator it = m.find(key);
-    return (it != m.end()) ? it->second : NULL;
-}
-
-template <typename V>
-inline const V *map_get_ptr(const std::map<std::string, V*> &m, const char*key)
-{
-    const typename std::map<std::string, V*>::const_iterator it = m.find(key);
-    return (it != m.end()) ? it->second : NULL;
-}
-
-template <typename K, typename V>
-inline V *map_get_ptr(std::map<K, V*> &m, const K& key)
-{
-    typename std::map<K, V*>::const_iterator it = m.find(key);
-    return (it != m.end()) ? it->second : NULL;
-}
-
-template <typename V>
-inline V *map_get_ptr(std::map<std::string, V*> &m, const char*key)
-{
-    typename std::map<std::string, V*>::const_iterator it = m.find(key);
-    return (it != m.end()) ? it->second : NULL;
 }
 
 template <typename V>
