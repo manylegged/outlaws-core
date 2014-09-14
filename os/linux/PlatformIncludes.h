@@ -16,11 +16,11 @@
 //#include <SDL_opengl.h>
 
 #ifndef __printflike
-#define __printflike(X, Y)
+#define __printflike(X, Y) __attribute__((format(printf, X, Y)))
 #endif
 
 #ifndef __has_feature
-#define __has_feature(X) (0)
+#define __has_feature(X) 0
 #endif
 
 #endif

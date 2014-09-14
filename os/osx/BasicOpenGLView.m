@@ -6,7 +6,7 @@
 
 #include "Outlaws.h"
 
-BasicOpenGLView * gTrackingViewInfo = NULL;
+BasicOpenGLView * gView = NULL;
 
 static CFAbsoluteTime gStartTime = 0.0;
 
@@ -23,14 +23,14 @@ GLenum glReportError (void)
 {
     GLenum err = glGetError();
     if (GL_NO_ERROR != err)
-        OL_ReportMessage((const char *) gluErrorString(err));
+        LogMessage([NSString stringWithFormat:@"GL Error: %s", (const char *) gluErrorString(err)]);
     return err;
 }
 
 void OL_GetWindowSize(float *pixelWidth, float *pixelHeight, float *pointWidth, float *pointHeight)
 {
-    NSRect pointSize = [gTrackingViewInfo bounds];
-    NSRect pixelSize = [gTrackingViewInfo convertRectToBacking:pointSize];
+    NSRect pointSize = [gView bounds];
+    NSRect pixelSize = [gView convertRectToBacking:pointSize];
 
     *pixelWidth = pixelSize.size.width;
     *pixelHeight = pixelSize.size.height;
@@ -41,50 +41,87 @@ void OL_GetWindowSize(float *pixelWidth, float *pixelHeight, float *pointWidth, 
 
 void OL_SetFullscreen(int fullscreen)
 {
-    if (fullscreen != gTrackingViewInfo->fullscreen)
+    if (fullscreen != gView->fullscreen)
     {
-        [[gTrackingViewInfo window] toggleFullScreen: gTrackingViewInfo];
-        gTrackingViewInfo->fullscreen = fullscreen;
-        OL_ReportMessage(fullscreen ? "[OSX] SetFullscreen YES" : "[OSX] SetFullscreen NO");
+        [[gView window] toggleFullScreen: gView];
+        gView->fullscreen = fullscreen;
+        LogMessage(fullscreen ? @"SetFullscreen YES" : @"SetFullscreen NO");
      }
 }
 
 int OL_GetFullscreen(void)
 {
-    return gTrackingViewInfo->fullscreen;
+    return gView->fullscreen;
+}
+
+void OL_SetWindowSizePoints(int w, int h)
+{
+    if (gView->fullscreen)
+        return;
+    NSRect frame = [[gView window] frame];
+    if (frame.size.width == w && frame.size.height == h)
+        return;
+    // frame.origin.y += h - frame.size.height;
+    frame.size = NSMakeSize(w, h);
+    // [[gView window] setFrame:frame display:YES animate:NO];
+    [[gView window] setContentMinSize: frame.size];
+    [[gView window] setContentMaxSize: frame.size];
+    [[gView window] setContentSize: frame.size];
+    LogMessage([NSString stringWithFormat:@"Set window size to %dx%d", w, h]);
+}
+
+static bool hasScaleMethod()
+{
+    static BOOL checkedScaleMethod = NO;
+    static BOOL hasScaleMethod     = NO;
+    // this is really slow for some reason, so just do it once
+    if (!checkedScaleMethod) {
+        hasScaleMethod = [[NSScreen mainScreen] respondsToSelector:@selector(backingScaleFactor)];
+        checkedScaleMethod = YES;
+    }
+    return hasScaleMethod;
 }
 
 float OL_GetBackingScaleFactor()
 {
-    CGFloat displayScale = 1.0f;
-    if (![[NSScreen mainScreen] respondsToSelector:@selector(backingScaleFactor)])
+    CGFloat displayScale = 1.f;
+    if (hasScaleMethod())
     {
-        return displayScale;
+        NSArray* screens = [NSScreen screens];
+        for(NSScreen* screen in screens) {
+            displayScale = MAX(displayScale, [screen backingScaleFactor]);
+        }
     }
-
-    NSArray* screens = [NSScreen screens];
-    for(NSScreen* screen in screens) {
-        displayScale = MAX(displayScale, [screen backingScaleFactor]);
+    
+    static BOOL printedScreens = FALSE;
+    if (!printedScreens)
+    {
+        printedScreens = TRUE;
+        int i=1;
+        NSArray* screens = [NSScreen screens];
+        for (NSScreen* screen in screens)
+        {
+            const NSRect frame = [screen frame];
+            const float scale = hasScaleMethod() ? [screen backingScaleFactor] : 1.f;
+            LogMessage([NSString stringWithFormat:@"screen %d of %d is %dx%d pixels, scale of %g",
+                                 i, (int) [screens count],
+                                 (int)(frame.size.width * scale),
+                                 (int)(frame.size.height * scale),
+                                 scale]);
+        }
     }
+    
     return displayScale;
 }
 
 float OL_GetCurrentBackingScaleFactor(void)
 {
-    static CGFloat displayScale = 1.0f;
+    static CGFloat displayScale = 1.f;
     static int callIdx = 0;
 
-    // this is really slow for some reason, so just do it once
-    static BOOL checkedScaleMethod = NO;
-    static BOOL hasScaleMethod     = NO;
-    if (!checkedScaleMethod) {
-        hasScaleMethod = [[NSScreen mainScreen] respondsToSelector:@selector(backingScaleFactor)];
-        checkedScaleMethod = YES;
-    }
-
-    if (hasScaleMethod && (callIdx++ % 100) == 0)
+    if (hasScaleMethod() && (callIdx++ % 100) == 0)
     {
-        displayScale = [[[gTrackingViewInfo window] screen] backingScaleFactor];
+        displayScale = [[[gView window] screen] backingScaleFactor];
     }
     
     return displayScale;
@@ -92,8 +129,8 @@ float OL_GetCurrentBackingScaleFactor(void)
 
 void OL_DoQuit(void)
 {
-    OL_ReportMessage("[OSX] DoQuit");
-    gTrackingViewInfo->closing = 1;
+    LogMessage(@"DoQuit");
+    gView->closing = 1;
 }
 
 
@@ -132,10 +169,7 @@ void OL_DoQuit(void)
     [self drawRect:[self bounds]]; // redraw now instead dirty to enable updates during live resize
 }
 
-
-#pragma mark ---- Method Overrides ----
-
--(void)keyDown:(NSEvent *)theEvent
+static void doKeyEvent(enum EventType type, NSEvent *theEvent)
 {
     NSString *characters = [theEvent charactersIgnoringModifiers];
     if ([characters length])
@@ -143,24 +177,29 @@ void OL_DoQuit(void)
         unichar character = [characters characterAtIndex:0];
         
         struct OLEvent e;
-        e.type = KEY_DOWN;
-        e.key = character;
+        memset(&e, 0, sizeof(e));
+
+        switch (character)
+        {
+        case NSDeleteCharacter: e.key = NSBackspaceCharacter; break;
+        case NSF13FunctionKey:  e.key = NSPrintScreenFunctionKey; break;
+        case 25:                e.key = '\t'; break; // shift-tab
+        default:                e.key = character; break;
+        }
+
+        e.type = type;
         OLG_OnEvent(&e);
     }
 }
 
+-(void)keyDown:(NSEvent *)theEvent
+{
+    doKeyEvent(KEY_DOWN, theEvent);
+}
+
 -(void)keyUp:(NSEvent *)theEvent
 {
-    NSString *characters = [theEvent charactersIgnoringModifiers];
-    if ([characters length])
-    {
-        unichar character = [characters characterAtIndex:0];
-        
-        struct OLEvent e;
-        e.type = KEY_UP;
-        e.key = character;
-        OLG_OnEvent(&e);
-    }
+    doKeyEvent(KEY_UP, theEvent);
 }
 
 static void modifierFlagToEvent(NSUInteger flags, NSUInteger lastFlags, NSUInteger mask, int eventKey)
@@ -168,6 +207,7 @@ static void modifierFlagToEvent(NSUInteger flags, NSUInteger lastFlags, NSUInteg
     if ((flags&mask) ^ (lastFlags&mask))
     {
         struct OLEvent e;
+        memset(&e, 0, sizeof(e));
         e.type = (flags&mask) ? KEY_DOWN : KEY_UP;
         e.key = eventKey;
         OLG_OnEvent(&e);
@@ -203,9 +243,10 @@ static int getKeyForMods(int key, int mods)
 
 static void doMouseEvent(enum EventType type, NSEvent *theEvent)
 {
-    NSPoint location = [gTrackingViewInfo convertPoint:[theEvent locationInWindow] fromView:nil];
+    NSPoint location = [gView convertPoint:[theEvent locationInWindow] fromView:nil];
     
     struct OLEvent e;
+    memset(&e, 0, sizeof(e));
     e.type = type;
     e.key = getKeyForMods([theEvent buttonNumber], [theEvent modifierFlags]);
     e.x = location.x;
@@ -255,12 +296,6 @@ static void doMouseEvent(enum EventType type, NSEvent *theEvent)
 
 - (void)mouseMoved:(NSEvent *)theEvent
 {
-    if (!focused) {
-        CGDisplayHideCursor(kCGDirectMainDisplay);
-        hideCursorCount++;
-    }
-    focused = true;
-
     doMouseEvent(MOUSE_MOVED, theEvent);
 }
 
@@ -269,14 +304,16 @@ static void doMouseEvent(enum EventType type, NSEvent *theEvent)
 - (void)scrollWheel:(NSEvent *)theEvent
 {
     struct OLEvent e;
+    memset(&e, 0, sizeof(e));
     e.type = SCROLL_WHEEL;
     e.dx = [theEvent deltaX];
     e.dy = -[theEvent deltaY];
 
-    BOOL inverted = [theEvent isDirectionInvertedFromDevice];
-    if (inverted) {
-        e.dy = -e.dy;
-    }
+    // actually repect this! "natural" scrolling is "inverted" here.
+    // BOOL inverted = [theEvent isDirectionInvertedFromDevice];
+    // if (inverted) {
+        // e.dy = -e.dy;
+    // }
     
     OLG_OnEvent(&e);
 }
@@ -293,42 +330,49 @@ static void doMouseEvent(enum EventType type, NSEvent *theEvent)
     [self mouseDragged: theEvent];
 }
 
-// ---------------------------------
-
-static int hideCursorCount = 0;
-
-- (void)mouseEntered:(NSEvent *)theEvent
+// from SDL2 SDL_cocoamouse.m
+static NSCursor* invisibleCursor()
 {
-    // hide the bitmap mouse cursor (we draw one with opengl)
-    CGDisplayHideCursor(kCGDirectMainDisplay);
-    hideCursorCount++;
-    
-    focused = true;
-}
+    static NSCursor *invisibleCursor = NULL;
+    if (!invisibleCursor) {
+        /* RAW 16x16 transparent GIF */
+        static unsigned char cursorBytes[] = {
+            0x47, 0x49, 0x46, 0x38, 0x37, 0x61, 0x10, 0x00, 0x10, 0x00, 0x80,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x21, 0xF9, 0x04,
+            0x01, 0x00, 0x00, 0x01, 0x00, 0x2C, 0x00, 0x00, 0x00, 0x00, 0x10,
+            0x00, 0x10, 0x00, 0x00, 0x02, 0x0E, 0x8C, 0x8F, 0xA9, 0xCB, 0xED,
+            0x0F, 0xA3, 0x9C, 0xB4, 0xDA, 0x8B, 0xB3, 0x3E, 0x05, 0x00, 0x3B
+        };
 
-- (void)mouseExited:(NSEvent *)theEvent
-{
-    while (hideCursorCount) {
-        CGDisplayShowCursor(kCGDirectMainDisplay);
-        hideCursorCount--;
+        NSData *cursorData = [NSData dataWithBytesNoCopy:&cursorBytes[0]
+                                                  length:sizeof(cursorBytes)
+                                            freeWhenDone:NO];
+        NSImage *cursorImage = [[[NSImage alloc] initWithData:cursorData] autorelease];
+        invisibleCursor = [[NSCursor alloc] initWithImage:cursorImage
+                                                  hotSpot:NSZeroPoint];
     }
-    focused = false;
+
+    return invisibleCursor;
 }
 
-// ---------------------------------
+- (void)resetCursorRects
+{
+    [super resetCursorRects];
+
+    [self addCursorRect:[self bounds] cursor:invisibleCursor()];
+}
 
 - (void)updateTrackingAreas 
 {
+    [super updateTrackingAreas];
     [self removeTrackingArea:trackingArea];
     [trackingArea release];
     trackingArea = [[NSTrackingArea alloc] initWithRect:[self frame]
-        options: (NSTrackingMouseEnteredAndExited |
+       options: (/*NSTrackingMouseEnteredAndExited |*/
                   NSTrackingMouseMoved |
-                  NSTrackingActiveInKeyWindow |
-                  NSTrackingActiveAlways)
+                  NSTrackingActiveInActiveApp)
         owner:self userInfo:nil];
     [self addTrackingArea:trackingArea];
-    [super updateTrackingAreas];
 }
 
 // ---------------------------------
@@ -337,7 +381,8 @@ static int hideCursorCount = 0;
 {    
     if (self->closing == 1) {
         self->closing = 2;
-        [[self window] performClose: gTrackingViewInfo];
+        [[self window] performClose: gView];
+        LogMessage(@"performing close");
     } else {
         NSRect rectView = [self convertRectToBacking:[self bounds]];
         glViewport (0, 0, rectView.size.width, rectView.size.height);
@@ -349,15 +394,15 @@ static int hideCursorCount = 0;
 
 void OL_WarpCursorPosition(float x, float y)
 {
-    NSRect window = NSMakeRect(x, [gTrackingViewInfo bounds].size.height - y,  0, 0);
-    NSRect screen = [gTrackingViewInfo.window convertRectToScreen:window];
+    NSRect window = NSMakeRect(x, [gView bounds].size.height - y,  0, 0);
+    NSRect screen = [gView.window convertRectToScreen:window];
     CGWarpMouseCursorPosition(screen.origin);
 }
 
 
 void OL_Present()
 {
-    [[gTrackingViewInfo openGLContext] flushBuffer];
+    [[gView openGLContext] flushBuffer];
 }
 
 // ---------------------------------
@@ -365,7 +410,7 @@ void OL_Present()
 void OL_SetSwapInterval(int interval)
 {
     GLint swapInt = interval;
-    [[gTrackingViewInfo openGLContext] setValues:&swapInt forParameter:NSOpenGLCPSwapInterval];
+    [[gView openGLContext] setValues:&swapInt forParameter:NSOpenGLCPSwapInterval];
 }
 
 // set initial OpenGL state (current context is set)
@@ -427,7 +472,7 @@ void OL_SetSwapInterval(int interval)
 
     if (!self->closing)
         OLG_SetFullscreenPref(1);
-    OL_ReportMessage("[OSX] Will Enter Fullscreen");
+    LogMessage(@"Will Enter Fullscreen");
 }
 
 - (void)windowDidExitFullScreen:(NSNotification *)notification
@@ -438,21 +483,38 @@ void OL_SetSwapInterval(int interval)
 
     if (!self->closing)
         OLG_SetFullscreenPref(0);
-    OL_ReportMessage("[OSX] Will Exit Fullscreen");
+    LogMessage(@"Will Exit Fullscreen");
 }
 
+- (void)windowWillClose:(NSNotification *)notification
+{
+    LogMessage(@"window will close");
+    OLG_OnQuit();
+}
+
+- (BOOL)windowShouldClose:(id)sender
+{
+    LogMessage(@"window should close");
+    OLG_OnClose();
+    return YES;
+}
 
 - (void) handleResignKeyNotification: (NSNotification *) notification
 {
     struct OLEvent e;
+    memset(&e, 0, sizeof(e));
     e.type = LOST_FOCUS;
     OLG_OnEvent(&e);
+}
+
+- (void) handleBecomeKeyNotification: (NSNotification *) notification
+{
 }
 
 
 static void sigtermHandler()
 {
-    OL_ReportMessage("[OSX] Caught SIGTERM!");
+    LogMessage(@"Caught SIGTERM!");
     fflush(NULL);
 }
 
@@ -471,12 +533,17 @@ static void sigtermHandler()
            selector:@selector(handleResignKeyNotification:)
                name:NSWindowDidResignKeyNotification
              object:nil ];
+    
+    [[NSNotificationCenter defaultCenter]
+        addObserver:self
+           selector:@selector(handleBecomeKeyNotification:)
+               name:NSWindowDidBecomeKeyNotification
+             object:nil ];
 
     signal(SIGTERM, sigtermHandler);
     signal(SIGINT, sigtermHandler); 
     
-    gTrackingViewInfo = self;
-    focused = false;
+    gView = self;
     self->fullscreen = NO;
     self->closing = 0;
 

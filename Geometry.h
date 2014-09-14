@@ -136,6 +136,7 @@ namespace std {
 	inline int isinf(double v) { return !_finite(v); }
 }
 #endif
+
 template <typename T>
 inline bool fpu_error(T x) { return (std::isinf(x) || std::isnan(x)); }
 
@@ -143,6 +144,7 @@ inline bool fpu_error(T x) { return (std::isinf(x) || std::isnan(x)); }
 static const float epsilon = 0.0001f;
 
 
+///////////// round/ceil/floor floats to nearest multiple /////////////
 inline float round(float a, float v)
 {
     if (fabsf(v) < epsilon)
@@ -155,13 +157,64 @@ inline float2 round(float2 a, float v) { return float2(round(a.x, v), round(a.y,
 inline double round(double a, double v) { return v * round(a / v); }
 inline double2 round(double2 a, double v) { return double2(round(a.x, v), round(a.y, v)); }
 
+
+inline uint roundUpPower2(uint v)
+{
+    uint i=1;
+    while (i < v)
+        i *= 2;
+    return i;
+}
+
+inline float ceil(float a, float v)
+{
+    if (fabsf(v) < epsilon)
+        return a;
+    return v * ceil(a / v);
+}
+
+inline float floor(float a, float v)
+{
+    if (fabsf(v) < epsilon)
+        return a;
+    return v * floor(a / v);
+}
+
+
 inline float2 angleToVector(float angle) { return float2(std::cos(angle), std::sin(angle)); }
 inline float vectorToAngle(float2 vec) { return std::atan2(vec.y, vec.x); }
 
 // return [-1, 1] indicating how closely the angles are alligned
-inline float compareAngles(float a, float b)
+inline float dotAngles(float a, float b)
 {
     return dot(angleToVector(a), angleToVector(b));
+}
+
+#define M_PIf float(M_PI)
+#define M_PI_2f float(M_PI_2)
+#define M_PI_4f float(M_PI_4)
+#define M_TAOf float(2 * M_PI)
+#define M_SQRT2f float(M_SQRT2)
+
+template <typename T>
+inline T sign(T val)
+{
+    return (T(0) < val) - (val < T(0));
+}
+
+inline float2 rotate90(float2 v)  { return float2(-v.y, v.x); }
+inline float2 rotateN90(float2 v) { return float2(v.y, -v.x); }
+
+inline float getAngleError(float a, float b)
+{
+    const float2 va = angleToVector(a);
+    const float2 vb = angleToVector(b);
+    const float e = dot(va, rotate90(vb));
+    if (dot(va, vb) >= 0.f)
+        return e;
+    else
+        // return sign(e) * 2.f - e;
+        return std::copysign(2.f, e) - e;
 }
 
 static const double kGoldenRatio = 1.61803398875;
@@ -180,11 +233,18 @@ inline float2 clamp_length(float2 v, float mn, float mx)
 {
     const float len = length(v);
     if (len < mn)
-        return mn * (v / len);
+        return v * (mn / len);
     else if (len > mx)
-        return mx * (v / len);
+        return v * (mx / len);
     else
         return v;
+}
+
+inline float clamp_mag(float v, float mn, float mx)
+{
+    const float vm = abs(v);
+    return ((vm < mn) ? ((v > 0.f) ? mn : -mn) :
+            (vm > mx) ? ((v > 0.f) ? mx : -mx) : v);
 }
 
 // return vector V clamped to fit inside origin centered rectangle with radius RAD
@@ -306,12 +366,6 @@ inline float lengthSqr(const float2 &a) { return a.x * a.x + a.y * a.y; }
 inline float distanceSqr(const float2 &a, const float2& b) { return lengthSqr(a-b); }
 
 
-#define M_PIf float(M_PI)
-#define M_PI_2f float(M_PI_2)
-#define M_PI_4f float(M_PI_4)
-#define M_TAOf float(2 * M_PI)
-#define M_SQRT2f float(M_SQRT2)
-
 inline float todegrees(float radians) { return 360.f / (2.f * M_PIf) * radians; }
 inline float toradians(float degrees) { return 2.f * M_PIf / 360.0f * degrees; }
 
@@ -331,15 +385,15 @@ inline glm::detail::tvec2<T, glm::defaultp> rotate(const glm::detail::tvec2<T, g
     return glm::detail::tvec2<T, glm::defaultp>(a.x * v.x - a.y * v.y, a.y * v.x + a.x * v.y);
 }
 
-inline float2 rotate90(float2 v)  { return float2(-v.y, v.x); }
-inline float2 rotateN90(float2 v) { return float2(v.y, -v.x); }
 inline float2 swapXY(float2 v)    { return float2(v.y, v.x); }
 inline float2 flipY(float2 v)     { return float2(v.x, -v.y); }
 inline float2 flipX(float2 v)     { return float2(-v.x, v.y); }
 inline float3 flipY(float3 v)     { return float3(v.x, -v.y, v.z); }
 inline float3 flipX(float3 v)     { return float3(-v.x, v.y, v.z); }
 inline float2 justY(float2 v)     { return float2(0.f, v.y); }
+inline float2 justY(float v)      { return float2(0.f, v); }
 inline float2 justX(float2 v)     { return float2(v.x, 0.f); }
+inline float2 justX(float v)      { return float2(v, 0.f); }
 
 template <typename T>
 inline T multiplyComponent(T v, int i, float x)
@@ -347,9 +401,6 @@ inline T multiplyComponent(T v, int i, float x)
     v[i] *= x;
     return v;
 }
-
-inline float sign(float a) { return ((a < -epsilon) ? -1.f : 
-                                     (a > epsilon)  ? 1.f : 0.f); }
 
 inline float logerp(float v, float tv, float s)
 { 
@@ -562,6 +613,12 @@ inline bool isInRange(glm::detail::tvec2<T, glm::defaultp> p, glm::detail::tvec2
     return isInRange(p.x, mn.x, mx.x) && isInRange(p.y, mn.x, mx.x);
 }
 
+inline float spreadCircleToCircle(float2 c0, float r0, float2 c1, float r1)
+{
+    const float2 c1p = c1 + r1 * normalize(rotate90(c1 - c0));
+    return fabsf(vectorToAngle(c1 - c0) - vectorToAngle(c1p - c0));
+}
+
 inline bool intersectPointCircle(const float2 &p, const float2 &c, float r)
 {
     const float2 x = p-c;
@@ -580,10 +637,15 @@ inline bool intersectCircleCircle(const float2 &p, float pr, const float2 &c, fl
     return intersectPointCircle(p, c, pr+cr);
 }
 
-inline float distanceCircleCircleSqr(float2 ap, float ar, float2 bp, float br)
+inline float distancePointCircleSqr(float2 ap, float2 bp, float br)
 {
     const float2 x = ap-bp;
-    return (x.x * x.x + x.y * x.y) - ((ar+br)*(ar+br));
+    return (x.x * x.x + x.y * x.y) - (br*br);
+}
+
+inline float distanceCircleCircleSqr(float2 ap, float ar, float2 bp, float br)
+{
+    return distancePointCircleSqr(ap, bp, ar+br);
 }
 
 // intersect two circles, returning number of intersections with points in RA and RB
@@ -770,11 +832,23 @@ struct AABBox {
 
     float2 getRadius() const { return 0.5f * (mx-mn); }
     float2 getCenter() const { return 0.5f * (mx+mn); }
+    bool   empty() const { return mn == mx; }
     
     float getArea() const
     {
         const float2 rad = getRadius();
         return 4.f * rad.x * rad.y;
+    }
+
+    friend AABBox rotate(const AABBox& bx, float angle)
+    {
+        AABBox bb;
+        const float2 rot = angleToVector(angle);
+        bb.insertPoint(rotate(bx.mx, rot));
+        bb.insertPoint(rotate(bx.mn, rot));
+        bb.insertPoint(rotate(float2(bx.mx.x, bx.mn.y), rot));
+        bb.insertPoint(rotate(float2(bx.mn.x, bx.mx.y), rot));
+        return bb;
     }
 
     void start(float2 pt) 
@@ -863,6 +937,8 @@ inline bool intersectRectangleSegment(float2 rc, float2 rr, float2 ss, float2 se
     float v = intersectBBSegmentV(rc.x-rr.x, rc.y-rr.y, rc.x+rr.x, rc.y+rr.y, ss, se);
     return 0 <= v && v <= 1.f;
 }
+
+float2 rectangleEdge(float2 rpos, float2 rrad, float2 dir);
 
 // from http://www.blackpawn.com/texts/pointinpoly/
 bool intersectPointTriangle(float2 P, float2 A, float2 B, float2 C);

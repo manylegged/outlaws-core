@@ -25,8 +25,6 @@
 #ifndef NAV_H_INCLUDED
 #define NAV_H_INCLUDED
 
-#include "Geometry.h"
-
 // this is our six dimensional configuration space
 // all of these values are in the global reference frame (i.e. position and velocity are not rotated).
 struct snConfig {
@@ -45,6 +43,8 @@ enum snDimension {
     SN_TARGET_VEL = 1<<4,       // we don't care about our velocity, but we are passing in the target position velocity
     SN_MISSILE_ANGLE = 1<<5,
     SN_VEL_ALLOW_ROTATION = 1<<6,
+    SN_POS_ANGLE = 1<<7,
+    SN_SNAPPY    = 1<<8,        // player parameters
 };
 
 
@@ -65,7 +65,7 @@ struct snPrecision {
 
     bool posEqual(float2 a, float2 b) const { return intersectPointCircle(a, b, pos); }
     bool velEqual(float2 a, float2 b) const { return intersectPointCircle(a, b, vel); }
-    bool angleEqual(float a, float b) const { return dot(angleToVector(a), angleToVector(b)) + angle >= 1.f; }
+    bool angleEqual(float a, float b) const { return dotAngles(a, b) + angle >= 1.f; }
     bool angVelEqual(float a, float b) const { return fabsf(a - b) < angVel; }
 
     bool configEqual(const snConfig& a, const snConfig& b, uint dims) const
@@ -120,11 +120,13 @@ struct snMover {
 // navigation for one actor
 struct sNav {
 
+    mutable float rotInt = 0.f;
+    
     // input/output
 	vector<snMover*> movers;
     float2           maxAccel;  // dependent on movers
-    float            maxPosAngAccel;
-    float            maxNegAngAccel;
+    float            maxPosAngAccel; // always positive
+    float            maxNegAngAccel; // always negative
 
     // inputs
     snPrecision      precision;
@@ -133,6 +135,8 @@ struct sNav {
     
     // output result
     snAction         action;
+
+    void tryRotateForAccel(float2 dir);
 
     void setDest(const snConfig &dest1, uint dimensions, const snPrecision& prec)
     {
@@ -167,7 +171,7 @@ struct sNav {
     float  moversForAngAccel(float angAccel, bool enable);
     float2 moversForLinearAccel(float2 dir, float threshold, float angAccel, bool enable);
     void   moversDisable();
-    float  angAccelForTarget(float destAngle, float destAngVel) const;
+    float  angAccelForTarget(float destAngle, float destAngVel, bool snappy) const;
 
     // transform inputs to outputs, return true if destination reached
     bool update();

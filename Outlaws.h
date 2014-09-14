@@ -55,6 +55,9 @@ void OLG_OnEvent(const struct OLEvent* event);
 // called before program terminates
 void OLG_OnQuit(void);
 
+// called when the application window is closed - like OnQuit but more gracefull
+void OLG_OnClose(void);
+
 // called when window manager changes full screen state
 void OLG_SetFullscreenPref(int enabled);
 
@@ -64,16 +67,17 @@ int OLG_OnAssertFailed(const char* file, int line, const char* func, const char*
 int OLG_vOnAssertFailed(const char* file, int line, const char* func, const char* x,
                          const char* format, va_list v) __printflike(5, 0) CLANG_ANALYZER_NORETURN;
 
-// get current time, for animated shaders, etc
-double OLG_GetRenderSimTime(void);
-
 // return target frame rate. e.g. 60 fps
 float OLG_GetTargetFPS(void);
 
 // get name of game (for save path)
 const char* OLG_GetName(void);
 
+// true if we should load / save data from the game directory instead of system save path
 int OLG_UseDevSavePath(void);
+
+// return name of log file to open
+const char* OLG_GetLogFileName(void);
 
 
  //////////////////////////////// Game calls into OS layer //////////////////////////////////
@@ -122,8 +126,18 @@ float OL_GetCurrentBackingScaleFactor(void);
 void OL_SetFullscreen(int fullscreen);
 int OL_GetFullscreen(void);
 
+void OL_SetWindowSizePoints(int w, int h);
+
 // change swap interval (0 is immediate flip, 1 is vsync 60fps, 2 is vsync 30fps...)
 void OL_SetSwapInterval(int interval);
+
+typedef struct OutlawImage {
+    int width, height;
+    char *data;                 /* release with free() */
+} OutlawImage;
+
+// load an image
+OutlawImage OL_LoadImage(const char*fname);
 
 typedef struct OutlawTexture {
     int width, height;
@@ -162,7 +176,7 @@ const char *OL_LoadFile(const char *fname);
 // write text file to disk, atomically. Creates directories as needed.
 int OL_SaveFile(const char* fname, const char* data);
 
-// Return list of files in a directory
+// Return list of files in a directory (base name only - no path)
 const char** OL_ListDirectory(const char* path);
 
 // get complete path for data file in utf8, searching through save directory and application resource directory

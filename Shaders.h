@@ -188,9 +188,18 @@ public:
 
     void UseProgram(const ShaderState& ss, const float2* ptr) const
     {
-        UseProgramBase(ss, ptr, (float2*) NULL);
+        UseProgramBase(ss, ptr, (float2*)NULL);
         float4 c = ABGR2RGBAf(ss.uColor);
         glUniform4fv(m_colorSlot, 1, &c[0]);
+        glReportError();
+    }
+
+    void UseProgram(const ShaderState& ss, const VertexPos* ptr, const VertexPos* base) const
+    {
+        UseProgramBase(ss, &ptr->pos, base);
+        float4 c = ABGR2RGBAf(ss.uColor);
+        glUniform4fv(m_colorSlot, 1, &c[0]);
+        glReportError();
     }
 
     static const ShaderUColor& instance()   
@@ -219,7 +228,7 @@ public:
         vertexAttribPointer(SourceColor0, &ptr->color, base);
         vertexAttribPointer(SourceColor1, &ptr->color1, base);
         vertexAttribPointer(TimeA, &ptr->time, base);
-        glUniform1f(TimeU, OLG_GetRenderSimTime());
+        glUniform1f(TimeU, globals.renderTime);
     }
 
     static const ShaderIridescent& instance()   
@@ -272,7 +281,7 @@ public:
         float4 c1 = ABGR2RGBAf(ss.uColor1);
         glUniform4fv(SourceColor0, 1, &c0[0]);
         glUniform4fv(SourceColor1, 1, &c1[0]);
-        glUniform1f(TimeU, OLG_GetRenderSimTime());
+        glUniform1f(TimeU, globals.renderTime);
         vertexAttribPointer(TimeA, &ptr->time, base);
     }
 
@@ -401,6 +410,47 @@ public:
 
 };
 
+struct ShaderTextureHSV : public ShaderTextureBase {
+
+private:
+    uint m_uTexture;
+    uint m_uColorSlot;
+    uint m_aTexCoords;
+
+public:
+    ShaderTextureHSV()
+    {
+        LoadProgram("ShaderTextureHSV");
+        m_uTexture = getUniformLocation("texture1");
+        m_uColorSlot = getUniformLocation("SourceColor");
+        m_aTexCoords = getAttribLocation("SourceTexCoord");
+    }
+
+    void UseProgram(const ShaderState &ss, const VertexPosTex *ptr, const OutlawTexture &ot) const override
+    {
+        UseProgram(ss, ptr, (const VertexPosTex*) NULL);
+    }
+
+    template <typename Vtx>
+    void UseProgram(const ShaderState &ss, const Vtx *ptr, const Vtx *base) const
+    {
+        UseProgramBase(ss, &ptr->pos, base);
+
+        vertexAttribPointer(m_aTexCoords, &ptr->texCoord, base);
+        glUniform1i(m_uTexture, 0);
+
+        float4 c = ABGR2RGBAf(ss.uColor);
+        glUniform4fv(m_uColorSlot, 1, &c[0]); 
+    }
+
+    static const ShaderTextureHSV& instance()   
+    {
+        static ShaderTextureHSV* p = new ShaderTextureHSV();
+        return *p;
+    }
+
+};
+
 struct ShaderTonemapDither : public ShaderTextureBase {
 
 private:
@@ -468,77 +518,6 @@ public:
         static ShaderBlur* p = new ShaderBlur();
         return *p;
     }
-};
-
-struct MetaballRenderer : ShaderPosBase {
-
-private:
-    View            m_view;
-    GLRenderTexture m_tex;
-    vector<float3>  m_balls;
-
-    uint ucolor;
-    uint uballs;
-    uint kballs;
-
-    MetaballRenderer()
-    {
-        LoadProgram("Metaball",
-                    ""
-                    , 
-                    "void main(void) {\n"
-                    "    gl_Position = Transform * Position;\n"
-                    "}\n"
-                    ,
-                    "#define BALLS 30\n"
-                    "uniform vec3 balls[BALLS];\n"
-                    "uniform vec4 color;\n"
-                    "void main(void) {\n"
-                    "    float val=0.0;\n"
-                    "    for (int i=0; i<BALLS; i++) {\n"
-                    "        val += balls[i].z / max(0.0001, length(balls[i].xy - gl_FragCoord.xy));\n"
-                    "    }\n"
-                    "    if (val >= 1.0)\n"
-                    "        gl_FragColor = color;\n"
-                    "    else if (val >= 0.5)\n"
-                    "        gl_FragColor = vec4(color.xyz, 0.5 * color.z);\n"
-                    "    else\n"
-                    "        discard;\n"
-                    "}\n"
-            );
-        ucolor = getUniformLocation("color");
-        uballs = getUniformLocation("balls");
-        kballs = 30;
-    }
-
-public:
-
-    void UseProgram(const ShaderState &ss, const float2* ptr) const
-    {
-        UseProgramBase(ss, ptr, (float2*) NULL);
-        float4 c = ABGR2RGBAf(ss.uColor);
-        glUniform4fv(ucolor, 1, &c[0]);
-        glUniform3fv(uballs, kballs, &m_balls[0][0]);
-    }
-
-    void addBall(float2 wpos, float r)
-    {
-        m_balls.push_back(float3(m_view.toScreenPixels(wpos), m_view.toScreenSizePixels(r)));
-    }
-
-    void Draw(const ShaderState &ss, const View& view)
-    {
-        m_tex.BindFramebuffer(m_view.sizePixels);
-        if (m_balls.size() > kballs)
-            vector_sort(m_balls, lambda((const float3& a, const float3 &b), a.z > b.z));
-        m_balls.resize(kballs, float3(0, 0, 0));
-        
-        DrawRectCorners(ss, float2(0), m_view.sizePoints);
-        m_tex.UnbindFramebuffer();
-
-        ShaderTexture::instance().DrawRectCorners(ss, m_tex.getTexture(), float2(0), m_view.sizePoints);
-    }
-
 };
 
 struct ShaderColor : public ShaderProgramBase {
@@ -707,7 +686,7 @@ struct ShaderNoise : public ShaderProgramBase {
     {
         UseProgramBase(ss, &ptr->pos, base);
         vertexAttribPointer(m_colorSlot, &ptr->color, base);
-        glUniform1f(m_uRandomSeed, fmod(OLG_GetRenderSimTime(), 1.0));
+        glUniform1f(m_uRandomSeed, fmod(globals.renderTime, 1.0));
     }
 };
 

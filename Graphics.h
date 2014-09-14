@@ -198,12 +198,18 @@ public:
     GLTexture uploadTexture() const;
 };
 
+struct ShaderState;
+
 class GLTexture {
 
 protected:
     float2 m_size;              // in pixels
+    float2 m_texsize;
     GLuint m_texname = 0;
     GLint  m_format  = GL_RGB;
+
+    void DrawFSBegin(ShaderState &ss) const;
+    void DrawFSEnd() const;
 
 public:
 
@@ -219,6 +225,7 @@ public:
     GLTexture& operator=(GLTexture&& o)
     {
         std::swap(m_size, o.m_size);
+        std::swap(m_texsize, o.m_texsize);
         std::swap(m_texname, o.m_texname);
         std::swap(m_format, o.m_format);
         return *this;
@@ -246,6 +253,8 @@ public:
         memset(&ot, 0, sizeof(ot));
         ot.width = (uint) m_size.x;
         ot.height = (uint) m_size.y;
+        ot.texwidth = (uint) m_texsize.x;
+        ot.texheight = (uint) m_texsize.y;
         ot.texnum = m_texname;
         return ot;
     }
@@ -268,6 +277,9 @@ public:
     void SetTexWrap(bool enable);
     void SetTexMagFilter(GLint filter);
     void GenerateMipmap();
+
+    template <typename Shader>
+    void DrawFullscreen() const;
 };
 
 const GLTexture &getDitherTex();
@@ -321,6 +333,15 @@ struct ShaderState {
 };
 
 
+template <typename Shader>
+void GLTexture::DrawFullscreen() const
+{
+    ShaderState ss;
+    DrawFSBegin(ss);
+    Shader::instance().DrawRectCorners(ss, getTexture(), float2(0.f), float2(1.f));
+    DrawFSEnd();
+}
+
 // RIAA for a render target
 class GLRenderTexture : public GLTexture {
     
@@ -330,9 +351,6 @@ class GLRenderTexture : public GLTexture {
     static vector<GLRenderTexture*> s_bound;
     
     void Generate();
-    
-    ShaderState DrawFSBegin() const;
-    void DrawFSEnd() const;
     
 public:
     ~GLRenderTexture() { clear(); }
@@ -345,13 +363,6 @@ public:
     void RebindFramebuffer();
     void UnbindFramebuffer() const;
     
-    template <typename Shader>
-    void DrawFullscreen() const
-    {
-        ShaderState ss = DrawFSBegin();
-        Shader::instance().DrawRectCorners(ss, getTexture(), float2(0.f), float2(1.f));
-        DrawFSEnd();
-    }
 };
 
 // camera/view data
@@ -554,6 +565,11 @@ struct View {
     {
         return max_dim((2.f * rad) / sizePoints);
     }
+
+    float worldRadiusToScale(float2 rad) const
+    {
+        return max_dim((2.f * rad) / sizePoints);
+    }
 };
 
 #define GET_ATTR_LOC(NAME) NAME = getAttribLocation(#NAME)
@@ -577,8 +593,13 @@ private:
     static void vap1(uint slot, uint size, const uint* ptr)   { glVertexAttribPointer(slot, 4, GL_UNSIGNED_BYTE, GL_TRUE, size, ptr); }
 
 protected:
+
+    string m_header;
+    
     ShaderProgramBase() {}
-    virtual ~ShaderProgramBase();
+    virtual ~ShaderProgramBase() { reset(); }
+
+    void reset();
     
     GLuint getProgram() const { return m_programHandle; }
     
@@ -619,12 +640,6 @@ public:
     bool isLoaded() const { return m_programHandle != 0; }
     string getName() const { return m_name; }
 };
-
-struct IShader : public ShaderProgramBase {
-
-    virtual void UseProgram(const ShaderState& ss)=0;
-};
-
 
 struct Transform2D {
 
@@ -820,7 +835,7 @@ public:
         return start;
     }
 
-    static bool checkOverflow(uint val)
+    static bool checkOverflow(size_t val)
     {
         if (val > std::numeric_limits<IndexType>::max()) {
             ASSERT(false && "vertex overflow!");
@@ -835,8 +850,8 @@ public:
     template <typename T>
     IndexType PushV(const T *pv, size_t vc)
     {
-        const IndexType start = m_vl.size();
-        if (checkOverflow(start + vc))
+        const IndexType start = (IndexType) m_vl.size();
+        if (checkOverflow(m_vl.size() + vc))
             return start;
 
         Vtx v = m_curVert;
@@ -851,8 +866,8 @@ public:
 
     IndexType PushV(const Vtx *pv, size_t vc)
     {
-        const IndexType start = m_vl.size();
-        if (checkOverflow(start + vc))
+        const IndexType start = (IndexType) m_vl.size();
+        if (checkOverflow(m_vl.size() + vc))
             return start;
 
         Vtx v;
@@ -876,17 +891,17 @@ public:
         m_il.reserve(m_il.size() + pusher.m_il.size());
         
         Vtx v;
-        for (uint i=0; i<pusher.m_vl.size(); i++)
+        foreach (const Vtx& vtx, pusher.m_vl)
         {
-            v = pusher.m_vl[i];
+            v = vtx;
             v.pos = m_curVert.pos;
-            apply(v.pos, pusher.m_vl[i].pos);
+            apply(v.pos, vtx.pos);
             m_vl.push_back(v);
         }
 
-        for (uint i=0; i<pusher.m_il.size(); i++)
+        foreach (IndexType idx, pusher.m_il)
         {
-            m_il.push_back(start + pusher.m_il[i]);
+            m_il.push_back(start + idx);
         }
         return start;
     }
@@ -1599,7 +1614,7 @@ inline DMesh& theDMesh()
     return mesh;
 }
 
-enum ButtonStyle { S_BOX=1, S_CORNERS=2, S_FIXED=4 };
+enum ButtonStyle { S_BOX=1, S_CORNERS=2, S_FIXED=4, S_OVAL=8 };
 
 void PushButton(TriMesh<VertexPosColor>* triP, LineMesh<VertexPosColor>* lineP, float2 pos, float2 r, 
                 uint bgColor, uint fgColor, float alpha);

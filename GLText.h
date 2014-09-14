@@ -26,7 +26,6 @@
 #ifndef GLTEXT_H
 #define GLTEXT_H
 
-#include "Geometry.h"
 #include "Graphics.h"
 
 static const int kDefaultFontSize = 12;
@@ -51,7 +50,7 @@ class GLText {
         memset(&texture, 0, sizeof(texture));
     }
 
-    void load();
+    void load(const string& str, int font, float size, float pointSize);
 
     float2 getAdvancement(char c) const;
 
@@ -111,9 +110,6 @@ public:
     }
     
 };
-
-void DrawTextBox(const ShaderState& ss1, const View& view, float2 point, float2 rad, const string& text, uint tSize, 
-                 uint fgColor, uint bgColor=0, int font=kDefaultFont);
 
 // RELNORM of (0, 0) sets pos in bottom left corner, (1, 1) sets pos in upper right corner
 float2 DrawOutlinedText(const ShaderState &ss, float2 pos, float2 relnorm, uint color,

@@ -10,9 +10,9 @@
 
 #define ASSERT(X) if (!(X)) OLG_OnAssertFailed(__FILE__, __LINE__, __func__, #X, "")
 
-static void LogMessage(NSString *str)
+void LogMessage(NSString *str)
 {
-    OL_ReportMessage([str UTF8String]);
+    OL_ReportMessage([[NSString stringWithFormat:@"\n[OSX] %@", str] UTF8String]);
 }
 
 static BOOL createParentDirectories(NSString *path)
@@ -73,6 +73,11 @@ static NSString* pathForFileName(const char* fname, const char* flags)
     NSString* fullFileName = [NSString stringWithUTF8String:fname];
     if (fname[0] == '/')
         return fullFileName;
+    
+    if (fname[0] == '~')
+    {
+        return [fullFileName stringByStandardizingPath];
+    }
 
     NSString *path = nil;
     if (OLG_UseDevSavePath())
@@ -81,8 +86,8 @@ static NSString* pathForFileName(const char* fname, const char* flags)
         
         // read and write output files directly from source code repository
         NSString *base = [[[NSString stringWithCString:__FILE__ encoding:NSUTF8StringEncoding]
-                           stringByAppendingPathComponent: @"../../../"]
-                          stringByStandardizingPath];
+                              stringByAppendingPathComponent: @"../../../"]
+                             stringByStandardizingPath];
         path = [base stringByAppendingPathComponent:fullFileName];
     }
     else
@@ -110,7 +115,7 @@ const char *OL_PathForFile(const char *fname, const char* mode)
 
 const char** OL_ListDirectory(const char* path)
 {
-    static const int kMaxElements = 100;
+    static const int kMaxElements = 200;
     static const char* array[kMaxElements];
 
     NSString *nspath = pathForFileName(path, "r");
@@ -126,7 +131,7 @@ const char** OL_ListDirectory(const char* path)
     int i = 0;
     for (NSString* file in dirFiles)
     {
-        if (i >= kMaxElements)
+        if (i >= kMaxElements-1)
             break;
         
         array[i] = [file UTF8String];
@@ -201,10 +206,9 @@ int OL_FileDirectoryPathExists(const char* fname)
     return exists ? 1 : 0;
 }
 
-
-struct OutlawTexture OL_LoadTexture(const char* fname)
+struct OutlawImage OL_LoadImage(const char* fname)
 {
-    struct OutlawTexture t;
+    struct OutlawImage t;
     memset(&t, 0, sizeof(t));
 
     NSString* path = pathForFileName(fname, "r");
@@ -228,21 +232,42 @@ struct OutlawTexture OL_LoadTexture(const char* fname)
     
     CGImageRef image = CGImageSourceCreateImageAtIndex(image_source, 0, NULL);
     
-    unsigned width  = (unsigned)CGImageGetWidth(image);
-    unsigned height = (unsigned)CGImageGetHeight(image);
+    t.width  = (unsigned)CGImageGetWidth(image);
+    t.height = (unsigned)CGImageGetHeight(image);
     
-    void *data = malloc(width * height * 4);
+    t.data = calloc(t.width * t.height, 4);
+    if (!t.data)
+        return t;
     
     CGColorSpaceRef color_space = CGColorSpaceCreateDeviceRGB();
-    CGContextRef context = CGBitmapContextCreate(data, width, height, 8, width * 4, color_space, kCGImageAlphaPremultipliedFirst);
+    CGContextRef context = CGBitmapContextCreate(t.data, t.width, t.height, 8, t.width * 4, color_space, kCGImageAlphaPremultipliedFirst);
     
-    CGContextDrawImage(context, CGRectMake(0, 0, width, height), image);
+    CGContextDrawImage(context, CGRectMake(0, 0, t.width, t.height), image);
+
+    CFRelease(context);
+    CFRelease(color_space);
+    CFRelease(image);
+    CFRelease(image_source);
+    CFRelease(texture_url);
+    
+    return t;
+}
+
+
+struct OutlawTexture OL_LoadTexture(const char* fname)
+{
+    struct OutlawTexture t;
+    memset(&t, 0, sizeof(t));
+    
+    struct OutlawImage image = OL_LoadImage(fname);
+    if (!image.data)
+        return t;
     
     GLuint texture_id;
     glGenTextures(1, &texture_id);
     glBindTexture(GL_TEXTURE_2D, texture_id);
     //glTexParameteri(GL_TEXTURE_2D, GL_GENERATE_MIPMAP_SGIS, GL_TRUE);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8, data);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image.width, image.height, 0, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8, image.data);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE_SGIS);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE_SGIS);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -250,15 +275,10 @@ struct OutlawTexture OL_LoadTexture(const char* fname)
 
     glReportError();
     
-    CFRelease(context);
-    CFRelease(color_space);
-    free(data);
-    CFRelease(image);
-    CFRelease(image_source);
-    CFRelease(texture_url);
-    
-    t.width = width;
-    t.height = height;
+    free(image.data);
+
+    t.width = image.width;
+    t.height = image.height;
     t.texnum = texture_id;
 
     return t;
@@ -289,33 +309,40 @@ int OL_SaveTexture(const OutlawTexture *tex, const char* fname)
         }
     }
 
-    CGColorSpaceRef color_space = CGColorSpaceCreateDeviceRGB();
-    CGDataProviderRef provider = CGDataProviderCreateWithData(NULL, pix, size, NULL);
-    CGImageRef cimg = CGImageCreate(tex->width, tex->height, 8, 32, tex->width * 4,
-                                    color_space, kCGImageAlphaLast, provider,
-                                    NULL, FALSE, kCGRenderingIntentDefault);
+    CGImageRef cimg = nil;
+    {
+        CGColorSpaceRef color_space = CGColorSpaceCreateDeviceRGB();
+        CGDataProviderRef provider = CGDataProviderCreateWithData(NULL, pix, size, NULL);
+        cimg = CGImageCreate(tex->width, tex->height, 8, 32, tex->width * 4,
+                             color_space, kCGImageAlphaLast, provider,
+                             NULL, FALSE, kCGRenderingIntentDefault);
 
-    CGDataProviderRelease(provider);
-    CFRelease(color_space);
+        CGDataProviderRelease(provider);
+        CFRelease(color_space);
+    }
 
     NSString* path = pathForFileName(fname, "w");
-    if (!createParentDirectories(path))
-        return 0;
-    CFURLRef url = CFURLCreateWithFileSystemPath(NULL, (__bridge CFStringRef)path, kCFURLPOSIXPathStyle, false);
-    CGImageDestinationRef dest = CGImageDestinationCreateWithURL(url, kUTTypePNG, 1, NULL);
-    CGImageDestinationAddImage(dest, cimg, NULL);
+    BOOL success = false;
     
-    BOOL success = CGImageDestinationFinalize(dest);
+    if (createParentDirectories(path))
+    {
+        CFURLRef url = CFURLCreateWithFileSystemPath(NULL, (__bridge CFStringRef)path, kCFURLPOSIXPathStyle, false);
+        CGImageDestinationRef dest = CGImageDestinationCreateWithURL(url, kUTTypePNG, 1, NULL);
+        CGImageDestinationAddImage(dest, cimg, NULL);
+        
+        success = CGImageDestinationFinalize(dest);
+        CFRelease(dest);
+        CFRelease(url);
+    }
+    
+    CGImageRelease(cimg);
     free(pix);
     
-    CFRelease(dest);
     if (!success) {
         LogMessage([NSString stringWithFormat:@"Failed to write texture %d-%dx%d to '%s'",
                              tex->texnum, tex->width, tex->height, fname]);
-        return 0;
     }
-
-    return 1;
+    return success;
 }
 
 static NSString *g_fontNames[10];
@@ -334,8 +361,7 @@ static NSFont* getFont(int fontName, float size)
 
 void OL_SetFont(int index, const char* file, const char* name)
 {
-    g_fontNames[index] = [NSString stringWithUTF8String:name];
-    [g_fontNames[index] retain];
+    g_fontNames[index] = [[NSString alloc] initWithUTF8String:name];
     getFont(index, 12);         // preload
 }
 
@@ -516,7 +542,7 @@ void OL_ReportMessage(const char *str)
         __builtin_trap();
 #endif
     if (!g_logfile) {
-        NSString *fname = pathForFileName("data/log.txt", "w");
+        NSString *fname = pathForFileName(OLG_GetLogFileName(), "w");
         if (createParentDirectories(fname))
         {
             g_logfile = fopen([fname UTF8String], "w");
@@ -528,9 +554,9 @@ void OL_ReportMessage(const char *str)
         }
     }
     //NSLog(@"[DBG] %s\n", str);
-    fprintf(stderr, "[DBG] %s\n", str);
+    fprintf(stderr, "%s", str);
     if (g_logfile) {
-        fprintf(g_logfile, "%s\n", str);
+        fprintf(g_logfile, "%s", str);
     }
 }
 
@@ -560,9 +586,14 @@ const char* OL_GetPlatformDateInfo(void)
 
 const char* OL_ReadClipboard()
 {
+    static NSArray *classes = nil;
+    static NSDictionary *options = nil;
+    if (!classes) {
+        classes = [[NSArray alloc] initWithObjects:[NSString class], nil];
+        options = [[NSDictionary alloc] init];
+    }
+
     NSPasteboard *pasteboard = [NSPasteboard generalPasteboard];
-    NSArray *classes = [[NSArray alloc] initWithObjects:[NSString class], nil];
-    NSDictionary *options = [NSDictionary dictionary];
     NSArray *copiedItems = [pasteboard readObjectsForClasses:classes options:options];
     
     if (copiedItems == nil || [copiedItems count] == 0)

@@ -25,21 +25,23 @@
 #ifndef CORE_EVENT_H
 #define CORE_EVENT_H
 
+inline string keyToString(int key);
+
 struct Event {
     // !!! KEEP IN SYNC WITH Outlaws.h VERSION !!!
     enum Type { KEY_DOWN=0, KEY_UP, MOUSE_DOWN, MOUSE_UP, MOUSE_DRAGGED, 
                 MOUSE_MOVED, SCROLL_WHEEL, LOST_FOCUS, GAINED_FOCUS,
                 TOUCH_BEGIN, TOUCH_MOVED, TOUCH_STATIONARY, TOUCH_ENDED, TOUCH_CANCELLED,
                 INVALID };
-    Type   type;
-    long   key;
-    long   rawkey;
+    Type   type = INVALID;
+    int    key = 0;
+    int    rawkey = 0;
     float2 pos;
     float2 vel;
 
     string toString() const
     {
-        const string skey = isprint(key) ? string(1, key) : str_format("%d", (int)key);
+        const string skey = keyToString(key);
         switch(type)
         {
         case KEY_DOWN:      return str_format("KEY_DOWN %s",     skey.c_str());
@@ -89,7 +91,7 @@ struct Event {
     }
 };
 
-enum {
+enum : int {
     NSEnterCharacter                = 0x0003,
     NSBackspaceCharacter            = 0x0008,
     NSTabCharacter                  = 0x0009,
@@ -184,21 +186,26 @@ enum {
     SpecialKeyCount = 0xF74E,
 };
 
+enum KeyMods {
+    MOD_CTRL = 1<<18,
+    MOD_ALT     = 1<<19,
+    MOD_SHFT   = 1<<20
+};
 
 class KeyState {
     bool ascii[256];
     bool function[SpecialKeyCount - NSUpArrowFunctionKey];
     bool misc;
-    
+
 public:
 
     float2 cursorPosScreen;
-    
+
     KeyState()
     {
         reset();
     }
-    
+
     bool& operator[](int c)
     {
         if (0 <= c && c < 256)
@@ -227,6 +234,18 @@ public:
         (*this)[0 + LeftMouseButton] = false;
         (*this)[1 + LeftMouseButton] = false;
         (*this)[2 + LeftMouseButton] = false;
+    }
+
+    uint keyMods() const
+    {
+        uint mods = 0;
+        if ((*this)[OControlKey])
+            mods |= MOD_CTRL;
+        if ((*this)[OShiftKey])
+            mods |= MOD_SHFT;
+        if ((*this)[OAltKey])
+            mods |= MOD_ALT;
+        return mods;
     }
 
     static KeyState &instance()
@@ -258,7 +277,7 @@ inline string keyToString(int key)
     case NSPageDownFunctionKey: return "Page Down";
     case NSHomeFunctionKey: return "Home";
     case NSEndFunctionKey: return "End";
-    case NSDeleteCharacter: return "Delete";
+    case NSDeleteFunctionKey: return "Delete";
     case NSBackspaceCharacter: return "Backspace";
     case EscapeCharacter: return "Escape";
     case NSF1FunctionKey: return "F1";
@@ -278,7 +297,7 @@ inline string keyToString(int key)
         if (isprint(key))
             return str_format("%c", key);
         else
-            return str_format("0x%x", key);
+            return str_format("%#x", key);
     }
 }
 

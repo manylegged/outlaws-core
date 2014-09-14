@@ -29,14 +29,13 @@
 
 #include "GLText.h"
 #include "Shaders.h"
-#include <cctype>
 
 static const float  kPadDist            = 2;
 static const float2 kButtonPad         = float2(4.f);
 
 #define COLOR_TARGET  0xff3a3c
-#define COLOR_TEXT_BG 0x0d0715
-#define COLOR_BG_GRID 0x3f1935
+#define COLOR_TEXT_BG 0x101010
+#define COLOR_BG_GRID 0x222222
 #define COLOR_ORANGE  0xff6f1f
 #define COLOR_BLACK 0x000000
 #define COLOR_WHITE 0xffffff
@@ -48,6 +47,7 @@ static const uint kGUIFgActive = 0xffffffff;
 static const uint kGUIText     = 0xfff0f0f0;
 static const uint kGUITextLow  = 0xffa0a0a0;
 static const uint kGUIInactive = 0xa0a0a0a0;
+static const uint kGUIToolBg   = 0xc0000000;
 
 struct WidgetBase {
     float2      position;       // center of button
@@ -68,18 +68,25 @@ inline bool isEventKey(const Event* event, const char* keys)
 struct ButtonBase : public WidgetBase {
     
     const char* keys = NULL;
+    
+    string tooltip;
+    bool   pressed          = false;
+    bool   visible          = true;
+    int    index            = -1;
+    int    ident            = 0;
+    uint   defaultLineColor = kGUIFg;
+    uint   hoveredLineColor = kGUIFgActive;
+    uint   defaultBGColor   = kGUIBg;
+    float  subAlpha         = 1.f;
 
-    bool        pressed = false;
-    bool        visible = true;
-    string      tooltip;
-    int         ident = 0;
-
+    
     ButtonBase() {}
     ButtonBase(const char* ks) : keys(ks) {}
 
     bool HandleEvent(const Event* event, bool* isActivate, bool* isPress=NULL);
     
     bool renderTooltip(const ShaderState &ss, const View& view, uint color, bool force=false) const;
+    string getTooltip() const { return hovered ? tooltip : ""; }
 
     // draw selection triangle next to selected button
     void renderSelected(const ShaderState &ss, uint bgcolor, uint linecolor, float alpha) const;
@@ -88,12 +95,12 @@ struct ButtonBase : public WidgetBase {
 struct Button : public ButtonBase
 {
     string text;
+    string subtext;
     float  textSize          = 24.f;
     int    textFont          = kDefaultFont;
-    uint   defaultBGColor    = kGUIBg;
+    float  subtextSize       = 18.f;
+    uint   subtextColor      = kGUITextLow;
     uint   pressedBGColor    = kGUIBgActive;
-    uint   defaultLineColor  = kGUIFg;
-    uint   hoveredLineColor  = kGUIFgActive; 
     uint   inactiveLineColor = kGUIInactive;
     uint   textColor         = kGUIText;
     uint   inactiveTextColor = kGUIInactive;
@@ -118,10 +125,10 @@ struct Button : public ButtonBase
     uint getBGColor() const { return pressed ? pressedBGColor : defaultBGColor; }
     uint getFGColor(bool selected) const { return ((!active) ? inactiveLineColor :
                                                    (hovered||selected) ? hoveredLineColor : defaultLineColor); }
-    
+    float2 getTextSize() const;
     void render(const ShaderState &s_, bool selected=false);
     void renderButton(DMesh& mesh);
-     void renderText(const ShaderState &s_) const;
+    void renderText(const ShaderState &s_) const;
 };
 
 struct ToggleButton : public Button {
@@ -134,9 +141,11 @@ struct ToggleButton : public Button {
 
 struct TextInputBase : public WidgetBase {
     
-    deque<string> lines;
-    int           textSize = 12;
-
+    deque<string>        lines;
+    std::recursive_mutex mutex; // for lines
+    float                textSize  = 12;
+    bool                 fixedSize = false;
+    
     int2 sizeChars = int2(80, 2);
     int2 startChars;
     int2 cursor;
@@ -173,8 +182,9 @@ struct TextInputBase : public WidgetBase {
 
     bool HandleEvent(const Event* event, bool *textChanged=NULL);
 
-    void pushText(const char *txt);
-    void insertText(const char *txt);
+    void popText(int chars);          // remove at end
+    void pushText(const char *txt, int linesback=1);   // insert at end
+    void insertText(const char *txt); // insert at cursor
 
     void scrollForInput()
     {
@@ -260,13 +270,14 @@ struct TextInputCommandLine : public TextInputBase {
 
     void setLineText(const char* text)
     {
+        std::lock_guard<std::recursive_mutex> l(mutex);
         lines[lines.size()-1] = prompt + text;
         cursor = int2(lines[lines.size()-1].size(), lines.size()-1);
     }
 
     const Command *getCommand(const string &abbrev) const;
 
-    void pushCmdOutput(const char *format, ...);
+    void pushCmdOutput(const char *format, ...) __printflike(2, 3);
     void saveHistory(const char *fname);
     void loadHistory(const char *fname);
 
@@ -274,7 +285,7 @@ struct TextInputCommandLine : public TextInputBase {
     {
         if (commandHistory.empty() || commandHistory.back() != str)
             commandHistory.push_back(str);
-        historyIndex = commandHistory.size();
+        historyIndex = (int)commandHistory.size();
     }
 
     bool doCommand(const string& line);
@@ -478,6 +489,7 @@ struct ITabInterface {
     virtual bool HandleEvent(const Event* event)=0;
     virtual void renderTab(float2 center, float2 size, float foreground, float introAnim)=0;
     virtual void onSwapOut() {}
+    virtual void onSwapIn() {}
     virtual void onStep() {}
     
     virtual ~ITabInterface(){}
@@ -522,7 +534,7 @@ struct TabWindow : public WidgetBase {
 
     int addTab(string txt, ITabInterface *inf)
     {
-        const int idx = buttons.size();
+        const int idx = (int)buttons.size();
         buttons.push_back(TabButton());
         buttons.back().interface = inf;
         buttons.back().text = txt;
@@ -659,6 +671,18 @@ struct MessageBoxWidget : public WidgetBase {
     void updateFade();
     void render(const ShaderState &ss, const View& view);
     bool HandleEvent(const Event* event);
+};
+
+struct TextBox {
+    
+    const View* view = NULL;
+    float2      rad;
+    uint        fgColor = kGUIText;
+    uint        bgColor = kGUIToolBg;
+    int         font    = kMonoFont;
+    float       tSize   = 12.f;
+    
+    void Draw(const ShaderState& ss1, float2 point, const string& text) const;
 };
 
 #endif

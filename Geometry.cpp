@@ -326,3 +326,17 @@ float2 circle_in_rect(float2 pos, float rad, float2 rcenter, float2 rrad)
     return npos;
 }
 
+float2 rectangleEdge(float2 rpos, float2 rrad, float2 dir)
+{
+    float2 pos;
+    const float2 end = rpos + (rrad.x + rrad.y) * normalize(dir);
+    if (intersectSegmentSegment(&pos, rpos + rrad, rpos + flipY(rrad), rpos, end))
+        return pos;
+    if (intersectSegmentSegment(&pos, rpos + rrad, rpos + flipX(rrad), rpos, end))
+        return pos;
+    if (intersectSegmentSegment(&pos, rpos - rrad, rpos - flipY(rrad), rpos, end))
+        return pos;
+    if (intersectSegmentSegment(&pos, rpos - rrad, rpos - flipX(rrad), rpos, end))
+        return pos;
+    return rpos;
+}

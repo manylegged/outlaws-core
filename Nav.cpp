@@ -26,9 +26,12 @@
 #include "StdAfx.h"
 #include "Nav.h"
 
-static DEFINE_CVAR(float, kLinearPosThreshold, 0.6); // how closely should we thrust to the direction we are trying to thrust?
+static DEFINE_CVAR(float, kLinearPosThreshold, 0.5); // how closely should we thrust to the direction we are trying to thrust?
 static DEFINE_CVAR(float, kLinearVelThreshold, 0.3); // when adjusting velocity only, accuracy of thrust direction
 static DEFINE_CVAR(float, kMaxLinearAngAccel, 0.1);
+static DEFINE_CVAR(float, kNavCanRotateThreshold, 0.1);
+
+static DEFINE_CVAR(bool, kNavThrustWhileTurning, true);
 
 void snMover::reset(float2 offset, float angle, float force, float mass, float torque, float moment)
 {
@@ -164,17 +167,23 @@ void sNav::onMoversChanged()
     maxAccel       = moversForLinearAccel(float2(1, 0), kLinearPosThreshold, 0.f, false);
     maxPosAngAccel = moversForAngAccel(+1, false);
     maxNegAngAccel = moversForAngAccel(-1, false);
+    rotInt         = 0.f;
 }
 
 
 // use a pd controller to rotate the body into the correct rotationally
-float sNav::angAccelForTarget(float destAngle, float destAngVel) const
+float sNav::angAccelForTarget(float destAngle, float destAngVel, bool snap) const
 {
-    if (precision.angleEqual(state.angle, destAngle) &&
-        precision.angVelEqual(state.angVel, destAngVel))
-        return 0;
+    if (precision.angleEqual(state.angle, destAngle))
+    {
+        rotInt = 0.f;
+        if (precision.angVelEqual(state.angVel, destAngVel))
+            return 0;
+    }
+    if (snap)
+        rotInt = 0.f;
 
-    const float angleError  = dot(angleToVector(destAngle), angleToVector(state.angle + M_PI_2f));
+    const float angleError  = getAngleError(destAngle, state.angle);
     const float maxAngAccel = fabsf(angleError > 0.f ? maxPosAngAccel : maxNegAngAccel);
     
     if (maxAngAccel < epsilon)
@@ -182,11 +191,32 @@ float sNav::angAccelForTarget(float destAngle, float destAngVel) const
 
     const float approxRotPeriod = 2.f * sqrt(2.f * M_PIf / maxAngAccel);
 
-    const float kp=1.5, kd=-0.3*approxRotPeriod;
+    const bool snappy = !kNavThrustWhileTurning || snap || (dest.dims&SN_SNAPPY);
+    
+    const float kp=1.5f, kd=-0.3f*approxRotPeriod, ki=snappy ? 0.f : 0.01f;
     const float angVelError = state.angVel - destAngVel;
-    const float angAction = (kp * angleError) + (kd * angVelError);
+    const float angAction = (kp * angleError) + (kd * angVelError) + (ki * rotInt);
+
+    if (ki > 0.f)
+        rotInt = clamp_mag(rotInt + angleError, 0.f, angleError * (kp / ki));
 
     return clamp(angAction, -1.f, 1.f);
+}
+
+void sNav::tryRotateForAccel(float2 accel)
+{
+    // FIXME this assumes we can accelerate straight forwards - this is often not the case!
+    if (dot(float2(1.f, 0.f), maxAccel) < kNavCanRotateThreshold)
+        return;
+    const float destAngle = vectorToAngle(accel);
+    const float angAccel = angAccelForTarget(destAngle, 0.f, false);
+    const bool canRotate = (angAccel > 0.f) ? maxPosAngAccel > kNavCanRotateThreshold : maxNegAngAccel < -kNavCanRotateThreshold;
+    if (!canRotate)
+        return;
+
+    if (!kNavThrustWhileTurning || dotAngles(destAngle, state.angle))
+        moversDisable();
+    action.angAccel = moversForAngAccel(angAccel, true);
 }
 
 // get the action for this timestep - call every timestep/frame
@@ -194,8 +224,8 @@ float sNav::angAccelForTarget(float destAngle, float destAngVel) const
 //  where 1.0 is accelerating as fast as possible in the positive direction and 0.0 is no acceleration
 bool sNav::update()
 {
-    this->action.accel = float2(0);
-    this->action.angAccel = 0;    
+    action.accel = float2(0);
+    action.angAccel = 0;    
     
     moversDisable();
 
@@ -217,8 +247,8 @@ bool sNav::update()
     }
     else if ((dest.dims&SN_POSITION) && !precision.posEqual(state.position, dest.cfg.position))
     {
-        const float2 destp = this->dest.cfg.position;
-        const float2 destv = (dest.dims&(SN_VELOCITY|SN_TARGET_VEL)) ? this->dest.cfg.velocity : float2(0);
+        const float2 destp = dest.cfg.position;
+        const float2 destv = (dest.dims&(SN_VELOCITY|SN_TARGET_VEL)) ? dest.cfg.velocity : float2(0);
 
         float2 u;
         if (dest.dims&SN_TARGET_VEL) {
@@ -227,60 +257,58 @@ bool sNav::update()
             float2 dErr = normPErrPerp * dot(normPErrPerp, vDiff);
             u = 1.f * (destp - state.position) - 3.f * dErr;
         } else {
-            u = 1.f * (destp - state.position) - 1.f * (state.velocity - destv);
+            u = 1.f * (destp - state.position) - 0.95f * (state.velocity - destv);
         }
 
-        bool needsRotation = false;
         if (length(u) > 0.00001)
         {
             const float2 uBody    = rotate(u, -state.angle);
             const float2 uBodyDir = normalize(uBody);
        
-            this->action.accel = moversForLinearAccel(uBodyDir, kLinearPosThreshold, 0.f, true);
-            needsRotation = isZero(this->action.accel) || (dot(normalize(this->action.accel), uBodyDir) < 0.99);
+            action.accel = moversForLinearAccel(uBodyDir, kLinearPosThreshold, 0.f, true);
 
-            // FIXME this assumes we can accelerate straight forwards - this is often not the case!
-            //(length(this->action.accel) < 0.75 * scaledMaxAccel)*/)   // OR acceleration is not as high as it could be
-            if (needsRotation)
+            const float rotThresh = (dest.dims&SN_POS_ANGLE) ? 0.5f : 0.99f;
+            
+            if (isZero(action.accel) || dot(normalize(action.accel), uBodyDir) < rotThresh)
             {
-                moversDisable();
-                float angAccel = angAccelForTarget(vectorToAngle(u), 0);
-                this->action.angAccel = moversForAngAccel(angAccel, true);
+                tryRotateForAccel(u);
+            }
+            else if (dest.dims&SN_POS_ANGLE)
+            {
+                const float angAccel = angAccelForTarget(dest.cfg.angle, dest.dims&SN_ANGVEL ? dest.cfg.angVel : 0, false);
+                action.angAccel = moversForAngAccel(angAccel, true);
             }
         }
-
-#if 0
-        if (!needsRotation && fabsf(state.angVel) > 0.01)
-        {
-            // stop spinning - it just looks silly
-            float angAccel = clamp(-state.angVel, -1.f, 1.f);
-            this->action.angAccel = moversForAngAccel(this, angAccel, true);
-        }
-#endif
     }
     else
     {
+        const bool needsVel = (dest.dims&SN_VELOCITY) && !precision.velEqual(dest.cfg.velocity, state.velocity);
+        
         if (dest.dims&SN_ANGLE)
         {
-            float angAccel = angAccelForTarget(this->dest.cfg.angle, this->dest.dims&SN_ANGVEL ? this->dest.cfg.angVel : 0);
-            this->action.angAccel = moversForAngAccel(angAccel, true);
+            const float angAccel = angAccelForTarget(dest.cfg.angle,
+                                                     dest.dims&SN_ANGVEL ? dest.cfg.angVel : 0,
+                                                     !needsVel);
+            action.angAccel = moversForAngAccel(angAccel, true);
         }
 
-        if ((dest.dims&SN_VELOCITY) && !precision.velEqual(dest.cfg.velocity, state.velocity))
+        if (needsVel)
         {
             // action outputs are in the ship reference frame
             float2 ve = dest.cfg.velocity - state.velocity;
-            ve /= max(length(ve), 0.05f * length(this->maxAccel));
+            ve /= max(length(ve), 0.05f * length(maxAccel));
             float2 accel = rotate(float2(clamp(ve.x, -1.f, 1.f), clamp(ve.y, -1.f, 1.f)), -state.angle);
             action.accel = moversForLinearAccel(accel, kLinearVelThreshold, 0.f, true);
-            if (isZero(action.accel) && (dest.dims&SN_VEL_ALLOW_ROTATION)) {
-                moversDisable();
-                float angAccel = angAccelForTarget(vectorToAngle(accel), 0.f);
-                this->action.angAccel = moversForAngAccel(angAccel, true);
+            if (isZero(action.accel) && (dest.dims&SN_VEL_ALLOW_ROTATION))
+            {
+                tryRotateForAccel(accel);
             }
         }
 
     }
+
+    if (dest.dims == 0)
+        rotInt = 0.f;
 
     return isAtDest();
 }

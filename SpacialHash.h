@@ -26,12 +26,6 @@
 #ifndef SPACIALHASH_H
 #define SPACIALHASH_H
 
-#include <unordered_set>
-#include <functional>
-
-#include "Geometry.h"
-
-
 template <typename T>
 class spacial_hash {
 

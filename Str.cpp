@@ -30,9 +30,6 @@ std::string str_format(const char *format, ...)
 {
     va_list vl;
     va_start(vl, format);
-    
-    //std::string s(vsnprintf(NULL, 0, format, vl) , ' ');
-    //vsnprintf((char*) s.c_str(), s.size()+1, format, vl);
     std::string s = str_vformat(format, vl);
     va_end(vl);
     return s;
@@ -79,7 +76,7 @@ long chr_unshift(long chr)
 }
 
 
-std::string str_word_wrap(std::string str, size_t width, const char* newline)
+std::string str_word_wrap(std::string str, size_t width, const char* newline, const char* wrap)
 {
     size_t i = 0;
     size_t lineStart = 0;
@@ -90,12 +87,13 @@ std::string str_word_wrap(std::string str, size_t width, const char* newline)
     {
         if (str[i] == '\n') {
             lineStart = i;
-        } else if (str[i] == ' ') {
+        } else if (strchr(wrap, str[i])) {
             lastSpace = i;
         }
         if (i - lineStart > width) {
             str.replace(lastSpace, 1, newline);
             lineStart = lastSpace + nlsize;
+            i += nlsize-1;
         }
         i++;
     }
@@ -148,7 +146,10 @@ std::string str_align(const std::string& input, char token)
 
 std::string str_demangle(const char *str)
 {
-    return str;
+    string name = str;
+    name = str_replace(name, "struct ", "");
+    name = str_replace(name, "class ", "");
+    return name;
 }
 
 #else

@@ -29,12 +29,15 @@ using namespace std::rel_ops;
 using std::vector;
 using std::swap;
 
+// last chance to catch log string before it hits the OS layer
+void ReportMessage(string &&str);
+void ReportMessage(const char* str);
+
 inline void vReportMessagef(const char *format, va_list vl)  __printflike(1, 0);
 
 inline void vReportMessagef(const char *format, va_list vl)
 {
-    string buf = str_vformat(format, vl);
-    OL_ReportMessage(buf.c_str());
+    ReportMessage(str_vformat(format, vl));
 }
 
 inline void ReportMessagef(const char *format, ...)  __printflike(1, 2);
@@ -47,16 +50,17 @@ inline void ReportMessagef(const char *format, ...)
     va_end(vl);
 }
 
-#if _MSC_VER
-#define TYPE_NAME(X) (typeid(X).name())
-#else
 #define TYPE_NAME(X) (str_demangle(typeid(X).name()).c_str())
-#endif
 
 // use pthreads instead of std::thread on mac because the default stack size is really small and
 // there is no way to change it using std::thread
 #define OL_USE_PTHREADS defined(__APPLE__)
 
+#if TARGET_OS_IPHONE
+#define IS_TABLET 1
+#else
+#define IS_TABLET 0
+#endif
 
 #define arraySize(X) (sizeof(X) / sizeof(X[0]))
 
@@ -67,8 +71,10 @@ inline void ReportMessagef(const char *format, ...)
 #define SIZEOF_PVEC(X) ((X) ? SIZEOF_VEC(*X) : 0)
 #define SIZEOF_ARR(X, Y) ((X) ? (sizeof(X[0]) * (Y)) : 0)
 
+#define UNUSED(x) (void)(x)
+
 // assertions are enabled even in release builds
-#define ASSERT(X) (__builtin_expect(!(X), 0) ? OLG_OnAssertFailed(__FILE__, __LINE__, __func__, #X, "") : 0)
+#define ASSERT(X) (__builtin_expect(!(X), 0) ? OLG_OnAssertFailed(__FILE__, __LINE__, __func__, #X, "failed") : 0)
 #define ASSERTF(X, Y, ...) (__builtin_expect(!(X), 0) ? OLG_OnAssertFailed(__FILE__, __LINE__, __func__, #X, (Y), __VA_ARGS__) : 0)
 
 
@@ -81,6 +87,7 @@ inline void ReportMessagef(const char *format, ...)
 #  define WARN(X) do{(void) sizeof(X);}while(0)
 #  define NDEBUG 1
 #  define IS_DEVEL (0)
+#  define RELEASE 1
 #endif
 
 // special assertion only enabled in debug builds

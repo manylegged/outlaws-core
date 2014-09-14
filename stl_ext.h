@@ -109,7 +109,7 @@ inline std::size_t hash_combine(const std::size_t &a, const std::size_t &b)
 }
 
 namespace std {
-
+    
     template <typename K, typename V>
     struct hash< std::pair<K, V> > {
         std::size_t operator()(const std::pair<K, V>& pt) const
@@ -471,6 +471,15 @@ inline V vector_intersection(const V &v, const V1& t)
     return ret;
 }
 
+inline int myrandom_(int mx) { return randrange(mx); }
+
+template <typename V>
+inline void vector_shuffle(V& vec)
+{
+    std::random_shuffle(std::begin(vec), std::end(vec), myrandom_);
+}
+    
+
 template <typename Vec>
 const typename Vec::value_type &vector_at(const Vec &v, size_t i,
                                           const typename Vec::value_type &def=typename Vec::value_type())
@@ -691,6 +700,22 @@ inline void vector_sort(T& col) { std::sort(col.begin(), col.end()); }
 template <typename T, typename F>
 inline void vector_sort_key(T& col, const F& gkey) { std::sort(col.begin(), col.end(), make_key_comparator(gkey)); }
 
+template <typename T, typename F>
+inline T vector_sorted(const T& col, const F& comp)
+{
+    T vec = col;
+    std::sort(vec.begin(), vec.end(), comp);
+    return vec;
+}
+
+template <typename T>
+inline T vector_sorted(const T& col)
+{
+    T vec = col;
+    std::sort(vec.begin(), vec.end());
+    return vec;
+}
+
 template <typename T>
 void vector_unique(T& vec)
 {
@@ -725,6 +750,8 @@ inline void vector_selection_sort(T& vec, size_t count, const F& comp)
 {
     const size_t vecSize = std::distance(std::begin(vec), std::end(vec));
     count = min(count, vecSize);
+    if (count > 50)
+        return vector_sort(vec, comp);
     for (uint i=0; i<count; i++) {
         for (uint j=i; j<vecSize; j++) {
             if (comp(vec[j], vec[i]))
@@ -776,6 +803,25 @@ inline typename T::value_type &vector_max_element_by_key(T& col, const F& fkey)
 {
     size_t maxIdx = vector_max_idx_by_key(col, fkey);
     return col[maxIdx];
+}
+
+template <typename Vec, typename F>
+inline typename Vec::value_type vector_min(const Vec& vec, const F& fun,
+                                           const typename Vec::value_type& init=Vec::value_type(),
+                                           float start=std::numeric_limits<float>::max())
+{
+    float                    minv = start;
+    typename Vec::value_type val  = init;
+    foreach (const auto &x, vec)
+    {
+        const float dist = fun(x);
+        if (dist < minv)
+        {
+            val = x;
+            minv = dist;
+        }
+    }
+    return val;
 }
 
 template <typename T, typename F>
@@ -1238,17 +1284,26 @@ class MemoryPool {
 
     std::mutex    mutex;
     const size_t  element_size;
-    const size_t  count;
+    size_t        count;
     size_t        used  = 0;
     char         *pool  = NULL;
     Chunk        *first = NULL;
+    MemoryPool   *next  = NULL; // next pool
 
 public:
 
     // allocate a pool containing CNT elements of SZ bytes each
     MemoryPool(size_t sz, size_t cnt) : element_size(sz), count(cnt)
     {
-        pool = (char*) malloc(count * element_size);
+        do {
+            pool = (char*)malloc(count * element_size);
+            ReportMessagef("Allocating MemoryPool(%d, %d) %.1fMB: %s", 
+                           (int)element_size, (int)count, 
+                           (element_size * count) / (1024.0 * 1024.0),
+                           pool ? "OK" : "FAILED");
+            if (!pool)
+                count /= 2;
+        } while (count && !pool);
         first = (Chunk*) pool;
         for (int i=0; i<count-1; i++) {
             ((Chunk*) &pool[i * element_size])->next = (Chunk*) &pool[(i+1) * element_size];
@@ -1258,6 +1313,7 @@ public:
     ~MemoryPool()
     {
         free(pool);
+        delete next;
     }
 
     size_t getCount() const { return count; }
@@ -1281,9 +1337,9 @@ public:
     bool isInPool(const void *pt) const
     {
         const char *ptr = (char*) pt;
-        const int index = (ptr - pool) / element_size;
-        if (index < 0 || index > count)
-            return false;
+        const size_t index = (ptr - pool) / element_size;
+        if (index >= count)
+            return next ? next->isInPool(pt) : false;
         ASSERT(pool + (index  * element_size) == ptr);
         return true;
     }
@@ -1293,10 +1349,16 @@ public:
     {
         std::lock_guard<std::mutex> l(mutex);
 
+        if (!first) {
+            if (!next) {
+                next = new MemoryPool(element_size, count);
+            }
+            return next->allocate();
+        }
+
         Chunk *chunk = first;
         first = first->next;
         used++;
-        ASSERT(first);
         return (void*) chunk;
     }
 
@@ -1305,13 +1367,31 @@ public:
     {
         std::lock_guard<std::mutex> l(mutex);
 
-        ASSERT(isInPool(ptr));
+        if (!isInPool(ptr))
+        {
+            ASSERT(next);
+            if (next)
+                next->deallocate(ptr);
+            return;
+        }
 
         Chunk *chunk = (Chunk*) ptr;
         chunk->next = first;
         first = chunk;
         used--;
     }
+
+    friend void* operator new(size_t nbytes, MemoryPool& mp)
+    {
+        ASSERT(nbytes == mp.getElementSize());
+        return mp.allocate();
+    }
+
+    friend void operator delete(void* p, MemoryPool& mp)
+    {
+        mp.deallocate(p);
+    }
+    
 };
 
 

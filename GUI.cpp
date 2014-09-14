@@ -1,4 +1,5 @@
 
+
 //
 // GUI.cpp - widget library
 //
@@ -90,9 +91,14 @@ bool ButtonBase::renderTooltip(const ShaderState &ss, const View& view, uint col
     if (tooltip.empty() || (!force && !hovered) || alpha < epsilon)
         return false;
 
-    DrawTextBox(ss, view, position, size / 2.f, tooltip, 13,
-                MultAlphaAXXX(color, alpha),
-                ALPHAF(0.75f * alpha)|COLOR_BLACK, kMonoFont);
+    TextBox dat;
+    dat.tSize = 11.f;
+    dat.fgColor = MultAlphaAXXX(color, alpha);
+    dat.bgColor = MultAlphaAXXX(kGUIToolBg, alpha);
+    dat.font = kMonoFont;
+    dat.view = &view;
+    dat.rad = size / 2.f;
+    dat.Draw(ss, position, tooltip);
     return true;
 }
 
@@ -138,6 +144,19 @@ void Button::render(const ShaderState &s_, bool selected)
     }
 }
 
+float2 Button::getTextSize() const
+{
+    const GLText* tx = GLText::get(textFont, GLText::getScaledSize(textSize), text);
+    float2 sz = tx->getSize() + padding;
+
+    if (subtext.size())
+    {
+        const GLText* stx = GLText::get(textFont, GLText::getScaledSize(subtextSize), text);
+        sz.y += stx->getSize().y;
+    }
+    return sz;
+}
+
 void Button::renderButton(DMesh& mesh)
 {
     if (!visible)
@@ -145,9 +164,9 @@ void Button::renderButton(DMesh& mesh)
 
     if (text.size() && !(style&S_FIXED))
     {
-        const GLText* tx = GLText::get(textFont, GLText::getScaledSize(textSize), text);
-        size.x = max(size.x, tx->getSize().x + padding.x);
-        size.y = tx->getSize().y + padding.y;
+        const float2 sz = getTextSize();
+        size.x = max(sz.x, sz.x + padding.x);
+        size.y = sz.y + padding.y;
     }
     
     if (style&S_BOX) {
@@ -162,11 +181,20 @@ void Button::renderText(const ShaderState &s_) const
     if (!visible)
         return;
     const uint tcolor = MultAlphaAXXX((!active) ? inactiveTextColor : textColor, alpha);
-    GLText::DrawStr(s_, position, GLText::MID_CENTERED, tcolor, textSize, text);
+    GLText::DrawStr(s_, position, subtext.size() ? GLText::CENTERED : GLText::MID_CENTERED,
+                    tcolor, textSize, text);
+    
+    if (subtext.size())
+    {
+        const uint stc = MultAlphaAXXX(subtextColor, alpha);
+        GLText::DrawStr(s_, position , GLText::DOWN_CENTERED, stc, subtextSize, subtext);
+    }
 }
 
 void TextInputBase::setText(const char* text, bool setSize)
 {
+    std::lock_guard<std::recursive_mutex> l(mutex);
+
     lines.clear();
     lines.push_back(string());
     string* line = &lines.back();
@@ -198,7 +226,7 @@ static bool forward_char(int2& cursor, deque<string> &lines, int offset)
                 return false;
 
             cursor.y--;
-            cursor.x = lines[cursor.y].size();
+            cursor.x = (int)lines[cursor.y].size();
         } else
             cursor.x--;
     }
@@ -224,7 +252,7 @@ static void forward_when(int2& cursor, deque<string> &lines, int offset, int (*p
            forward_char(cursor, lines, offset));
 }
 
-static char delete_char(int2& cursor, deque<string> &lines, int offset)
+static char delete_char(int2& cursor, deque<string> &lines)
 {
     if (0 > cursor.y || cursor.y >= lines.size()) {
         return '\0';
@@ -247,7 +275,10 @@ static char delete_char(int2& cursor, deque<string> &lines, int offset)
 
 static void delete_region(int2& cursor, deque<string> &lines, int2 mark)
 {
-    while (mark != cursor && delete_char(mark, lines, -1));
+    if (mark.y < cursor.y || (mark.y == cursor.y && mark.x < cursor.x))
+        swap(cursor, mark);
+    
+    while (mark != cursor && delete_char(mark, lines));
 }
 
 bool TextInputBase::HandleEvent(const Event* event, bool *textChanged)
@@ -263,99 +294,106 @@ bool TextInputBase::HandleEvent(const Event* event, bool *textChanged)
     if (textChanged)
         *textChanged = false;
 
+  
     if (active && event->type == Event::KEY_DOWN)
-    {            
-        if (KeyState::instance()[OControlKey]) {
-            switch (event->key)
-            {
-            case 'b': forward_char(cursor, lines, -1); break;
-            case 'f': forward_char(cursor, lines, +1); break;
-            case 'p': cursor.y--; break;
-            case 'n': cursor.y++; break;
-            case 'a': cursor.x = 0; break;
-            case 'e': cursor.x = lines[cursor.y].size(); break;
-            case 'k':
-                if (cursor.x == lines[cursor.y].size() && cursor.y < lines.size()-1) {
-                    lines[cursor.y].append(lines[cursor.y+1]);
-                    lines.erase(lines.begin() + cursor.y + 1);
-                } else
-                    lines[cursor.y].erase(cursor.x); 
-                break;
-            case 'd': lines[cursor.y].erase(cursor.x, 1); break;
-            case 'v':
-            case 'y':
-                insertText(OL_ReadClipboard());
-                if (textChanged)
-                    *textChanged = true;
-                break;
-            }
-        } else if (KeyState::instance()[OAltKey]) {
-            switch (event->key)
-            {
-            case NSRightArrowFunctionKey:
-            case 'f': forward_when(cursor, lines, +1, isalnum); break;
-            case NSLeftArrowFunctionKey:
-            case 'b': forward_when(cursor, lines, -1, isalnum); break;
-            case NSDeleteCharacter:
-            case NSBackspaceCharacter: {
-                forward_when(cursor, lines, -1, isalnum);
-                const int2 scursor = cursor;
-                delete_region(cursor, lines, scursor);
-                if (textChanged)
-                    *textChanged = true;
-                break;
-            }
-            case 'd': {
-                const int2 scursor = cursor;
-                forward_when(cursor, lines, 1, isalnum);
-                delete_region(cursor, lines, scursor);
-                if (textChanged)
-                    *textChanged = true;
-                break;
-            }
-            case 'm':
-                cursor.x = 0;
-                forward_when(cursor, lines, +1, isspace);
-                break;
-            }
-        } else if (event->key < 256 && std::isprint(event->key)) {
-            lines[cursor.y].insert(cursor.x, 1, event->key);
-            cursor.x++;
+    {
+        std::lock_guard<std::recursive_mutex> l(mutex);
+
+        cursor.y = clamp(cursor.y, 0, lines.size());
+        cursor.x = clamp(cursor.x, 0, lines[cursor.y].size());
+
+        switch (KeyState::instance().keyMods() | event->key)
+        {
+        case MOD_CTRL|'b': forward_char(cursor, lines, -1); break;
+        case MOD_CTRL|'f': forward_char(cursor, lines, +1); break;
+        case MOD_CTRL|'p': cursor.y--; break;
+        case MOD_CTRL|'n': cursor.y++; break;
+        case MOD_CTRL|'a': cursor.x = 0; break;
+        case MOD_CTRL|'e': cursor.x = lines[cursor.y].size(); break;
+        case MOD_CTRL|'k':
+            if (cursor.x == lines[cursor.y].size() && cursor.y < lines.size()-1) {
+                lines[cursor.y].append(lines[cursor.y+1]);
+                lines.erase(lines.begin() + cursor.y + 1);
+            } else
+                lines[cursor.y].erase(cursor.x); 
+            break;
+        case MOD_CTRL|'v':
+        case MOD_CTRL|'y':
+            insertText(OL_ReadClipboard());
             if (textChanged)
                 *textChanged = true;
-        } else {
-            switch (event->key)
-            {
-            case NSLeftArrowFunctionKey:  forward_char(cursor, lines, -1); break;
-            case NSRightArrowFunctionKey: forward_char(cursor, lines, +1); break;
-            case NSUpArrowFunctionKey:    cursor.y = max(0, cursor.y-1); break;
-            case NSDownArrowFunctionKey:  cursor.y = min((int)lines.size()-1, cursor.y+1); break;
-            case NSDeleteCharacter:
-            case NSBackspaceCharacter:
-                delete_char(cursor, lines, -1);
-                if (textChanged)
-                    *textChanged = true;
+            break;
+        case MOD_ALT|NSRightArrowFunctionKey:
+        case MOD_ALT|'f': forward_when(cursor, lines, +1, isalnum); break;
+        case MOD_ALT|NSLeftArrowFunctionKey:
+        case MOD_ALT|'b': forward_when(cursor, lines, -1, isalnum); break;
+            
+        case MOD_ALT|NSBackspaceCharacter: {
+            const int2 scursor = cursor;
+            forward_when(cursor, lines, -1, isalnum);
+            delete_region(cursor, lines, scursor);
+            if (textChanged)
+                *textChanged = true;
+            break;
+        }
+        case MOD_ALT|'d': {
+            const int2 scursor = cursor;
+            forward_when(cursor, lines, 1, isalnum);
+            delete_region(cursor, lines, scursor);
+            if (textChanged)
+                *textChanged = true;
+            break;
+        }
+        case MOD_ALT|'m':
+            cursor.x = 0;
+            forward_when(cursor, lines, +1, isspace);
+            break;
+        case NSLeftArrowFunctionKey:  forward_char(cursor, lines, -1); break;
+        case NSRightArrowFunctionKey: forward_char(cursor, lines, +1); break;
+        case NSUpArrowFunctionKey:    cursor.y = max(0, cursor.y-1); break;
+        case NSDownArrowFunctionKey:  cursor.y = min((int)lines.size()-1, cursor.y+1); break;
+        case NSHomeFunctionKey:       cursor.x = 0; break;
+        case NSEndFunctionKey:        cursor.x = lines[cursor.y].size(); break;
+        case MOD_CTRL|'d':
+        case NSDeleteFunctionKey:
+            if (!forward_char(cursor, lines, +1))
                 break;
-            case '\r':
-            {
-                string s = lines[cursor.y].substr(cursor.x);
-                lines[cursor.y].erase(cursor.x);
-                lines.insert(lines.begin() + cursor.y + 1, s);
-                if (textChanged)
-                    *textChanged = true;
-                cursor.y++;
-                cursor.x = 0;
-                break;
-            }
-            case NSPageUpFunctionKey: 
-                startChars.y -= sizeChars.y;
-                return true;
-            case NSPageDownFunctionKey: 
-                startChars.y += sizeChars.y;
-                return true;
-            default:
+            // fallthrough!
+        case NSBackspaceCharacter:
+            delete_char(cursor, lines);
+            if (textChanged)
+                *textChanged = true;
+            break;
+        case '\r':
+        {
+            if (fixedSize && lines.size() >= sizeChars.y)
                 return false;
+            string s = lines[cursor.y].substr(cursor.x);
+            lines[cursor.y].erase(cursor.x);
+            lines.insert(lines.begin() + cursor.y + 1, s);
+            if (textChanged)
+                *textChanged = true;
+            cursor.y++;
+            cursor.x = 0;
+            break;
+        }
+        case NSPageUpFunctionKey: 
+            startChars.y -= sizeChars.y;
+            startChars.y = clamp(startChars.y, 0, max(0, (int)lines.size() - sizeChars.y));
+            return true;
+        case NSPageDownFunctionKey: 
+            startChars.y += sizeChars.y;
+            startChars.y = clamp(startChars.y, 0, max(0, (int)lines.size() - sizeChars.y));
+            return true;
+        default:
+            if (event->key < 256 && std::isprint(event->key)) {
+                lines[cursor.y].insert(cursor.x, 1, event->key);
+                cursor.x++;
+                if (textChanged)
+                    *textChanged = true;
+                break;
             }
+            return false;
         }
 
         if (lines.size() == 0)
@@ -374,28 +412,51 @@ bool TextInputBase::HandleEvent(const Event* event, bool *textChanged)
     else if (active && event->type == Event::SCROLL_WHEEL)
     {
         startChars.y += ceil(-event->vel.y);
+        startChars.y = clamp(startChars.y, 0, max(0, (int)lines.size() - sizeChars.y));
         return true;
     }
 
     return false;
 }
 
-void TextInputBase::pushText(const char *txt)
+void TextInputBase::popText(int chars)
 {
-    vector<string> nlines = str_split(txt, '\n');
-    lines.insert(lines.end()-1, nlines.begin(), nlines.end());
+    std::lock_guard<std::recursive_mutex> l(mutex);
+    while (chars && lines.size()) 
+    {
+        string &str = lines.back();
+        int remove = min(chars, (int) str.size());
+        str.resize(str.size() - remove);
+        chars -= remove;
+        if (str.size() == 0)
+            lines.pop_back();
+    }
+}
 
-    cursor.y = (int)lines.size() - 1;
-    cursor.x = lines[cursor.y].size();
+void TextInputBase::pushText(const char *txt, int linesback)
+{
+    vector<string> nlines = str_split(str_word_wrap(txt, sizeChars.x), '\n');
+    
+    std::lock_guard<std::recursive_mutex> l(mutex);
+
+    const int pt = lines.size() - linesback;
+    lines.insert(lines.end() - min(linesback, (int)lines.size()), nlines.begin(), nlines.end());
+
+    if (cursor.y >= pt)
+        cursor.y += nlines.size();
+    // cursor.x = lines[cursor.y].size();
     scrollForInput();
 }
 
 void TextInputBase::insertText(const char *txt)
 {
+    if (!txt)
+        return;
     vector<string> nlines = str_split(txt, '\n');
     if (nlines.size() == 0)
         return;
 
+    std::lock_guard<std::recursive_mutex> l(mutex);
     lines[cursor.y].insert(cursor.x, nlines[0]);
     cursor.x += nlines[0].size();
 
@@ -408,16 +469,18 @@ void TextInputBase::insertText(const char *txt)
 
 void TextInputBase::render(const ShaderState &s_)
 {
+    std::lock_guard<std::recursive_mutex> l(mutex);
+
     ShaderState s = s_;
 
     startChars.x = 0;
-    startChars.y = clamp(startChars.y, 0, max(0, (int)lines.size() - sizeChars.y));
-
-    const int drawLines = min((int)lines.size() - startChars.y, sizeChars.y);
+    
+    const int2 start     = startChars;
+    const int  drawLines = min((int)lines.size() - start.y, sizeChars.y);
 
     float2 longestPointSize(0);
     int    longestChars     = 0;
-    for (int i=startChars.y; i<(startChars.y + drawLines); i++)
+    for (int i=start.y; i<(start.y + drawLines); i++)
     {
         const GLText* tx = GLText::get(kMonoFont, GLText::getScaledSize(textSize), lines[i].c_str());
         if (tx->getSize().x > longestPointSize.x) {
@@ -444,10 +507,10 @@ void TextInputBase::render(const ShaderState &s_)
     s.translate(float2(-sz.x + kPadDist, sz.y - charHeight - kPadDist));
     s.color32(textColor, alpha);
         
-    for (int i=startChars.y; i<(startChars.y + drawLines); i++)
+    for (int i=start.y; i<(start.y + drawLines); i++)
     {
-//            const string txt = lines[i].substr(startChars.x,
-//                                               min(lines[i].size(), startChars.x + sizeChars.x));
+//            const string txt = lines[i].substr(start,
+//                                               min(lines[i].size(), start.x + sizeChars.x));
         const GLText* tx = GLText::get(kMonoFont, GLText::getScaledSize(textSize), lines[i].c_str());
 
         if (lines[i].size())
@@ -459,9 +522,9 @@ void TextInputBase::render(const ShaderState &s_)
         // draw cursor
         if (active && cursor.y == i) {
             ShaderState  s1    = s;
-            const float  start = tx->getCharStart(cursor.x);
+            const float  spos = tx->getCharStart(cursor.x);
             const float2 size  = tx->getCharSize(cursor.x);
-            s1.translate(float2(start, 0));
+            s1.translate(float2(spos, 0));
             s1.color(textColor, alpha);
             ShaderUColor::instance().DrawRectCorners(s1, float2(0), size);
             if (cursor.x < lines[i].size()) {
@@ -482,14 +545,20 @@ void TextInputCommandLine::saveHistory(const char *fname)
         str += line;
         str += "\n";
     }
-    OL_SaveFile(fname, str.c_str());
+    int status = OL_SaveFile(fname, str.c_str());
+    ReportMessagef("Wrote %d lines of console history to '%s': %s",
+                   (int) commandHistory.size(), fname, status ? "OK" : "FAILED");
 }
 
 void TextInputCommandLine::loadHistory(const char *fname)
 {
     const char* data = OL_LoadFile(fname);
     if (data) {
-        str_split(data, '\n', commandHistory);
+        string sdat = data;
+#if WIN32
+       sdat = str_replace(sdat, "\r", "");
+#endif
+        str_split(sdat, '\n', commandHistory);
     }
     historyIndex = commandHistory.size();
 }
@@ -527,9 +596,10 @@ void TextInputCommandLine::pushCmdOutput(const char *format, ...)
     va_list vl;
     va_start(vl, format);
     string txt = str_vformat(format, vl);
-    va_end(vl);        
+    va_end(vl);
+    vector<string> nlines = str_split(str_word_wrap(txt, sizeChars.x), '\n');
 
-    vector<string> nlines = str_split(txt, '\n');
+    std::lock_guard<std::recursive_mutex> l(mutex);
     lines.insert(lines.end(), nlines.begin(), nlines.end());
     lines.push_back(prompt);
 
@@ -538,13 +608,43 @@ void TextInputCommandLine::pushCmdOutput(const char *format, ...)
     scrollForInput();
 }
 
+static vector<string> split_ignoring_quoted(const string& line, char token)
+{
+    vector<string> vec;
+    bool quoted = false;
+    int instr = 0;
+    string last;
+    foreach (char c, line)
+    {
+        if (instr) {
+            if (quoted) {
+                quoted = false;
+            } else if (c == '\\') {
+                quoted = true;
+            } else if (c == instr) {
+                instr = false;
+            }
+        } else if (c == '\'' || c == '"') {
+            instr = c;
+        } else if (c == token) {
+            vec.push_back(last);
+            last = "";
+            continue;
+        }
+        last += c;
+    }
+    if (last.size())
+        vec.push_back(last);
+    return vec;
+}
+
 bool TextInputCommandLine::doCommand(const string& line)
 {
     pushHistory(line);
-    const vector<string> expressions = str_split(line, ';');
+    const vector<string> expressions = split_ignoring_quoted(line, ';');
     foreach (const string &expr, expressions)
     {
-        vector<string> args = str_split(str_strip(expr), ' ');
+        vector<string> args = split_ignoring_quoted(str_strip(expr), ' ');
         if (!args.size())
             return false;
         string cmd = str_tolower(args[0]);
@@ -611,7 +711,7 @@ bool TextInputCommandLine::HandleEvent(const Event* event, bool *textChanged)
 
     if (active && event->type == Event::KEY_DOWN)
     {
-        switch (event->key)
+        switch (KeyState::instance().keyMods() | event->key)
         {
         case NSUpArrowFunctionKey:
         case NSDownArrowFunctionKey:
@@ -629,48 +729,38 @@ bool TextInputCommandLine::HandleEvent(const Event* event, bool *textChanged)
             doCommand(getLineText());
             return true;
         }
-        case 'r':
-        case 's':
-        case 'p':
-        case 'n':
+        case MOD_CTRL|'r':
+        case MOD_CTRL|'s':
+        case MOD_ALT|'p':
+        case MOD_ALT|'n':
         {
             int end = 0;
             int delta = 0;
-
-            if ((KeyState::instance()[OAltKey] && event->key == 'p') ||
-                (KeyState::instance()[OControlKey] && event->key == 'r'))
-            {
+            if (event->key == 'p' || event->key == 'r') {
                 end = 0;
                 delta = -1;
-            }
-            else if ((KeyState::instance()[OAltKey] && event->key == 'n') ||
-                     (KeyState::instance()[OControlKey] && event->key == 's'))
-            {
+            } else if (event->key == 'n' ||event->key == 's') {
                 end = commandHistory.size();
                 delta = 1;
             }
 
-            if (delta != 0)
-            {
-                if (lastSearch.empty())
-                    lastSearch = getLineText();
-                if (lastSearch.empty())
-                    return true;
-
-                for (int i=historyIndex; i != end; i += delta)
-                {
-                    if (i != historyIndex &&
-                        commandHistory[i].size() >= lastSearch.size() &&
-                        commandHistory[i].substr(0, lastSearch.size()) == lastSearch)
-                    {
-                        historyIndex = i;
-                        setLineText(commandHistory[i].c_str());
-                        break;
-                    }
-                }
+            if (lastSearch.empty())
+                lastSearch = getLineText();
+            if (lastSearch.empty())
                 return true;
+
+            for (int i=historyIndex; i != end; i += delta)
+            {
+                if (i != historyIndex &&
+                    commandHistory[i].size() >= lastSearch.size() &&
+                    commandHistory[i].substr(0, lastSearch.size()) == lastSearch)
+                {
+                    historyIndex = i;
+                    setLineText(commandHistory[i].c_str());
+                    break;
+                }
             }
-            break;
+            return true;
         }
         case '\t':
         {
@@ -714,6 +804,8 @@ bool TextInputCommandLine::HandleEvent(const Event* event, bool *textChanged)
             } else {
                 bool done = false;
                 const string oline = line;
+                line.resize(line.size() - start); // update case
+                line += options[0].substr(0, start);
                 for (int i=start; ; i++) {
                     const char c = options[0][i];
                     for (uint j=0; j<options.size(); j++) {
@@ -730,10 +822,8 @@ bool TextInputCommandLine::HandleEvent(const Event* event, bool *textChanged)
                 
                 if (options.size() > 1 && oline.size() == line.size())
                 {
-                    string opts = str_word_wrap(str_join(" ", options.begin(), options.end()),
-                                                sizeChars.x);
-                    pushText((prompt + oline).c_str());;
-                    pushText(opts.c_str());
+                    pushText((prompt + oline).c_str());
+                    pushText(str_join(" ", options).c_str());
                 }
                 setLineText(line.c_str());
                 if (textChanged)
@@ -764,7 +854,7 @@ bool TextInputCommandLine::HandleEvent(const Event* event, bool *textChanged)
         }
     }
 
-    if (handled && textChanged)
+    if (handled)
         lastSearch = "";
         
     return handled;
@@ -909,7 +999,7 @@ void OptionSlider::render(const ShaderState &s_)
     ShaderState ss = s_;
     const float2 sz = 0.5f * size;
 
-    ss.color(getFGColor(), alpha);
+    ss.color32(getFGColor(), alpha);
     ShaderUColor::instance().DrawLine(ss, position - float2(sz.x, 0.f), 
                                       position + float2(sz.x, 0.f));
     const float w = max(sz.x / values, 5.f);
@@ -984,6 +1074,7 @@ bool TabWindow::HandleEvent(const Event* event)
                 if (i != selected)
                     buttons[selected].interface->onSwapOut();
                 selected = i;
+                buttons[selected].interface->onSwapIn();
             }
             return true;
         }
@@ -999,6 +1090,7 @@ bool TabWindow::HandleEvent(const Event* event)
         if (next != selected)
             buttons[selected].interface->onSwapOut();
         selected = next;
+        buttons[selected].interface->onSwapIn();
         return true;
     }
 
@@ -1023,7 +1115,7 @@ void MessageBoxWidget::render(const ShaderState &ss, const View& view)
 
     const float titleSize = 36;
     const float2 boxPad = 3.f * kButtonPad;
-    const GLText *msg = GLText::get(messageFont, GLText::getScaledSize(16), message);
+    const GLText *msg = GLText::get(messageFont, GLText::getScaledSize(14), message);
     
     size = max(0.6f * view.sizePoints,
                msg->getSize() + 6.f * boxPad +
@@ -1098,7 +1190,8 @@ void ColorPicker::render(const ShaderState &ss)
     const float2 csize = size - float2(svRectSize.x, hueSlider.size.y) - 3.f * kButtonPad;
     const float2 ccPos = position + flipY(size / 2.f) + flipX(kButtonPad + csize / 2.f);
     
-    LineMesh<VertexPosColor> lmesh;
+    LineMesh<VertexPosColor> &lmesh = theDMesh().line;
+    theDMesh().start();
     
     // draw color picker
     {
@@ -1107,15 +1200,15 @@ void ColorPicker::render(const ShaderState &ss)
         VertexPosColor verts[4];
         const uint indices[] = { 0,1,3, 0,3,2 };
         ShaderState s1 = ss;
-        s1.color(kGUIFg, alpha);
+        s1.color32(kGUIFg, alpha);
 
         setupHsvRect(verts, hueSlider.position, hueSlider.size/2.f, alpha, {
                 float3(0.f, 1.f, 1.f), float3(M_TAOf, 1.f, 1.f),
                 float3(0.f, 1.f, 1.f), float3(M_TAOf, 1.f, 1.f) });
 
         DrawElements(ShaderHsv::instance(), ss, GL_TRIANGLES, verts, indices, arraySize(indices));
-        s1.color(hueSlider.getFGColor(), alpha);
-        lmesh.color(hueSlider.getFGColor(), alpha);
+        s1.color32(hueSlider.getFGColor(), alpha);
+        lmesh.color32(hueSlider.getFGColor(), alpha);
         lmesh.PushRect(hueSlider.position, hueSlider.size/2.f);
 
         const float hn = hsvColor.x / 360.f;
@@ -1124,7 +1217,7 @@ void ColorPicker::render(const ShaderState &ss)
                 float3(hn, 0.f, 0.f), float3(hn, 1.f, 0.f) });
 
         DrawElements(ShaderHsv::instance(), ss, GL_TRIANGLES, verts, indices, arraySize(indices));
-        lmesh.color((svHovered || svDragging) ? kGUIFgActive : kGUIFg, alpha);
+        lmesh.color32((svHovered || svDragging) ? kGUIFgActive : kGUIFg, alpha);
         lmesh.PushRect(svRectPos, svRectSize/2.f);
     }
 
@@ -1137,6 +1230,7 @@ void ColorPicker::render(const ShaderState &ss)
                           hueSlider.position.y),
                    float2(kPadDist, hueSlider.size.y / 2.f));
     lmesh.Draw(ss, ShaderColor::instance());
+    theDMesh().finish();
 
     // draw selected color box
     DrawFilledRect(ss, ccPos, csize/2.f, ALPHA_OPAQUE|getColor(), kGUIFg, alpha);
@@ -1180,4 +1274,39 @@ bool ColorPicker::HandleEvent(const Event* event, bool *valueChanged)
     return handled;
 }
 
+
+void TextBox::Draw(const ShaderState& ss1, float2 point, const string& text) const
+{
+    if ((fgColor&ALPHA_OPAQUE) == 0)
+        return;
+
+    ShaderState ss = ss1;    
+    const GLText* st = GLText::get(font, GLText::getScaledSize(tSize), text);
+    float2 boxSz = 5.f + 0.5f * st->getSize();
+
+    float2 center = point;
+    
+    if (view)
+    {
+        float2 corneroffset = rad + st->getSize();
+        for (int i=0; i<2; i++) {
+            if (point[i] + corneroffset[i] > view->sizePoints[i]) {
+                if (point[i] - corneroffset[i] > 0.f)
+                    corneroffset[i] = -corneroffset[i];
+                else {
+                    point[i] = view->sizePoints[i] - corneroffset[i];
+                }
+            }
+        }
+        center = round(point + 0.5f * corneroffset);
+    }
+
+    ss.translate(center);
+    ss.color32(bgColor);
+    ShaderUColor::instance().DrawRect(ss, boxSz);
+    ss.color32(fgColor);
+    ShaderUColor::instance().DrawLineRect(ss, boxSz);
+    ss.translate(round(-0.5f * st->getSize()));
+    st->render(&ss);
+}
 

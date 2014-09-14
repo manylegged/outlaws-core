@@ -72,7 +72,7 @@ public:
     bool operator<(const lstring& o) const 
     {
         // could just do pointer compare here for speed, but sometimes nice to be alphabetical
-        return !m_ptr ? true : !o.m_ptr ? false : strcmp(m_ptr, o.m_ptr) < 0;
+        return (m_ptr && o.m_ptr) ? (strcmp(m_ptr, o.m_ptr) < 0) : (m_ptr < o.m_ptr);
     }
     
     explicit operator bool() const
@@ -163,6 +163,25 @@ inline std::string str_chomp(std::string &&s)
     return s;
 }
 
+inline bool str_startswith(const char* str, const char* prefix)
+{
+    while (*prefix)
+    {
+        if (*str != *prefix)    // will catch *str == NULL
+            return false;
+        str++;
+        prefix++;
+    }
+    return true;
+}
+
+inline bool str_endswith(const char* str_, const char* prefix_)
+{
+    std::string str = str_;
+    std::string pref = prefix_;
+    return str.size() >= pref.size() && str.substr(str.size()-pref.size()) == pref;
+}
+
 std::string str_vformat(const char *format, va_list vl) __printflike(1, 0);
 std::string str_format(const char *format, ...)  __printflike(1, 2);
 
@@ -200,7 +219,7 @@ inline std::vector<std::string> str_split(const std::string &s, char delim)
 
 inline std::string str_tostr(float a) { return str_format("%f", a); }
 inline std::string str_tostr(int a)   { return str_format("%d", a); }
-inline std::string str_tostr(uint a)  { return a < 0xfffff ? str_format("%d", a) : str_format("0x%x", a); }
+inline std::string str_tostr(uint a)  { return a < 0xfffff ? str_format("%d", a) : str_format("%#x", a); }
 inline std::string str_tostr(const char *a) { return a ? a : ""; }
 inline std::string str_tostr(const std::string &a) { return a; }
 inline std::string str_tostr(lstring a) { return a.str(); }
@@ -213,6 +232,19 @@ std::string str_join( const std::string &sep, const A &cont)
     {
         if (!result.empty())
             result.append(sep);
+        result.append(str_tostr(*it));
+    }
+    return result;
+}
+
+template <class A>
+std::string str_join( const std::string &sep, const std::string &lsep, const A &cont)
+{
+    std::string result;
+    for (typename A::const_iterator it=cont.begin(), end=cont.end(); it!=end; ++it)
+    {
+        if (!result.empty())
+            result.append((it+1) == end ? lsep : sep);
         result.append(str_tostr(*it));
     }
     return result;
@@ -244,12 +276,18 @@ std::string str_join_keys(const std::string &sep, const A &begin, const A &end)
     return result;
 }
 
-std::string str_word_wrap(std::string str, size_t width = 70, const char* newline="\n");
+std::string str_word_wrap(std::string str, size_t width = 70, const char* newline="\n", const char* wrap=" ");
 
 
 inline std::string str_capitalize(const char* str)
 {
     std::string s = str;
+    s[0] = toupper(s[0]);
+    return s;
+}
+
+inline std::string str_capitalize(std::string &&s)
+{
     s[0] = toupper(s[0]);
     return s;
 }
@@ -294,7 +332,7 @@ std::string str_demangle(const char* str);
 
 inline bool issym(const char v)
 {
-    return v != '\0' && (isalpha(v) || strchr("_.", v));
+    return v != '\0' && (isalpha(v) || v == '_');
 }
 
 inline std::string str_get_extension(const std::string &str)
@@ -313,6 +351,29 @@ inline std::string str_no_extension(const std::string &str)
         return str;
     else
         return str.substr(0, pt);
+}
+
+inline std::string str_basename(const std::string &str)
+{
+    size_t pt = str.rfind("/");
+    if (pt == std::string::npos)
+        return str;
+    else
+        return str.substr(pt+1);
+}
+
+template <typename Fun>
+inline std::string str_interpolateVariables(const std::string &str_, const Fun& fun)
+{
+    std::string str = str_;
+    for (size_t idx = str.find("$"); idx != std::string::npos; idx=str.find("$", idx))
+    {
+        int len=1;
+        for (; idx+len<str.size() && issym(str[idx+len]); len++);
+        const std::string fname = str.substr(idx+1, len-1);
+        str.replace(idx, len, fun(fname));
+    }
+    return str;
 }
 
 

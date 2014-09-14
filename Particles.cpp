@@ -9,11 +9,18 @@
 
 static const uint kParticleEdges = 6;
 static const uint kParticleVerts = kParticleEdges + kBluryParticles;
-static const uint kMinParticles = 1<<13;
+static const uint kMinParticles = 1<<15;
 
 size_t ParticleSystem::count() const
 {
     return m_vertices.size() / kParticleVerts; 
+}
+
+void ParticleSystem::setTime(Particle &p, float t)
+{
+    // particles created during simulation, not during render
+    p.startTime = m_simTime;
+    p.endTime   = m_simTime + max((float)globals.simTimeStep, t);
 }
 
 void ParticleSystem::setParticles(vector<Particle>& particles)
@@ -43,7 +50,7 @@ void ParticleSystem::setParticles(vector<Particle>& particles)
 void ParticleSystem::add(const Particle &p, float angle, bool gradient)
 {
     //ASSERT_UPDATE_THREAD();
-    if (m_maxParticles == 0 || (m_lastMaxedStep == globals.simStep))
+    if (m_maxParticles == 0 || (m_lastMaxedStep == m_simStep))
         return;
 
     int end = m_addPos - kParticleVerts;
@@ -53,7 +60,7 @@ void ParticleSystem::add(const Particle &p, float angle, bool gradient)
     {
         for (; m_addPos != end; m_addPos = (m_addPos + kParticleVerts) % m_vertices.size())
         {
-            if (m_vertices[m_addPos].endTime <= globals.simTime)
+            if (m_vertices[m_addPos].endTime <= m_simTime)
             {
                 Particle p1 = p;
                 const float2 rot = angleToVector(angle + M_TAOf / (2.f * kParticleEdges));
@@ -88,7 +95,7 @@ void ParticleSystem::add(const Particle &p, float angle, bool gradient)
     // FIXME maybe we could put them in a temp buffer, sort, and drop smallest?
     if (count() >= m_maxParticles)
     {
-        m_lastMaxedStep = globals.simStep;
+        m_lastMaxedStep = m_simStep;
         return;
     }
 
@@ -96,7 +103,7 @@ void ParticleSystem::add(const Particle &p, float angle, bool gradient)
     {
         std::lock_guard<std::mutex> l(m_mutex);
         const uint size = max(kMinParticles * kParticleVerts, (uint) m_vertices.size() * 2);
-        DPRINT(SHADER, ("Changing particle count from %d to %d", (int) m_vertices.size(), size));
+        DPRINT(SHADER, ("Changing particle count from %.2e to %.2e", (double) m_vertices.size(), (double) size));
         m_vertices.resize(size);
     }
 
@@ -126,7 +133,7 @@ ParticleSystem::~ParticleSystem()
 {
 }
 
-struct ShaderParticles : public IShader {
+struct ShaderParticles : public IParticleShader {
 
     GLint offset;
     GLint startTime;
@@ -138,32 +145,7 @@ struct ShaderParticles : public IShader {
     
     ShaderParticles()
     {
-        LoadProgram("ShaderParticles",
-                    "varying vec4 DestinationColor;\n"
-                    ,
-                    "attribute vec2  Offset;\n"
-                    "attribute float StartTime;\n"
-                    "attribute float EndTime;\n"
-                    "attribute vec3  Velocity;\n"
-                    "attribute vec4  Color;\n"
-                    "uniform   float CurrentTime;\n"
-                    "void main(void) {\n"
-                    "    if (CurrentTime >= EndTime) {\n"
-                    "        gl_Position = vec4(0.0, 0.0, -99999999.0, 1);\n"
-                    "        return;\n"
-                    "    }\n"
-                    "    float deltaT = CurrentTime - StartTime;\n"
-                    "    vec3  velocity = pow(0.8, deltaT) * Velocity;\n"
-                    "    vec3  position = Position.xyz + vec3(Offset, 0.0) + deltaT * velocity;\n"
-                    "    float v = deltaT / (EndTime - StartTime);\n"
-                    "    DestinationColor = (1.0 - v) * Color;\n"
-                    "    gl_Position = Transform * vec4(position, 1);\n"
-                    "}\n"
-                    ,
-                    "void main(void) {\n"
-                    "    gl_FragColor = DestinationColor;\n"
-                    "}\n"
-                    );
+        LoadProgram("ShaderParticles");
         offset      = getAttribLocation("Offset");
         startTime   = getAttribLocation("StartTime");
         endTime     = getAttribLocation("EndTime");
@@ -175,7 +157,7 @@ struct ShaderParticles : public IShader {
 
     typedef ParticleSystem::Particle Particle;
 
-    void UseProgram(const ShaderState& ss)
+    void UseProgram(const ShaderState& ss, float time)
     {
         const Particle* ptr = NULL;
         UseProgramBase(ss, &ptr->position, ptr);
@@ -186,7 +168,7 @@ struct ShaderParticles : public IShader {
         vertexAttribPointer(velocity, &ptr->velocity, ptr);
         vertexAttribPointer(color, &ptr->color, ptr);
 
-        glUniform1f(currentTime, OLG_GetRenderSimTime());
+        glUniform1f(currentTime, time);
         glReportError();
     }
 
@@ -197,15 +179,23 @@ struct ShaderParticles : public IShader {
     }
 };
 
+static bool compareParticlesByZ(const ParticleSystem::Particle& a, const ParticleSystem::Particle& b)
+{
+    return a.position.z < b.position.z;
+}
+
 
 void ParticleSystem::updateRange(uint first, uint size)
 {
+    // std::stable_sort(m_vertices.begin() + first, m_vertices.begin() + first + size, compareParticlesByZ);
     m_vbo.BufferSubData(first, size, &m_vertices[first]);
 }
 
-void ParticleSystem::update()
+void ParticleSystem::update(uint step, float time)
 {
     ASSERT_UPDATE_THREAD();
+    m_simTime = time;
+    m_simStep = step;
     
     // number of particles decreased
     if (count() > m_maxParticles)
@@ -219,38 +209,39 @@ void ParticleSystem::update()
     {
         ParticleTrail& tr = m_trails[i];
 
-        if (tr.endTime < globals.simTime) {
-            vector_remove_index(m_trails, i);
+        if (vector_remove_increment(m_trails, i, tr.endTime < m_simTime))
             continue;
-        }
 
-        if ((float) globals.simTime - tr.lastParticleTime > 1.f / tr.rate)
+        if ((float) m_simTime - tr.lastParticleTime > 1.f / tr.rate)
         {
-            const float3 pos = tr.position + tr.velocity * ((float)globals.simTime - tr.startTime);
+            const float  vln = length(tr.velocity);
+            const float  phi = (vln * ((float)m_simTime - tr.startTime)) / tr.arcRadius;
+            const float2 rad = tr.arcRadius * rotate90(tr.velocity / vln);
+            const float3 pos = tr.position + float3(rotate(rad, phi) - rad, 0.f);
+            
+            // const float2 pos = tr.position + tr.velocity * ((float)m_simTime - tr.startTime);
             if (visible(pos, 1000.f))
             {
                 Particle pr  = tr.particle;
-                const float v = ((float)globals.simTime - tr.startTime) / (tr.endTime - tr.startTime);
+                const float v = ((float)m_simTime - tr.startTime) / (tr.endTime - tr.startTime);
 
                 pr.position  = pos;
                 pr.velocity  = float3(rotate(float2(lerp(pr.velocity, tr.particle1.velocity, v)),
                                              randangle()), 0.f);
-                pr.startTime = globals.simTime;
-                pr.endTime   = globals.simTime + lerp(pr.endTime, tr.particle1.endTime, v);
+                pr.startTime = m_simTime;
+                pr.endTime   = m_simTime + lerp(pr.endTime, tr.particle1.endTime, v);
                 pr.offset    = lerp(pr.offset, tr.particle1.offset, v);
                 pr.color     = lerpAXXX(pr.color, tr.particle1.color, v);
             
                 add(pr, randangle(), true);
 
-                tr.lastParticleTime = globals.simTime;
+                tr.lastParticleTime = m_simTime;
             }
         }
-
-        i++;
     }
 }
 
-void ParticleSystem::render(float3 origin, const ShaderState &ss, const View& view)
+void ParticleSystem::render(float3 origin, float time, const ShaderState &ss, const View& view)
 {
 	m_planeZ = origin.z;
     m_view   = view;
@@ -320,7 +311,7 @@ void ParticleSystem::render(float3 origin, const ShaderState &ss, const View& vi
         m_program = &ShaderParticles::instance(); 
 
     m_vbo.Bind();
-    m_program->UseProgram(ss);
+    m_program->UseProgram(ss, time);
     ss.DrawElements(GL_TRIANGLES, m_ibo);
     m_program->UnuseProgram();
     m_vbo.Unbind();

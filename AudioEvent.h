@@ -28,7 +28,11 @@
 #ifndef AUDIO_EVENT_H
 #define AUDIO_EVENT_H
 
-#include "../cAudio/cAudio/include/cAudio.h"
+#include "cAudio.h"
+#include "cMutex.h"
+
+using cAudio::cAudioMutex;
+using cAudio::cAudioMutexBasicLock;
 
 #define AUDIO_FLAGS(F)                               \
     F(STREAM,      1<<0)                             \
@@ -99,6 +103,8 @@ class AudioAllocator {
     
 public:
 
+    cAudioMutex *mutex = NULL;
+    
     float calculateGain(float2 pos, float refDist, float maxDist, float rolloff) const
     {
         // OpenAL Inverse Distance Clamped Model
@@ -125,6 +131,7 @@ public:
 
         m_mgr->setSpeedOfSound(5000.f);
         m_mgr->setDopplerFactor(1.f);
+        mutex = m_mgr->getMutex();
         return true;
     }
     
@@ -159,6 +166,7 @@ public:
 
     uint getSourcesUsed() const
     {
+        cAudioMutexBasicLock l(*mutex);
         uint sources = m_streamSources.size();
         for (uint i=0; i<m_sources.size(); i++) {
             if (m_sources[i].first->isPlaying())
@@ -169,6 +177,7 @@ public:
 
     uint getSourcesTotal() const
     {
+        cAudioMutexBasicLock l(*mutex);
         return m_streamSources.size() + m_sources.size();
     }
 
@@ -277,9 +286,10 @@ public:
                 {
                     return NULL;
                 }
-                m_sources[minIdx].first->stop();
-                m_sources[minIdx].first->drop();
+                cAudio::IAudioSource *src = m_sources[minIdx].first;
                 vector_remove_index(m_sources, minIdx);
+                src->stop();
+                src->drop();
             }
         }
 
@@ -360,7 +370,7 @@ public:
 // loaded per-event type data
 struct EventDescription {
 
-    enum { AUDIO_FLAGS(SERIAL_TO_ENUM) };
+    enum : EnumAudioFlags::Type { AUDIO_FLAGS(SERIAL_TO_ENUM) };
 
     // read from audio.lua
     vector< vector<lstring> >  samples;
@@ -405,6 +415,14 @@ struct EventDescription {
     {
         if (usedef)
             *this = getDefault();
+    }
+
+    uint getSampleCount() const
+    {
+        uint count = 0;
+        foreach (const auto &x, samples)
+            count += x.size();
+        return count;
     }
     
     typedef int VisitEnabled;
@@ -456,8 +474,12 @@ public:
         
         if (m_se->flags&EventDescription::STREAM) {
             m_source = AudioAllocator::instance().getStreamSource(getSample());
-            if (!m_source)
+            if (!m_source) {
+                // DPRINT(SOUND, ("Failed to load stream sample %s:%d, erasing",
+                               // m_se->name.c_str(), m_se->m_index));
+                // vector_erase(const_cast<vector<lstring>&>(m_se->samples[m_layer]), m_se->m_index);
                 return NULL;
+            }
         } else {
             m_source = AudioAllocator::instance().getSource(vol, m_se->priority);
             if (!m_source)
@@ -473,26 +495,27 @@ public:
             //                getSamples()[m_se->m_index].c_str()));
         }
         
-        m_source->registerEventHandler(this);
-
         m_source->setPitch(m_pitch * (m_se->pitch + randrange(-m_se->pitchRandomize, m_se->pitchRandomize)));
         m_source->setVolume(m_volume * m_se->volume);
         m_source->seek(m_offset, false);
         m_source->grab();
+        m_source->registerEventHandler(this);
         return m_source;
     }
 
 private: 
 
-    // callbacks: !!!! Warning! called from cAudio thread on streaming sources !!!!!!!!
+    // callbacks: !!!! Warning! may be called from cAudio thread !!!!!!!!
 
     void onRelease()
     {
+        cAudioMutexBasicLock l(*AudioAllocator::instance().mutex);
         m_source = NULL;
     }
 
     void onStop()
     {
+        cAudioMutexBasicLock l(*AudioAllocator::instance().mutex);
         if (m_source) {
             m_source->unRegisterEventHandler(this);
             m_source->drop();
@@ -520,6 +543,7 @@ public:
 
     void setVolume(float v)
     {
+        ASSERT(!fpu_error(v));
         if (m_source && m_se)
             m_source->setVolume(v * m_se->volume);
         m_volume = v;
@@ -527,6 +551,7 @@ public:
 
     void setPitch(float v)
     {
+        ASSERT(!fpu_error(v));
         if (m_source && m_se)
             m_source->setPitch(v * m_se->pitch);
         m_pitch = v;
@@ -534,6 +559,7 @@ public:
 
     void setOffset(float s)
     {
+        ASSERT(!fpu_error(s));
         if (m_source && m_se)
             m_source->seek(s);
         m_offset = s;
@@ -594,8 +620,10 @@ public:
         if (m_source) {
             m_source->unRegisterEventHandler(this); // first to prevent call to virtual onStop from destructor
             m_source->stop();
-            m_source->drop();
-            m_source = NULL;
+            if (m_source) {
+                m_source->drop();
+                m_source = NULL;
+            }
         }
     }
 };

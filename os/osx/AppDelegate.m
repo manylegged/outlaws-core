@@ -9,6 +9,8 @@
 #import "AppDelegate.h"
 #include "Outlaws.h"
 
+void LogMessage(NSString *str);
+
 @implementation AppDelegate
 
 - (void)dealloc
@@ -23,6 +25,7 @@
 
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender
 {
+    LogMessage(@"application should terminate");
     OLG_OnQuit();
     return NSTerminateNow;
 }

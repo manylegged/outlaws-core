@@ -9,7 +9,7 @@
 #ifdef _MSC_VER
 #include "../../SDL2_ttf-2.0.12/include/SDL_ttf.h"
 #include "../../SDL2_image-2.0.0/include/SDL_image.h"
-#include "../../SDL2-2.0.1/include/SDL_keyboard.h"
+#include "SDL_keyboard.h"
 #else
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
@@ -17,91 +17,113 @@
 #include <sys/utsname.h>
 #endif
 
-#include <regex>
+static int2         g_screenSize;
+static uint         g_sdl_flags      = 0;
+static float        g_scaling_factor = 1.f;
+static SDL_Window*  g_displayWindow  = NULL;
+static bool         g_quitting       = false;
+static SDL_RWops   *g_logfile        = NULL;
+static string       g_logpath;
 
-static int2 g_screenSize;
-static uint g_sdl_flags;
 
-static SDL_Window*   g_displayWindow;
-
-static bool g_quitting;
-
-static SDL_RWops *g_logfile = NULL;
-static string g_logpath;
+// don't go through ReportMessagef/ReportMessage!
+static void ReportSDL(const char *format, ...)
+{
+    va_list vl;
+    va_start(vl, format);
+    const string buf = "\n[SDL] " + str_vformat(format, vl);
+    OL_ReportMessage(buf.c_str());
+    va_end(vl);
+}
 
 void sdl_os_oncrash()
 {
     fflush(NULL);
+
+    string dest;
+    {
+        std::chrono::time_point<std::chrono::system_clock> start = std::chrono::system_clock::now();
+        const std::time_t cstart = std::chrono::system_clock::to_time_t(start);
+        char mbstr[100];
+        std::strftime(mbstr, sizeof(mbstr), "%Y%m%d_%I.%M.%S.%p", std::localtime(&cstart));
+        dest = OL_PathForFile(str_format("~/Desktop/%s_crashlog_%s.txt", OLG_GetName(), mbstr).c_str(), "w");
+        ReportSDL("Copying log from %s to %s", g_logpath.c_str(), dest.c_str());
+    }
+
+    fflush(NULL);
     if (g_logfile)
     {
-        OL_ReportMessage("[SDL] crash handler closing log");
+        ReportSDL("crash handler closing log\n");
         SDL_RWclose(g_logfile);
         g_logfile = NULL;
     }
     g_quitting = true;
 
-    string lpath = os_copy_to_desktop(g_logpath.c_str());
+    os_copy_file(g_logpath.c_str(), dest.c_str());
+
     os_errormessage(str_format(
         "Oops! %s crashed.\n"
         "Please email\n"
         "%s\nto arthur@anisopteragames.com",
-        OLG_GetName(), lpath.c_str()).c_str());
+        OLG_GetName(), dest.c_str()).c_str());
     exit(1);
+}
+
+void anonymizeUsername(string &str)
+{
+#if _MSC_VER
+    const char *name = "Users";
+#else
+    const char *name = "/home";
+#endif
+    size_t start = str.find(name);
+    if (start == string::npos)
+        return;
+    start += strlen(name) + 1;
+    if (str.size() > start && strchr("/\\", str[start-1]))
+    {
+        int end=start+1;
+        for (; end<str.size() && !strchr("/\\", str[end]); end++);
+        str.replace(start, end-start, "<User>");
+    }
 }
 
 void OL_ReportMessage(const char *str_)
 {
 #if _MSC_VER
 	OutputDebugStringA((LPCSTR)str_);
-	OutputDebugStringA((LPCSTR) "\n");
 #else
-    printf("%s\n", str_);
+    printf("%s", str_);
 #endif
 
     if (g_quitting)
         return;
 
-    string str;
-    // anonymize contents of log
-    try {
-#ifdef _MSC_VER
-        static const std::regex reg("([\\\\/]Users[\\\\/])[^\\\\/]+");
-#else
-        // GCC 4.8 does not support regex, throws an error...
-        static const std::regex reg("(/home/)[^/]+", std::regex::extended);
-#endif
-        static const string repl("$1<Username>");
-        str = std::regex_replace(string(str_), reg, repl);
-    } catch (...) {
-        str = str_;
-    }
+    string str = str_;
+    anonymizeUsername(str);
     
     if (!g_logfile) {
-        const char* path = OL_PathForFile("data/log.txt", "a");
+        const char* path = OL_PathForFile(OLG_GetLogFileName(), "w");
         if (!g_logfile) { // may have been opened by OL_PathForFile
             g_logfile = SDL_RWFromFile(path, "w");
             if (!g_logfile)
                 return;
             g_logpath = path;
-            ReportMessagef("Log file opened at %s", path); // call self recursively
+            ReportSDL("Log file opened at %s", path); // call self recursively
         }
     }
 #if _MSC_VER
-#define OL_NEWLINE "\r\n"
     str = str_replace(str, "\n", "\r\n");
-#else
-#define OL_NEWLINE "\n"
 #endif
     
     SDL_RWwrite(g_logfile, str.c_str(), str.size(), 1);
-    SDL_RWwrite(g_logfile, OL_NEWLINE, strlen(OL_NEWLINE), 1);
 }
 
 void OL_SetFullscreen(int fullscreen)
 {
     const uint flags = fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0;
     if (flags != g_sdl_flags) {
-        ReportMessagef("[SDL] set fullscreen = %s", fullscreen ? "true" : "false");
+        ReportSDL("set fullscreen = %s", fullscreen ? "true" : "false");
         SDL_SetWindowFullscreen(g_displayWindow, flags);
         g_sdl_flags = flags;
     }
@@ -116,18 +138,6 @@ double OL_GetCurrentTime()
 {
     // SDL_GetTicks is in milliseconds
 #if _MSC_VER
-	static double currentTimeSeconds = 0;
-	static int64 lastCount;
-
-	if (lastCount == 0)
-	{
-        LARGE_INTEGER count;
-		QueryPerformanceCounter(&count);
-        lastCount = count.QuadPart;
-        SetThreadAffinityMask(GetCurrentThread(), 0x1);
-		return 0.0;
-	}
-
     static double frequency = 0.0;
     if (frequency == 0.0)
     {
@@ -139,16 +149,10 @@ double OL_GetCurrentTime()
 	LARGE_INTEGER count;
     QueryPerformanceCounter(&count);
 
-	int64 deltaTicks = count.QuadPart - lastCount;
-	lastCount = count.QuadPart;
-	
-    double deltaSeconds = (double)deltaTicks / frequency;
-    if (deltaSeconds < 0.0)
-        deltaSeconds = 0.0;
-    if (deltaSeconds > 0.5)
-        deltaSeconds = 0.5;
-	currentTimeSeconds += deltaSeconds;
-	return currentTimeSeconds;
+    static LARGE_INTEGER start = count;
+
+    const uint64 rel = count.QuadPart - start.QuadPart;
+    return (double) rel / frequency;
 #else
     const uint   ticks = SDL_GetTicks();
     const double secs  = (double) ticks / 1000.0;
@@ -206,13 +210,14 @@ const char* OL_GetPlatformDateInfo(void)
     const int    rammb    = SDL_GetSystemRAM();
     const double ramGb    = rammb / 1024.0;
 
-    str += str_format(" SDL %d.%d patch %d, %d cores %.1f GB, ",
+    str += str_format(" SDL %d.%d.%d, %d cores %.1f GB, ",
                       linked.major, linked.minor, linked.patch,
                       cpucount, ramGb);
 
     std::chrono::time_point<std::chrono::system_clock> start = std::chrono::system_clock::now();
     std::time_t cstart = std::chrono::system_clock::to_time_t(start);
     str += std::ctime(&cstart);
+    str.resize(str.size() - 1); // eat ctime newline
 
     return str.c_str();
 }
@@ -222,29 +227,45 @@ void OL_DoQuit()
     g_quitting = true;
 }
 
+void sdl_set_scaling_factor(float factor)
+{
+    g_scaling_factor = factor;
+}
+
 void OL_GetWindowSize(float *pixelWidth, float *pixelHeight, float *pointWidth, float *pointHeight)
 {
     *pixelWidth = g_screenSize.x;
     *pixelHeight = g_screenSize.y;
 
-    *pointWidth = g_screenSize.x;
-    *pointHeight = g_screenSize.y;
+    *pointWidth = g_screenSize.x / g_scaling_factor;
+    *pointHeight = g_screenSize.y / g_scaling_factor;
+}
+
+void OL_SetWindowSizePoints(int w, int h)
+{
+    SDL_SetWindowSize(g_displayWindow, w * g_scaling_factor, h * g_scaling_factor);
 }
 
 void OL_SetSwapInterval(int interval)
 {
-    // TODO implement me
     SDL_GL_SetSwapInterval(interval);
 }
 
 float OL_GetBackingScaleFactor() 
 {
-    return 1.f;
+    return g_scaling_factor;
 }
 
 float OL_GetCurrentBackingScaleFactor(void)
 {
-    return 1.f;
+    return g_scaling_factor;
+}
+
+struct OutlawImage OL_LoadImage(const char* fname)
+{
+    // FIXME implement me
+    OutlawImage img;
+    return img;
 }
 
 struct OutlawTexture OL_LoadTexture(const char* fname)
@@ -253,12 +274,12 @@ struct OutlawTexture OL_LoadTexture(const char* fname)
     memset(&t, 0, sizeof(t));
     
     const char *buf = OL_PathForFile(fname, "r");
-    ReportMessagef("loading [%s]...\n", buf);
+    ReportSDL("loading [%s]...\n", buf);
 
     SDL_Surface *surface = IMG_Load(buf);
  
     if (!surface) {
-        ReportMessagef("SDL could not load '%s': %s\n", buf, SDL_GetError());
+        ReportSDL("SDL could not load '%s': %s\n", buf, SDL_GetError());
         return t;
     }
 
@@ -277,7 +298,7 @@ struct OutlawTexture OL_LoadTexture(const char* fname)
     }
 
     int w=surface->w, h=surface->h;
-    ReportMessagef("texture has %d colors, %dx%d pixels\n", nOfColors, w, h);
+    ReportSDL("texture has %d colors, %dx%d pixels\n", nOfColors, w, h);
 
     GLuint texture;
     glGenTextures(1, &texture);
@@ -311,6 +332,9 @@ int OL_SaveTexture(const OutlawTexture *tex, const char* fname)
     const size_t size = tex->width * tex->height * 4;
     uint *pix = (uint*) malloc(size);
     
+    if (!pix)
+        return 0;
+
     glBindTexture(GL_TEXTURE_2D, tex->texnum);
     glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pix);
     glReportError();
@@ -327,40 +351,54 @@ int OL_SaveTexture(const OutlawTexture *tex, const char* fname)
             pix[bot] = temp;
         }
     }
-
+    int success = false;
     SDL_Surface *surf = SDL_CreateRGBSurfaceFrom(pix, tex->width, tex->height, 32, tex->width*4,
                                                  0x000000ff, 0x0000FF00, 0x00FF0000, 0xFF000000);
-
-    const char *path = OL_PathForFile(fname, "w");
-    const int success = IMG_SavePNG(surf, path);
-    if (!success) {
-        ReportMessagef("[SDL] Failed to write texture %d-%dx%d to '%s': %s",
-                       tex->texnum, tex->width, tex->height, fname, SDL_GetError());
+    if (surf)
+    {
+        const char *path = OL_PathForFile(fname, "w");
+        if (os_create_parent_dirs(path)) {
+            success = IMG_SavePNG(surf, path) == 0;
+        }
+        if (!success) {
+            ReportSDL("Failed to write texture %d-%dx%d to '%s': %s",
+                      tex->texnum, tex->width, tex->height, path, SDL_GetError());
+        }
+        SDL_FreeSurface(surf);
     }
-    SDL_FreeSurface(surf);
+    else
+    {
+        ReportSDL("Failed to create surface %d-%dx%d: %s",
+                  tex->texnum, tex->width, tex->height, SDL_GetError());
+    }
+
     free(pix);
     
     return success;
 }
 
 
-static lstring                                  g_fontNames[10];
-static std::map<std::pair<int, int>, TTF_Font*> g_fonts;
+static lstring                   g_fontNames[10];
+static std::map<uint, TTF_Font*> g_fonts;
+static std::mutex                g_fontMutex;
 
 TTF_Font* getFont(int fontName, float size)
 {
-	const int isize = int(round(size));
-    std::pair<int, int> key(fontName, isize);
-    TTF_Font* &font = g_fonts[key];
+    std::lock_guard<std::mutex> l(g_fontMutex);
+
+	const int   isize = int(round(size * g_scaling_factor));
+    const uint  key   = (fontName<<16)|isize;
+    TTF_Font*  &font  = g_fonts[key];
+
     if (!font)
     {
         const char* file = g_fontNames[fontName].c_str();
         ASSERT(file);
         font = TTF_OpenFont(file, isize);
         if (font) {
-            ReportMessagef("[SDL] Loaded font '%s' at size %d", file, isize);
+            ReportSDL("Loaded font '%s' at size %d", file, isize);
         } else {
-            ReportMessagef("[SDL] Failed to load font '%s' at size '%d': %s",
+            ReportSDL("Failed to load font '%s' at size '%d': %s",
                            file, isize, TTF_GetError());
         }
         ASSERT(font);
@@ -370,6 +408,7 @@ TTF_Font* getFont(int fontName, float size)
 
 void OL_SetFont(int index, const char* file, const char* name)
 {
+    std::lock_guard<std::mutex> l(g_fontMutex);
     g_fontNames[index] = lstring(OL_PathForFile(file, "r"));
 }
 
@@ -381,11 +420,11 @@ void OL_FontAdvancements(int fontName, float size, struct OLSize* advancements)
 		int minx,maxx,miny,maxy,advance;
 		if (TTF_GlyphMetrics(font,i,&minx,&maxx,&miny,&maxy,&advance) == 0)
 		{
-			advancements[i].x = advance;
+			advancements[i].x = advance / g_scaling_factor;
 		}
 		else
 		{
-			ReportMessagef("[SDL] Error getting glyph size for glyph %d/'%c'", i, i);
+			ReportSDL("Error getting glyph size for glyph %d/'%c'", i, i);
 			advancements[i].x = 0.f;
 		}
 		advancements[i].y = 0.f;
@@ -394,8 +433,8 @@ void OL_FontAdvancements(int fontName, float size, struct OLSize* advancements)
 
 float OL_FontHeight(int fontName, float size)
 {
-    TTF_Font* font = getFont(fontName, size);
-	return TTF_FontLineSkip(font);
+    const TTF_Font* font = getFont(fontName, size);
+	return TTF_FontLineSkip(font) / g_scaling_factor;
 }
 
 struct Strip {
@@ -480,12 +519,6 @@ int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int _font,
     const int font_pixel_height = TTF_FontLineSkip(font);
     const int text_pixel_height = newlines * font_pixel_height;
 
-	GLuint texture;
-    glGenTextures(1, &texture);
-	glBindTexture(GL_TEXTURE_2D, texture);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-
 	SDL_Surface *intermediary = SDL_CreateRGBSurface(0, text_pixel_width, text_pixel_height, 32, 0x00ff0000, 0x0000ff00, 0x000000ff, 0xff000000);
 
     SDL_Color color;
@@ -507,7 +540,7 @@ int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int _font,
             }
             else
             {
-                ReportMessagef("[SDL] TTF Error: %s\n", TTF_GetError());
+                ReportSDL("TTF Error: %s\n", TTF_GetError());
             }
         }
 
@@ -519,13 +552,20 @@ int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int _font,
         }
     }
 
-	glTexImage2D(GL_TEXTURE_2D, 0, 4, text_pixel_width, text_pixel_height, 0, GL_BGRA, GL_UNSIGNED_BYTE, intermediary->pixels );
+    glGenTextures(1, &tex->texnum);
+	glBindTexture(GL_TEXTURE_2D, tex->texnum);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE_ALPHA, text_pixel_width, text_pixel_height, 
+                 0, GL_BGRA, GL_UNSIGNED_BYTE, intermediary->pixels);
+    glReportError();
+
 	SDL_FreeSurface(intermediary);
-    tex->texnum = texture;
+
     tex->width = text_pixel_width;
     tex->height = text_pixel_height;
 
-    //ReportMessagef("generated %dx%d texture %d for %d line text\n", text_pixel_width, text_pixel_height, texture, strips.size());
+    //ReportSDL("generated %dx%d texture %d for %d line text\n", text_pixel_width, text_pixel_height, texture, strips.size());
     return 1;
 }
 
@@ -578,6 +618,12 @@ static int keysymToKey(const SDL_Keysym &keysym)
     case SDLK_DOWN:     return NSDownArrowFunctionKey;
     case SDLK_PAGEUP:   return NSPageUpFunctionKey;
     case SDLK_PAGEDOWN: return NSPageDownFunctionKey;
+    case SDLK_HOME:     return NSHomeFunctionKey;
+    case SDLK_END:      return NSEndFunctionKey;
+    case SDLK_PRINTSCREEN: return NSPrintScreenFunctionKey;
+    case SDLK_INSERT:   return NSInsertFunctionKey;
+    case SDLK_PAUSE:    return NSPauseFunctionKey;
+    case SDLK_SCROLLLOCK: return NSScrollLockFunctionKey;
     case SDLK_F1:       return NSF1FunctionKey;
     case SDLK_F2:       return NSF2FunctionKey;
     case SDLK_F3:       return NSF3FunctionKey;
@@ -599,7 +645,7 @@ static int keysymToKey(const SDL_Keysym &keysym)
     case SDLK_RALT:     // fallthrough
     case SDLK_LALT:     return OAltKey;
     case SDLK_BACKSPACE: return NSBackspaceCharacter;
-    case SDLK_DELETE:   return NSDeleteCharacter;
+    case SDLK_DELETE:   return NSDeleteFunctionKey;
     default:            return 0;
     }
 }
@@ -619,21 +665,21 @@ static void HandleEvents()
         {
             switch (evt.window.event) {
             case SDL_WINDOWEVENT_SHOWN:
-                ReportMessagef("[SDL] Window %d shown", evt.window.windowID);
+                ReportSDL("Window %d shown", evt.window.windowID);
                 break;
             case SDL_WINDOWEVENT_HIDDEN:
-                ReportMessagef("[SDL] Window %d hidden", evt.window.windowID);
+                ReportSDL("Window %d hidden", evt.window.windowID);
                 break;
             case SDL_WINDOWEVENT_EXPOSED:
-                //ReportMessagef("[SDL] Window %d exposed", evt.window.windowID);
+                //ReportSDL("Window %d exposed", evt.window.windowID);
                 break;
             case SDL_WINDOWEVENT_MOVED:
-                ReportMessagef("[SDL] Window %d moved to %d,%d",
+                ReportSDL("Window %d moved to %d,%d",
                         evt.window.windowID, evt.window.data1,
                         evt.window.data2);
                 break;
             case SDL_WINDOWEVENT_SIZE_CHANGED:
-                ReportMessagef("[SDL] Window %d size changed", evt.window.windowID);
+                ReportSDL("Window %d size changed", evt.window.windowID);
                 g_screenSize.x = evt.window.data1;
                 g_screenSize.y = evt.window.data2;
                 glViewport(0, 0, g_screenSize.x, g_screenSize.y);
@@ -642,40 +688,40 @@ static void HandleEvents()
                 g_screenSize.x = evt.window.data1;
                 g_screenSize.y = evt.window.data2;
                 glViewport(0, 0, g_screenSize.x, g_screenSize.y);
-                ReportMessagef("[SDL] Window %d resized to %dx%d",
+                ReportSDL("Window %d resized to %dx%d",
                         evt.window.windowID, evt.window.data1,
                         evt.window.data2);
                 break;
             case SDL_WINDOWEVENT_MINIMIZED:
-                ReportMessagef("[SDL] Window %d minimized", evt.window.windowID);
+                ReportSDL("Window %d minimized", evt.window.windowID);
                 break;
             case SDL_WINDOWEVENT_MAXIMIZED:
-                ReportMessagef("[SDL] Window %d maximized", evt.window.windowID);
+                ReportSDL("Window %d maximized", evt.window.windowID);
                 break;
             case SDL_WINDOWEVENT_RESTORED:
-                ReportMessagef("[SDL] Window %d restored", evt.window.windowID);
+                ReportSDL("Window %d restored", evt.window.windowID);
                 break;
             case SDL_WINDOWEVENT_ENTER:
-                //ReportMessagef("[SDL] Mouse entered window %d", evt.window.windowID);
+                //ReportSDL("Mouse entered window %d", evt.window.windowID);
                 break;
             case SDL_WINDOWEVENT_LEAVE:
-                //ReportMessagef("[SDL] Mouse left window %d", evt.window.windowID);
+                //ReportSDL("Mouse left window %d", evt.window.windowID);
                 break;
             case SDL_WINDOWEVENT_FOCUS_GAINED:
-               // ReportMessagef("[SDL] Window %d gained keyboard focus", evt.window.windowID);
+               // ReportSDL("Window %d gained keyboard focus", evt.window.windowID);
                 break;
             case SDL_WINDOWEVENT_FOCUS_LOST: {
-                ReportMessagef("[SDL] Window %d lost keyboard focus", evt.window.windowID);
+                ReportSDL("Window %d lost keyboard focus", evt.window.windowID);
                 e.type = OLEvent::LOST_FOCUS;
                 OLG_OnEvent(&e);
                 break;
             }
             case SDL_WINDOWEVENT_CLOSE:
-                ReportMessagef("[SDL] Window %d closed", evt.window.windowID);
+                ReportSDL("Window %d closed", evt.window.windowID);
                 g_quitting = true;
                 break;
             default:
-                ReportMessagef("[SDL] Window %d got unknown event %d",
+                ReportSDL("Window %d got unknown event %d",
                         evt.window.windowID, evt.window.event);
                 break;
             }
@@ -687,7 +733,7 @@ static void HandleEvents()
             e.type = (evt.type == SDL_KEYDOWN) ? OLEvent::KEY_DOWN : OLEvent::KEY_UP;
             e.key = keysymToKey(evt.key.keysym);
 
-            //ReportMessagef("key %s %d %c\n", (evt.type == SDL_KEYDOWN) ? "down" : "up", evt.key.keysym.sym, e.key);
+            //ReportSDL("key %s %d %c\n", (evt.type == SDL_KEYDOWN) ? "down" : "up", evt.key.keysym.sym, e.key);
 
             if (e.key)
             {
@@ -699,12 +745,11 @@ static void HandleEvents()
             
         case SDL_MOUSEMOTION:
         {
-            e.dx = evt.motion.xrel;
-            e.dy = evt.motion.yrel;
-            int x, y;
-            const Uint8 state = SDL_GetMouseState(&x, &y);
-            e.x = x;
-            e.y = g_screenSize.y - y;
+            e.dx = evt.motion.xrel / g_scaling_factor;
+            e.dy = evt.motion.yrel / g_scaling_factor;
+            e.x = evt.motion.x / g_scaling_factor;
+            e.y = (g_screenSize.y - evt.motion.y) / g_scaling_factor;
+            const Uint8 state = evt.motion.state;
             e.key = ((state&SDL_BUTTON_LMASK) ? 0 : 
                      (state&SDL_BUTTON_RMASK) ? 1 :
                      (state&SDL_BUTTON_MMASK) ? 2 : -1);
@@ -723,8 +768,8 @@ static void HandleEvents()
         case SDL_MOUSEBUTTONDOWN: // fallthrorugh
         case SDL_MOUSEBUTTONUP:
         {
-            e.x = evt.button.x;
-            e.y = g_screenSize.y - evt.button.y;
+            e.x = evt.button.x / g_scaling_factor;
+            e.y = (g_screenSize.y - evt.button.y) / g_scaling_factor;
             e.type = evt.type == SDL_MOUSEBUTTONDOWN ? OLEvent::MOUSE_DOWN : OLEvent::MOUSE_UP;
             switch (evt.button.button)
             {
@@ -737,6 +782,7 @@ static void HandleEvents()
         }
         break;
         case SDL_QUIT:
+            // FIXME call OLG_OnClose
             g_quitting = true;
             break;
         }
@@ -781,10 +827,10 @@ const char *OL_LoadFile(const char *name)
     Sint64 size = SDL_RWsize(io);
     buf.resize(size);
     if (SDL_RWread(io, (char*)buf.data(), buf.size(), sizeof(char)) <= 0) {
-        ReportMessagef("[SDL] error writing to %s: %s", name, SDL_GetError());
+        ReportSDL("error writing to %s: %s", name, SDL_GetError());
     }
     if (SDL_RWclose(io) != 0) {
-        ReportMessagef("[SDL] error closing file %s: %s", name, SDL_GetError());
+        ReportSDL("error closing file %s: %s", name, SDL_GetError());
     }
 
     return sdl_os_autorelease(buf);
@@ -799,15 +845,40 @@ void OL_ThreadEndIteration(int i)
 
 void OL_WarpCursorPosition(float x, float y)
 {
-    SDL_WarpMouseInWindow(g_displayWindow, (int)x, g_screenSize.y - (int)y);
+    SDL_WarpMouseInWindow(g_displayWindow, (int)x * g_scaling_factor, g_screenSize.y - (int) (y * g_scaling_factor));
 }
 
 const char* OL_ReadClipboard()
 {
     char *ptr = SDL_GetClipboardText();
-    string str(ptr);
+    if (!ptr)
+        return NULL;
+    string str = ptr;
+#if WIN32
+    str_replace(ptr, "\r\n", "\n");
+#endif
     SDL_free(ptr);
     return sdl_os_autorelease(str);
+}
+
+static void setupInitialResolution()
+{
+    g_screenSize.x = 960;
+    g_screenSize.y = 600;
+
+    const int displayCount = SDL_GetNumVideoDisplays();
+
+    for (int i=0; i<displayCount; i++)
+    {
+        SDL_DisplayMode mode;
+        SDL_GetDesktopDisplayMode(i, &mode);
+        ReportSDL("Display %d of %d is %dx%d@%dHz", i+1, displayCount, mode.w, mode.h, mode.refresh_rate);
+
+        if (i == 0)
+            g_screenSize = int2(mode.w, mode.h);
+        g_screenSize = min(g_screenSize, int2(0.9f * float2(mode.w, mode.h)));
+    }
+    ReportSDL("Initial window size is %dx%d", g_screenSize.x, g_screenSize.y);
 }
 
 int sdl_os_main(int argc, char **argv)
@@ -820,11 +891,10 @@ int sdl_os_main(int argc, char **argv)
     SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE, 8);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0);
 
-    g_screenSize.x = 960;
-    g_screenSize.y = 600;
-
-    g_displayWindow = SDL_CreateWindow(OLG_GetName(), 100, 100,
-                                       g_screenSize.x, g_screenSize.y, 
+    setupInitialResolution();
+    g_displayWindow = SDL_CreateWindow(OLG_GetName(), 
+                                       SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
+                                       g_screenSize.x, g_screenSize.y,
                                        SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
     SDL_GLContext _glcontext = SDL_GL_CreateContext(g_displayWindow);
 
@@ -842,7 +912,7 @@ int sdl_os_main(int argc, char **argv)
     //     os_errormessage("Video Card Unsupported");
     //     exit(1);
     // }
-   
+ 
     SDL_ShowCursor(0);
     if (TTF_Init() != 0)
     {
@@ -867,15 +937,18 @@ int sdl_os_main(int argc, char **argv)
 
     if (g_logfile)
     {
+        SDL_RWwrite(g_logfile, "\n", 1, 1);
         SDL_RWclose(g_logfile);
         g_logfile = NULL;
     }
+
+    fflush(NULL);
 
     SDL_DestroyWindow(g_displayWindow);
 
     TTF_Quit();
     SDL_Quit();
 
-    ReportMessagef("[SDL] Good bye!");
+    ReportSDL("Good bye!\n");
     return 0;
 }

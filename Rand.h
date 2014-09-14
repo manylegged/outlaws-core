@@ -29,7 +29,12 @@
 inline std::default_random_engine &random_device()
 {
     static std::random_device rd;
-    static std::default_random_engine e1(rd());
+    static int seed = 0;
+    if (!seed) {
+        seed = rd();
+        ReportMessagef("Random Seed: %d", seed);
+    }
+    static std::default_random_engine e1(seed);
     return e1;
 }
 
@@ -44,31 +49,44 @@ inline uint randrange()
 // return a random number from [start-end)
 inline int randrange(int start, int end)
 {
-    ASSERT(start < end);
+    ASSERT(start <= end);
+    if (start == end)
+        return start;
     std::uniform_int_distribution<int> uniform_dist(start, end-1);
     return uniform_dist(random_device());
-    //return start + (rand() % (end - start));
+}
+
+// return a random number from [0-end)
+inline int randrange(int end)
+{
+    ASSERT(end >= 0);
+    if (0 == end)
+        return 0;
+    std::uniform_int_distribution<int> uniform_dist(0, end-1);
+    return uniform_dist(random_device());
 }
 
 inline bool randbool() { return randrange(0, 2); }
 
+inline float randsign() { return randbool() ? 1.f : -1.f; }
+
 template <typename T>
 inline const T &randselect(std::initializer_list<T> l)
 {
-    static_assert(!l.empty(), "Can't select from empty list");
     return *(l.begin() + randrange(0, l.size()));
 }
 
 template <typename Vec>
-inline const typename Vec::value_type& randselect(const Vec& vec)
+inline auto randselect(const Vec& vec) -> decltype(*std::begin(vec))
 {
-    if (vec.empty()) {
-        static const typename Vec::value_type dummy{};
+    const size_t size = std::distance(std::begin(vec), std::end(vec));
+    if (size == 0) {
+        static decltype(*std::begin(vec)) dummy{};
         return dummy;
-    } else if (vec.size() == 1) {
-        return vec[0];
+    } else if (size == 1) {
+        return *std::begin(vec);
     } else {
-        return vec[randrange(0, vec.size())];
+        return *(std::begin(vec) + randrange(0, size));
     }
 }
 

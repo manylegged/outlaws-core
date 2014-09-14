@@ -4,14 +4,14 @@
 #import <OpenGL/glext.h>
 #import <OpenGL/glu.h>
 
-GLenum glReportError (void);
+void LogMessage(NSString *str);
+GLenum glReportError(void);
 
 @interface BasicOpenGLView : NSOpenGLView<NSWindowDelegate>
 {
 	NSTimer* timer;
  
     NSTrackingArea *trackingArea;
-    BOOL            focused;
 
 @public
     int  closing;
@@ -20,9 +20,9 @@ GLenum glReportError (void);
 
 + (NSOpenGLPixelFormat*) basicPixelFormat;
 
-- (void)animationTimer:(NSTimer *)timer;
+- (void) animationTimer:(NSTimer *)timer;
 
-- (void)keyDown:(NSEvent *)theEvent;
+- (void) keyDown:(NSEvent *)theEvent;
 
 - (void) mouseDown:(NSEvent *)theEvent;
 - (void) rightMouseDown:(NSEvent *)theEvent;
@@ -34,7 +34,7 @@ GLenum glReportError (void);
 - (void) scrollWheel:(NSEvent *)theEvent;
 - (void) rightMouseDragged:(NSEvent *)theEvent;
 - (void) otherMouseDragged:(NSEvent *)theEvent;
-- (void)mouseMoved:(NSEvent *)theEvent;
+- (void) mouseMoved:(NSEvent *)theEvent;
 
 - (void) drawRect:(NSRect)rect;
 

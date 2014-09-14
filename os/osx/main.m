@@ -9,6 +9,8 @@
 #import <Cocoa/Cocoa.h>
 #include "Outlaws.h"
 
+void LogMessage(NSString *str);
+
 int main(int argc, char *argv[])
 {
     @try 
@@ -17,9 +19,8 @@ int main(int argc, char *argv[])
     } 
     @catch (NSException* exception) 
     {
-        NSString *msg = [NSString stringWithFormat: @"Uncaught exception: %@\nStack trace: %@",
-                                  exception.description, [exception callStackSymbols]];
-        OL_ReportMessage([msg cStringUsingEncoding:NSUTF8StringEncoding]);
+        LogMessage([NSString stringWithFormat: @"Uncaught exception: %@\nStack trace: %@",
+                             exception.description, [exception callStackSymbols]]);
         return 0;
     }
 }

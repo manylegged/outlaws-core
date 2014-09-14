@@ -26,6 +26,9 @@
 #ifndef VERTEX_H
 #define VERTEX_H
 
+struct VertexPos {
+    float3 pos;
+};
 
 struct VertexPosTex {
     float3 pos;
@@ -41,6 +44,9 @@ struct VertexPosColorTex {
 struct VertexPosColor {
     float3 pos;
     uint   color;
+
+    VertexPosColor() {}
+    VertexPosColor(float2 p, uint c) : pos(p, 0.f), color(c) {}
 
 //    void setColor(uint c, float a=1)   { color = ARGB2ABGR(c|0xff000000, a); }
 //    void setColor32(uint c, float a=1) { color = ARGB2ABGR(c, a); }

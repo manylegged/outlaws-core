@@ -53,16 +53,19 @@ static const char* textureFormatToString(GLint fmt)
     switch (fmt) {
         CASE_STR(GL_RGB);
         CASE_STR(GL_RGBA);
-        CASE_STR(GL_BGR);
         CASE_STR(GL_BGRA);
-        CASE_STR(GL_RGBA16F_ARB);
-        CASE_STR(GL_RGB16F_ARB);
 #if OPENGL_ES
         CASE_STR(GL_RGB16F_EXT);
+#else
+        CASE_STR(GL_BGR);
+        CASE_STR(GL_RGBA16F_ARB);
+        CASE_STR(GL_RGB16F_ARB);
 #endif
         default: return "<unknown>";
     }
 }
+
+static GLint s_defaultFramebuffer = 0;
 
 void GLRenderTexture::Generate()
 {
@@ -70,7 +73,22 @@ void GLRenderTexture::Generate()
 
     ASSERT(m_size.x >= 1 && m_size.y >= 1);
 
-    DPRINT(SHADER, ("Generating render texture, %.fx%.f %s", m_size.x, m_size.y,
+    GLsizei width = m_size.x;
+    GLsizei height = m_size.y;
+    
+#if OPENGL_ES
+    // textures must be a power of 2 on ios
+    width = roundUpPower2(width);
+    height = roundUpPower2(height);
+
+    if (s_defaultFramebuffer == 0)
+    {
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &s_defaultFramebuffer);
+    }
+#endif
+
+    m_texsize = float2(width, height);
+    DPRINT(SHADER, ("Generating render texture, %dx%d %s", width, height,
                     textureFormatToString(m_format)));
 
     glReportError();
@@ -78,10 +96,16 @@ void GLRenderTexture::Generate()
     glReportError();
 
     glGenTextures(1, &m_texname);
+    glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, m_texname);
     glReportError();
  
-    glTexImage2D(GL_TEXTURE_2D, 0, m_format, m_size.x, m_size.y, 0, GL_RGB, GL_UNSIGNED_BYTE, 0);
+#if OPENGL_ES
+    if (m_format == GL_RGB16F_EXT)
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_HALF_FLOAT_OES, 0);
+    else
+#endif
+    glTexImage2D(GL_TEXTURE_2D, 0, m_format, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, 0);
     glReportError();
 
     // The depth buffer
@@ -89,7 +113,7 @@ void GLRenderTexture::Generate()
     glBindRenderbuffer(GL_RENDERBUFFER, m_zrbname);
     glReportError();
         
-    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT16, m_size.x, m_size.y);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT16, width, height);
     glReportError();
     glBindFramebuffer(GL_FRAMEBUFFER, m_fbname);
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, m_zrbname);
@@ -126,7 +150,8 @@ void GLRenderTexture::clear()
     if (m_fbname || m_texname || m_zrbname) {
         glReportError();
     }
-    m_size = int2(0);
+    m_size = float2(0.f);
+    m_texsize = float2(0.f);
     m_texname = 0;
     m_fbname = 0;
     m_zrbname = 0;
@@ -145,7 +170,7 @@ void GLRenderTexture::BindFramebuffer(float2 size, bool keepz)
 #if !OPENGL_ES
     if (keepz)
     {
-        const GLuint def = s_bound.size() ? s_bound.back()->m_fbname : 0;
+        const GLuint def = s_bound.size() ? s_bound.back()->m_fbname : s_defaultFramebuffer;
         ASSERT(def != m_fbname);
         glBindFramebuffer(GL_READ_FRAMEBUFFER, def);
         glReportError();
@@ -174,30 +199,35 @@ void GLRenderTexture::RebindFramebuffer()
     glBindTexture(GL_TEXTURE_2D, m_texname);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glBindTexture(GL_TEXTURE_2D, 0);
 
     glBindFramebuffer(GL_FRAMEBUFFER, m_fbname);
+    glReportFramebufferError();
     glViewport(0,0,m_size.x,m_size.y);
     glReportError();
-    glReportFramebufferError();
 }
 
 void GLRenderTexture::UnbindFramebuffer() const
 {
     ASSERT(s_bound.size() && s_bound.back() == this);
     s_bound.pop_back();
+    
     if (s_bound.size())
     {
         s_bound.back()->RebindFramebuffer();
     }
     else
     {
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glReportFramebufferError();
+        glBindFramebuffer(GL_FRAMEBUFFER, s_defaultFramebuffer);
+        glReportError();
+        glReportFramebufferError();
         glViewport(0, 0, globals.windowSizePixels.x, globals.windowSizePixels.y);
         glReportError();
     }
 }
 
-ShaderState GLRenderTexture::DrawFSBegin() const
+void GLTexture::DrawFSBegin(ShaderState& ss) const
 {
     glDepthMask(GL_FALSE);
     glDisable(GL_DEPTH_TEST);
@@ -205,12 +235,10 @@ ShaderState GLRenderTexture::DrawFSBegin() const
     glDisable(GL_ALPHA_TEST);
 #endif
 
-    ShaderState ss;
     ss.uTransform = glm::ortho(0.f, 1.f, 0.f, 1.f, -1.f, 1.f);
-    return ss;
 }
 
-void GLRenderTexture::DrawFSEnd() const
+void GLTexture::DrawFSEnd() const
 {
     glDepthMask(GL_TRUE);
     glEnable(GL_DEPTH_TEST);
@@ -222,22 +250,31 @@ void GLRenderTexture::DrawFSEnd() const
 
 void GLTexture::TexImage2D(int2 size, GLenum format, const uint *data)
 {
-#if !OPENGL_ES
     if (!m_texname)
         glGenTextures(1, &m_texname);
     glBindTexture(GL_TEXTURE_2D, m_texname);
+#if OPENGL_ES
+    m_texsize = float2(roundUpPower2(size.x), roundUpPower2(size.y));
+    glTexImage2D(GL_TEXTURE_2D, 0, format,
+                 m_texsize.x, m_texsize.y-1, 0, format, GL_UNSIGNED_BYTE, data);
+    glReportError();
+    
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+#else
+    m_texsize = float2(size);
     glTexImage2D(GL_TEXTURE_2D, 0, m_format,
                  size.x, size.y-1, 0, format, GL_UNSIGNED_INT_8_8_8_8_REV, data);
     glReportError();
 
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE_SGIS);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE_SGIS);
+#endif
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 
     glBindTexture(GL_TEXTURE_2D, 0);
     m_size = float2(size);
-#endif
 }
 
 void GLTexture::SetTexWrap(bool enable)
@@ -291,8 +328,13 @@ static bool ignoreShaderLog(const char* buf)
 {
     // damnit ATI driver
     static string kNoErrors = "No errors.\n";
-    static string kValidationSuccessful = "Validation successful.\n";
-    return buf == kNoErrors || buf == kValidationSuccessful;
+    static string kValidationSuccessful = "Validation successful";
+    static string kSuccessfulyCompiled = "successfully compiled";
+    static string kLinked = "Fragment shader(s) linked, vertex shader(s) linked. ";
+    return (buf == kNoErrors ||
+            str_contains(buf, kValidationSuccessful) ||
+            str_contains(buf, kSuccessfulyCompiled) ||
+            str_contains(buf, kLinked));
 }
 
 static bool checkShaderInfoLog(const char* txt, GLuint prog)
@@ -360,14 +402,16 @@ GLenum glReportError1(const char *file, uint line, const char *function)
 }
 
 
-static const char* glFrameBufferStatusString(GLenum err)
+static string getGLFrameBufferStatusString(GLenum err)
 {
     switch(err) {
         CASE_STR(GL_FRAMEBUFFER_COMPLETE);
         CASE_STR(GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT);
         CASE_STR(GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT);
         CASE_STR(GL_FRAMEBUFFER_UNSUPPORTED);
-#if !OPENGL_ES
+#if OPENGL_ES
+        CASE_STR(GL_FRAMEBUFFER_INCOMPLETE_DIMENSIONS);
+#else
         CASE_STR(GL_FRAMEBUFFER_UNDEFINED);
         CASE_STR(GL_FRAMEBUFFER_INCOMPLETE_DRAW_BUFFER);
         CASE_STR(GL_FRAMEBUFFER_INCOMPLETE_READ_BUFFER);
@@ -375,8 +419,8 @@ static const char* glFrameBufferStatusString(GLenum err)
         CASE_STR(GL_FRAMEBUFFER_INCOMPLETE_LAYER_TARGETS_EXT);
         CASE_STR(GL_FRAMEBUFFER_INCOMPLETE_LAYER_COUNT_EXT);
 #endif
+        default: return str_format("0x%0x", err);
     }
-    return NULL;
 }
 
 GLenum glReportFramebufferError1(const char *file, uint line, const char *function)
@@ -389,7 +433,7 @@ GLenum glReportFramebufferError1(const char *file, uint line, const char *functi
 	GLenum err = glCheckFramebufferStatus(GL_FRAMEBUFFER);
 	if (GL_FRAMEBUFFER_COMPLETE != err)
     {
-        OLG_OnAssertFailed(file, line, function, "glCheckFramebufferStatus", "%s", glFrameBufferStatusString(err));
+        OLG_OnAssertFailed(file, line, function, "glCheckFramebufferStatus", "%s", getGLFrameBufferStatusString(err).c_str());
     }
     
 	return err;
@@ -403,8 +447,12 @@ void glReportValidateShaderError1(const char *file, uint line, const char *funct
         return;
 
     glValidateProgram(program);
+    GLint status = 0;
+    glGetProgramiv(program, GL_VALIDATE_STATUS, &status);
     checkProgramInfoLog(program, "validate");
     glReportError();
+
+    ASSERT(status == GL_TRUE);
 }
 
 GLint ShaderProgramBase::getAttribLocation(const char *name) const
@@ -427,12 +475,13 @@ GLint ShaderProgramBase::getUniformLocation(const char *name) const
     return v;
 }
 
-ShaderProgramBase::~ShaderProgramBase()
+void ShaderProgramBase::reset()
 {
     ASSERT_MAIN_THREAD();
     if (m_programHandle) {
         glDeleteProgram(m_programHandle);
         m_programHandle = 0;
+        m_name = "";
     }
 }
 
@@ -446,12 +495,13 @@ bool ShaderProgramBase::LoadProgram(const char* name, const char* shared, const 
     string header =
 #if OPENGL_ES
         "precision highp float;\n"
-        "precision highp sampler2D;\n";
+        "precision highp sampler2D;\n"
 #else
         "#version 120\n"
 #endif
-         "#define M_PI 3.1415926535897932384626433832795\n"; 
+         "#define M_PI 3.1415926535897932384626433832795\n";
 
+    header += m_header;
     header += shared;
     static const char* vertheader =
         "attribute vec4 Position;\n"
@@ -521,6 +571,7 @@ void ShaderProgramBase::UseProgramBase(const ShaderState& ss) const
 {
     ASSERT_MAIN_THREAD();
     ASSERT(isLoaded());
+    glReportError();
     glUseProgram(m_programHandle);
     glUniformMatrix4fv(m_transformUniform, 1, GL_FALSE, &ss.uTransform[0][0]);
     glReportError();
@@ -563,6 +614,7 @@ void ShaderState::DrawArrays(uint dt, size_t count) const
     graphicsDrawCount++;
 }
 
+
 void DrawAlignedGrid(ShaderState &wss, const View& view, float size, float z)
 {
     const double2 roundedCam  = double2(round(view.position, size));
@@ -571,6 +623,7 @@ void DrawAlignedGrid(ShaderState &wss, const View& view, float size, float z)
                                       double3(roundedCam - roundedSize, z), 
                                       double3(roundedCam + roundedSize, z));
 } 
+
 
 void ShaderPosBase::DrawGrid(const ShaderState &ss_, double width, double3 first, double3 last) const
 {
@@ -612,12 +665,12 @@ void ShaderPosBase::DrawGrid(const ShaderState &ss_, double width, double3 first
 void PushButton(TriMesh<VertexPosColor>* triP, LineMesh<VertexPosColor>* lineP, float2 pos, float2 r, uint bgColor, uint fgColor, float alpha)
 {
     static const float o = 0.1f;
-    float2 v[6] = { pos + float2(-r.x, lerp(r.y, -r.y, o)),
-                    pos + float2(lerp(-r.x, r.x, o), r.y),
-                    pos + float2(r.x, r.y),
-                    pos + float2(r.x, lerp(-r.y, r.y, o)),
-                    pos + float2(lerp(r.x, -r.x, o), -r.y),
-                    pos + float2(-r.x, -r.y) };
+    const float2 v[6] = { pos + float2(-r.x, lerp(r.y, -r.y, o)),
+                          pos + float2(lerp(-r.x, r.x, o), r.y),
+                          pos + float2(r.x, r.y),
+                          pos + float2(r.x, lerp(-r.y, r.y, o)),
+                          pos + float2(lerp(r.x, -r.x, o), -r.y),
+                          pos + float2(-r.x, -r.y) };
 
     if (triP && (bgColor&ALPHA_OPAQUE) && alpha > epsilon) {
         triP->color32(bgColor, alpha);
@@ -634,11 +687,9 @@ void DrawButton(const ShaderState *data, float2 pos, float2 r, uint bgColor, uin
 {
     if (alpha < epsilon)
         return;
-    TriMesh<VertexPosColor> vpt;
-    LineMesh<VertexPosColor> vpl;
-    PushButton(&vpt, &vpl, pos, r, bgColor, fgColor, alpha);
-    vpt.Draw(*data, ShaderColor::instance());
-    vpl.Draw(*data, ShaderColor::instance());
+    DMesh vp;
+    PushButton(&vp.tri, &vp.line, pos, r, bgColor, fgColor, alpha);
+    vp.Draw(*data, ShaderColor::instance(), ShaderColor::instance());
 }
 
 void DrawFilledRect(const ShaderState &s_, float2 pos, float2 size, uint bgColor, uint fgColor, float alpha)
@@ -801,6 +852,9 @@ const GLTexture &getDitherTex()
         glReportError();
 
         tex = new GLTexture(name, float2(8.f), GL_LUMINANCE);
+
+        // OutlawTexture t = tex->getTexture();
+        // OL_SaveTexture(&t, "~/Desktop/dither.png");
     }
     
     return *tex;

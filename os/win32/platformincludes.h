@@ -66,4 +66,17 @@ typedef unsigned short ushort;
 #define NULL nullptr
 #endif
 
+#ifdef MOD_ALT
+#undef MOD_ALT
+#endif
+
+#ifdef MOD_CONTROL
+#undef MOD_CONTROL
+#endif
+
+#ifdef MOD_SHIFT
+#undef MOD_SHIFT
+#endif
+
+
 #endif

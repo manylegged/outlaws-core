@@ -9,6 +9,11 @@ static const bool kBluryParticles = 1;
 
 struct ShaderParticles;
 
+struct IParticleShader : public ShaderProgramBase {
+
+    virtual void UseProgram(const ShaderState& ss, float time)=0;
+};
+
 struct ParticleSystem : public IDeletable {
 
 public:
@@ -27,15 +32,7 @@ public:
         void setColor(uint c, float alpha)
         {
             color = ALPHAF(alpha)|RGB2BGR(PremultiplyAlphaAXXX(c));
-            ASSERT(color != 0);
-        }
-        
-        void setTime(float t)
-        {
-            // particles created during simulation, not during render
-            const float time = globals.simTime;
-            startTime        = time;
-            endTime          = time + max((float)globals.simTimeStep, t);
+            DASSERT(color != 0);
         }
     };
     
@@ -46,8 +43,9 @@ protected:
         float    endTime          = 0.f;
         float    rate             = 30.f; // particles per second
         float    lastParticleTime = 0.f;
+        float    arcRadius        = 9999999.f;
         float3   position;
-        float3   velocity;
+        float2   velocity;
         Particle particle;
         Particle particle1;
     };
@@ -56,22 +54,24 @@ private:
 
     friend struct ShaderParticles;
 
-    vector<Particle>       m_vertices;
-    IndexBuffer<uint>      m_ibo;
-    VertexBuffer<Particle> m_vbo;
-    int                    m_addFirst;
-    int                    m_addPos;
-    uint                   m_lastMaxedStep;
-    float                  m_planeZ;
-    std::mutex             m_mutex;
-    View                   m_view;
-    vector<ParticleTrail>  m_trails;
-    IShader               *m_program = NULL;
+    vector<Particle>        m_vertices;
+    IndexBuffer<uint>       m_ibo;
+    VertexBuffer<Particle>  m_vbo;
+    int                     m_addFirst;
+    int                     m_addPos;
+    uint                    m_lastMaxedStep;
+    float                   m_planeZ;
+    std::mutex              m_mutex;
+    View                    m_view;
+    vector<ParticleTrail>   m_trails;
+    IParticleShader        *m_program = NULL;
     
     void updateRange(uint first, uint size);
 
 protected:
 
+    uint                   m_simStep;
+    float                  m_simTime;
     int                    m_maxParticles = 0;
     
     bool visible(const float3 &pos, float size) const
@@ -84,6 +84,7 @@ protected:
         return forceVisible || m_view.intersectCircle(float3(pos.x, pos.y, m_planeZ), 10.f * size);
     }
 
+    void setTime(Particle &p, float t);
     void add(const Particle &p, float angle, bool gradient);
     void setParticles(vector<Particle>& particles);
     void addTrail(const ParticleTrail& p) { m_trails.push_back(p); }
@@ -93,13 +94,13 @@ public:
     bool forceVisible = false;
 
     size_t count() const;
-    void setProgram(IShader *prog) { m_program = prog; }
+    void setProgram(IParticleShader *prog) { m_program = prog; }
 
     ParticleSystem();
     ~ParticleSystem();
 
-    void render(float3 offset, const ShaderState &ss, const View& view);
-    void update();
+    void render(float3 offset, float time, const ShaderState &ss, const View& view);
+    void update(uint step, float time);
     void clear();
     
 };

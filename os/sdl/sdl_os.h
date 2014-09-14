@@ -15,12 +15,16 @@ const char* sdl_os_autorelease(std::string &val);
 // call from crash handler. flush log, etc.
 void sdl_os_oncrash();
 
+void sdl_set_scaling_factor(float factor);
+
 
 /////////////// implemented in per-os file
 
 // display a message box to the user on unrecoverable errors
 void os_errormessage(const char* msg);
 
-std::string os_copy_to_desktop(const char* path);
+int os_copy_file(const char* source, const char* dest);
+
+int os_create_parent_dirs(const char* path);
 
 #endif

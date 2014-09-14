@@ -45,11 +45,14 @@
     U operator X(SerialEnum val) const { return value X val.value; } \
     U operator X##=(SerialEnum val) { return value X##= val.value; }
 
+typedef std::pair<lstring, uint64> SaveEnum;
+
 template <typename T, typename U=uint64>
 struct SerialEnum : public T {
 
     SerialEnum() {}
-    SerialEnum(U init) : value(init) {}
+    SerialEnum(const U &init) : value(init) {}
+    SerialEnum(const SerialEnum &o) : value(o.value) {}
     
     U value = 0;
     
@@ -61,23 +64,41 @@ struct SerialEnum : public T {
     U operator==(SerialEnum o) const { return value == o.value; }
     U operator!=(U o) const { return value != o; }
     U operator!=(SerialEnum o) const { return value != o.value; }
+    bool operator<(SerialEnum o) const { return value < o.value; }
+    U operator~() const { return ~value; }
     SerialEnum& operator=(U o) { value = o; return *this; }
     SerialEnum& operator=(SerialEnum o) { value = o.value; return *this; }
     explicit operator bool() const { return bool(value); }
 
     U get() const { return value; }
+    typename T::Fields enm() const { return (typename T::Fields) value; }
     string toString() const;
+
+    static uint getBitUnion()
+    {
+        static typename T::Type uni = 0;
+        if (uni == 0) {
+            for (const SaveEnum *se=T::getFields(); se->first; se++)
+                uni |= se->second;
+        }
+        return uni;
+    }
+
+    static uint getBitCount()
+    {
+        return 1 + findLeadingOne(getBitUnion());
+    }
 };
 
 #undef DEFINE_ENUM_OP
 
-typedef std::pair<lstring, uint64> SaveEnum;
 #define SERIAL_TO_SAVEENUM(K, V) SaveEnum(#K, V),
 #define SERIAL_TO_ENUM(X, V) X=V,
 
 #define DEFINE_ENUM(TYPE, NAME, FIELDS)                                 \
     struct NAME ## _ {                                                  \
-        enum Fields : TYPE { FIELDS(SERIAL_TO_ENUM) };              \
+        typedef TYPE Type;                                              \
+        enum Fields : TYPE { FIELDS(SERIAL_TO_ENUM) };                  \
         static const SaveEnum *getFields()                              \
         {                                                               \
             static const SaveEnum val[] = { FIELDS(SERIAL_TO_SAVEENUM) { NULL, 0}  }; \
@@ -85,6 +106,8 @@ typedef std::pair<lstring, uint64> SaveEnum;
         }                                                               \
     };                                                                  \
     typedef SerialEnum< NAME ## _, TYPE > NAME
+
+#define DECLARE_ENUM(TYPE, NAME) struct NAME ## _; typedef SerialEnum< NAME ## _, TYPE > NAME
 
 
 /////////////////////////////////////////////////////////////////////////////////
@@ -112,6 +135,59 @@ typedef std::pair<lstring, uint64> SaveEnum;
 #define VISIT(FIELD) visit(#FIELD, (FIELD))
 #define VISIT_DEF(FIELD, DEF) visit(#FIELD, (FIELD), (DEF))
 
+template <typename T>
+struct GetFieldVisitor {
+    T*           value;
+    const string field;
+
+    GetFieldVisitor(const char* name) : value(), field(name) {}
+
+    bool visit(const char* name, T& val, const T& def=T())
+    {
+        if (name != field)
+            return true;
+        value = &val;
+        return false;
+    }
+
+    template <typename U>
+    bool visit(const char* name, U& val, const U& def=U())
+    {
+        DASSERT(name != field);
+        return true;
+    }
+    
+    template <typename U>
+    bool visitSkip(const char *name) { return true; }
+};
+
+// get a reference to a field in OBJ named FIELD (the same as getattr in Python).
+// will crash if field does not exist or type is slightly wrong
+template <typename U, typename T>
+U& getField(T& obj, const char* field)
+{
+    GetFieldVisitor<U> vs(field);
+    obj.accept(vs);
+    return *vs.value;
+}
+
+template <typename U, typename T>
+const U& getField(const T& obj, const char* field)
+{
+    GetFieldVisitor<U> vs(field);
+    const_cast<T&>(obj).accept(vs);
+    return *vs.value;
+}
+
+// Return true if OBJ has a fields name FIELD of type U (just like hasattr in Python).
+template <typename U, typename T>
+bool hasField(const T& obj, const char* field)
+{
+    GetFieldVisitor<U> vs(field);
+    const_cast<T&>(obj).accept(vs);
+    return vs.value;
+}
+
 #define DECLARE_SERIAL_STRUCT_CONTENTS(STRUCT_NAME, FIELDS_MACRO)   \
     FIELDS_MACRO(SERIAL_TO_STRUCT_FIELD);                           \
     STRUCT_NAME() {}                                                \
@@ -125,8 +201,6 @@ typedef std::pair<lstring, uint64> SaveEnum;
     bool operator==(const STRUCT_NAME& sb) const;                   \
     STRUCT_NAME& operator=(const STRUCT_NAME& sb);                  \
     typedef int VisitEnabled;                                       \
-
-
 
 #define DECLARE_SERIAL_STRUCT(STRUCT_NAME, FIELDS_MACRO)            \
     struct STRUCT_NAME {                                            \

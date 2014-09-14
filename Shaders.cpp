@@ -154,30 +154,7 @@ ShaderColorLuma::ShaderColorLuma()
 ShaderBlur::ShaderBlur()
 {
     // TODO calculate offset in vertex shader
-    LoadProgram("ShaderBlur",
-                "varying vec2 DestTexCoord;\n"
-                ,
-                "attribute vec2 SourceTexCoord;\n"
-                "void main(void) {\n"
-                "    DestTexCoord = SourceTexCoord;\n"
-                "    gl_Position  = Transform * Position;\n"
-                "}\n"
-                ,
-                "uniform sampler2D source;\n"
-                "uniform float coefficients[5];\n"
-                "uniform vec2 offsets[5];\n"
-                "void main() {\n"
-                "    float d = 0.1;\n"
-                "    vec4 c = vec4(0, 0, 0, 0);\n"
-                "    vec2 tc = DestTexCoord;\n"
-                "    c += coefficients[0] * texture2D(source, tc + offsets[0]);\n"
-                "    c += coefficients[1] * texture2D(source, tc + offsets[1]);\n"
-                "    c += coefficients[2] * texture2D(source, tc + offsets[2]);\n"
-                "    c += coefficients[3] * texture2D(source, tc + offsets[3]);\n"
-                "    c += coefficients[4] * texture2D(source, tc + offsets[4]);\n"
-                "    gl_FragColor = c;\n"
-                "}\n"
-        );
+    LoadProgram("ShaderBlur");
     usourceTex      = getUniformLocation("source");
     asourceTexCoord = getAttribLocation("SourceTexCoord");
     ucoefficients   = getUniformLocation("coefficients");

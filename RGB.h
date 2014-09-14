@@ -83,6 +83,11 @@ inline uint SetAlphaAXXX(uint color, float alpha)
     return (color&0xffffff) | ((uint) (alpha * 255.f) << 24);
 }
 
+inline float GetAlphaAXXX(uint color)
+{
+    return (float) ((color&ALPHA_OPAQUE)>>24) / 255.f;
+}
+
 inline uint PremultiplyAlphaAXXX(uint color)
 {
     float4 c = ARGB2RGBAf(color);
@@ -199,6 +204,15 @@ inline uint32 RGB2BGR(uint32 rgb)
     return (r0b << 16) | (rgb&0x0000ff00) | (r0b >> 16);
 }
 
+// how convenient
+#define ABGR2ARGB ARGB2ABGR
+#define BGR2RGB RGB2BGR
+
+inline uint32 BGRA2ARGB(uint32 bgra)
+{
+    return (bgra<<24) | ((bgra&0xff00)<<8) | ((bgra&0xff0000)>>8) | (bgra>>24);
+}
+
 inline uint RGBAf2ABGR(float4 rgba)
 {
     rgba.x = clamp(rgba.x, 0.f, 1.f);
@@ -224,13 +238,30 @@ inline uint randlerpXXX(uint color, uint color1)
     return lerpXXX(color, color1, randrange(0.f, 1.f));
 }
 
+inline void flushNanToZero(float &val)
+{
+    if (fpu_error(val))
+        val = 0;
+}
+
+inline void flushNanToZero(float2 &val)
+{
+    flushNanToZero(val.x);
+    flushNanToZero(val.y);
+}
+
+inline void flushNanToZero(float3 &val)
+{
+    flushNanToZero(val.x);
+    flushNanToZero(val.y);
+    flushNanToZero(val.z);
+}
+
+
 inline float3 hsvOfRgb(float3 rgb)
 {
-    // flush nans to zero...
     float3 hsv = glm::hsvColor(rgb);
-    if (hsv.x != hsv.x) hsv.x = 0;
-    if (hsv.y != hsv.y) hsv.y = 0;
-    if (hsv.z != hsv.z) hsv.z = 0;
+    flushNanToZero(hsv);
     return hsv;
 }
 
@@ -307,6 +338,12 @@ inline uint colorChangeHSV(uint color, float3 hsv)
 {
     float3 c = hsvOfRgb(RGB2RGBf(color));
     return RGBf2RGB(rgbOfHsv(c + hsv));
+}
+
+inline uint mult_hsv(uint color, float3 hsv)
+{
+    float3 c = hsvOfRgb(RGB2RGBf(color));
+    return RGBf2RGB(rgbOfHsv(c * hsv));
 }
 
 inline float hueDiff(uint a, uint b)

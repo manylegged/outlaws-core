@@ -1,7 +1,7 @@
 outlaws-core
 ============
 
-General purpose c++11 code from my upcoming game Gamma Void: http://anisopteragames.com
+General purpose c++11 code from my upcoming game Reassembly: http://www.anisopteragames.com
 
 Not cleaned up enough to be #included directly by other projects without changes, but contains some useful snippets.
 
