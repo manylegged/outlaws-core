@@ -66,6 +66,22 @@
       }"
    },
 
+   ShaderColorDither = {
+      "varying vec4 DestinationColor;"
+      ,
+      "attribute vec4 SourceColor;
+      void main(void) {
+          DestinationColor = SourceColor;
+          gl_Position = Transform * Position;
+      }"
+      ,
+      "uniform sampler2D dithertex;
+      void main(void) {
+            float ditherv = texture2D(dithertex, gl_FragCoord.xy / 8.0).r / 64.0 - (1.0 / 128.0);
+            gl_FragColor = DestinationColor + vec4(ditherv);
+      }"
+   },
+
    ShaderTonemap = {
       "varying vec2 DestTexCoord;"
       ,

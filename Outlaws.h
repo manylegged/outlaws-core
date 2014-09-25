@@ -3,7 +3,7 @@
 //  Outlaws
 //
 //  Created by Arthur Danskin on 10/21/12.
-//  Copyright (c) 2013 Arthur Danskin. All rights reserved.
+//  Copyright (c) 2012-2014 Arthur Danskin. All rights reserved.
 //
 // This file defines the interface between the platform independant game code and the platform
 // specific parts.
@@ -58,6 +58,9 @@ void OLG_OnQuit(void);
 // called when the application window is closed - like OnQuit but more gracefull
 void OLG_OnClose(void);
 
+// init, process args. Return 1 if create window and interactive, 0 if headless mode
+int OLG_Init(int argc, const char** argv);
+
 // called when window manager changes full screen state
 void OLG_SetFullscreenPref(int enabled);
 
@@ -86,6 +89,9 @@ const char* OLG_GetLogFileName(void);
 // these allocate and drain autorelease pools on Apple platforms
 void OL_ThreadBeginIteration(int i);
 void OL_ThreadEndIteration(int i);
+
+// return number of cpu cores
+int OL_GetCpuCount(void);
 
 // print a debugging message message
 void OL_ReportMessage(const char *str);
@@ -174,7 +180,9 @@ float OL_FontHeight(int fontName, float size);
 const char *OL_LoadFile(const char *fname);
 
 // write text file to disk, atomically. Creates directories as needed.
-int OL_SaveFile(const char* fname, const char* data);
+int OL_SaveFile(const char* fname, const char* data, int size);
+
+int OL_CopyFile(const char* source, const char *dest);
 
 // Return list of files in a directory (base name only - no path)
 const char** OL_ListDirectory(const char* path);

@@ -56,7 +56,7 @@ int OL_GetFullscreen(void)
 
 void OL_SetWindowSizePoints(int w, int h)
 {
-    if (gView->fullscreen)
+    if (!gView || gView->fullscreen)
         return;
     NSRect frame = [[gView window] frame];
     if (frame.size.width == w && frame.size.height == h)

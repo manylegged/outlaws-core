@@ -35,7 +35,7 @@ static const float2 kButtonPad         = float2(4.f);
 
 #define COLOR_TARGET  0xff3a3c
 #define COLOR_TEXT_BG 0x101010
-#define COLOR_BG_GRID 0x222222
+#define COLOR_BG_GRID 0x303030
 #define COLOR_ORANGE  0xff6f1f
 #define COLOR_BLACK 0x000000
 #define COLOR_WHITE 0xffffff
@@ -502,22 +502,9 @@ struct TabWindow : public WidgetBase {
     struct TabButton : public ButtonBase {
         string         text;
         ITabInterface *interface = NULL;
+        int            ident     = -1;
 
-        void render(DMesh &mesh) const
-        {
-            static const float o = 0.05f;
-            const float2 r = size / 2.f;
-            //   1      2
-            // 0        3  
-            const float2 v[] = {
-                position + float2(-r),
-                position + float2(lerp(-r.x, r.x, o), r.y),
-                position + float2(r),
-                position + float2(r.x, -r.y), 
-            };
-            mesh.tri.PushPoly(v, arraySize(v));
-            mesh.line.PushStrip(v, arraySize(v));
-        }
+        void render(DMesh &mesh) const;
     };
     
     float textSize          = 16.f;
@@ -527,20 +514,12 @@ struct TabWindow : public WidgetBase {
     uint  hoveredLineColor  = kGUIFgActive; 
     uint  inactiveLineColor = kGUIInactive;
     uint  textColor         = kGUIText;
-    
+
     vector<TabButton> buttons;
     int               selected = 0;
     float             alpha2 = 1.f;
 
-    int addTab(string txt, ITabInterface *inf)
-    {
-        const int idx = (int)buttons.size();
-        buttons.push_back(TabButton());
-        buttons.back().interface = inf;
-        buttons.back().text = txt;
-        buttons.back().keys = lstring(str_format("%d", idx)).c_str();
-        return idx;
-    }
+    int addTab(string txt, int ident, ITabInterface *inf);
 
     int getTab() const { return selected; }
 
@@ -673,6 +652,23 @@ struct MessageBoxWidget : public WidgetBase {
     bool HandleEvent(const Event* event);
 };
 
+struct ConfirmWidget : public WidgetBase {
+    
+    string title;
+    string message;
+    int    messageFont = kDefaultFont;
+    Button buttons[2];
+    int    selected = 0;
+
+    ConfirmWidget()
+    {
+        buttons[0].text = "OK";
+        buttons[0].keys = "";
+        buttons[1].text = "Cancel";
+        buttons[1].keys = "\033";
+    }
+};
+
 struct TextBox {
     
     const View* view = NULL;
@@ -684,5 +680,6 @@ struct TextBox {
     
     void Draw(const ShaderState& ss1, float2 point, const string& text) const;
 };
+
 
 #endif

@@ -13,11 +13,14 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <dirent.h>
-#include <wordexp.h>
+#include <signal.h>
+#include <execinfo.h>
+#include <dlfcn.h>
+#include <link.h>
 
 #define MAX_PATH 256
 
-char *g_binaryName;
+const char *g_binaryName;
 
 // don't go through ReportMessagef/ReportMessage!
 static void ReportLinux(const char *format, ...)
@@ -33,8 +36,8 @@ string expandTilde(const string& path)
 {
     if (path[0] == '~')
     {
-        return str_format("/home/%s/%s", OL_GetUserName(), 
-                          path.size() < 2 ? "" : path.c_str()+2);
+        return str_path_join("/home", OL_GetUserName(), 
+                             path.size() < 2 ? "" : path.c_str()+2);
     }
     return path;
 }
@@ -44,10 +47,9 @@ static const string& getSaveDir()
     static string savedir;
     if (savedir.empty())
     {
-        const char* data_home = getenv("XDG_DATA_HOME");
-        savedir = data_home ? data_home : "~/.local/share";
-        savedir += str_format("/%s/", OLG_GetName());
+        savedir = str_path_join(or_<const char*>(getenv("XDG_DATA_HOME"), "~/.local/share"), OLG_GetName());
         savedir = expandTilde(savedir);
+        ASSERT(savedir[0] == '/');
     }
     return savedir;
 }
@@ -57,16 +59,13 @@ static const string& getDataDir()
     static string datadir;
     if (datadir.empty())
     {
-        datadir = g_binaryName;
-        datadir = dirname((char*)datadir.c_str());
-        datadir += "/../";
+        datadir = str_path_join(str_dirname(g_binaryName), "..");
         char buf1[PATH_MAX];
         const char* path = realpath(datadir.c_str(), buf1);
         if (!path) {
-            ReportLinux("realpath(%s) error: %s\n", datadir.c_str(), strerror(errno));
+            ReportLinux("realpath(%s) error: %s", datadir.c_str(), strerror(errno));
             return datadir;
         }
-
         datadir = path;
         datadir += "/";
     }
@@ -136,14 +135,14 @@ static int recursive_mkdir(const char *dir)
         if(*p == '/')
         {
             *p = 0;
-            if (mkdir(tmp, S_IRWXU) != 0) {
+            if (mkdir(tmp, S_IRWXU) != 0 && errno != EEXIST) {
                 ReportLinux("mkdir '%s' error: '%s'", tmp, strerror(errno));
                 return 0;
             }
             *p = '/';
         }
     }
-    if (mkdir(tmp, S_IRWXU) != 0) {
+    if (mkdir(tmp, S_IRWXU) != 0 && errno != EEXIST) {
         ReportLinux("mkdir '%s' error: '%s'", tmp, strerror(errno));
         return 0;
     }
@@ -159,7 +158,7 @@ int os_create_parent_dirs(const char* path)
     return recursive_mkdir(dir);
 }
 
-int OL_SaveFile(const char *name, const char* data)
+int OL_SaveFile(const char *name, const char* data, int size)
 {
     const char* fname = OL_PathForFile(name, "w");
     os_create_parent_dirs(fname);
@@ -172,10 +171,10 @@ int OL_SaveFile(const char *name, const char* data)
         ReportLinux("error opening '%s' for writing\n", fnameb.c_str());
         return 0;
     }
-    int bytesWritten = fprintf(f, "%s", data);
-    if (bytesWritten != strlen(data))
+    const int bytesWritten = fwrite(data, 1, size, f);
+    if (bytesWritten != size)
     {
-        ReportLinux("writing to '%s', wrote %d bytes of expected %d\n", fnameb.c_str(), bytesWritten, strlen(data));
+        ReportLinux("writing to '%s', wrote %d bytes of expected %d\n", fnameb.c_str(), bytesWritten, size);
         return 0;
     }
     if (fclose(f) != 0)
@@ -235,17 +234,25 @@ const char** OL_ListDirectory(const char* path1)
 
 void os_errormessage(const char* msg)
 {
-    OL_ReportMessage(msg);
+    ReportMessage(msg);
 }
 
-int os_copy_file(const char* pa, const char* pb)
+int OL_CopyFile(const char* pa, const char* pb)
 {
-    FILE *fa = fopen(OL_PathForFile(pa, "r"), "r");
-    if (!fa)
+    const char* ppa = OL_PathForFile(pa, "r");
+    FILE *fa = fopen(ppa, "r");
+    if (!fa) {
+        ReportLinux("OL_CopyFile: can't open source file '%s'", ppa);
         return -1;
-    FILE *fb = fopen(OL_PathForFile(pb, "w"), "w");
-    if (!fb)
+    }
+    const char *ppb = OL_PathForFile(pb, "w");
+    if (!os_create_parent_dirs(ppb))
         return -1;
+    FILE *fb = fopen(ppb, "w");
+    if (!fb) {
+        ReportLinux("OL_CopyFile: can't open dest file '%s'", ppb);
+        return -1;
+    }
     
     char buf[1024];
     size_t n = 0;
@@ -266,18 +273,173 @@ const char* OL_GetUserName(void)
     return name;
 }
 
+struct SoCallbackData {
+    string binname;
+    int    idx;
+};
 
-int main(int argc, char** argv)
+static int so_callback(struct dl_phdr_info *info, size_t size, void *data)
+{
+    static const char *patterns[] = {
+        "GL", "SDL", "openal", "libm", "libstd", "libc", "vorbis", "ogg", "pthread",
+        "drm", "gallium", "dri"
+    };
+
+    const char* name = info->dlpi_name;
+    if (!name || name[0] == '\0')
+        name = ((SoCallbackData*) data)->binname.c_str();
+
+    bool found = false;
+    foreach (const char* pat, patterns) {
+        if (str_contains(info->dlpi_name, pat) || info->dlpi_name[0]  == '\0') {
+            found = true;
+            break;
+        }
+    }
+    if (!found)
+        return 0;
+
+    for (int j = 0; j < info->dlpi_phnum; j++) 
+    {
+        const ElfW(Phdr) &phdr = info->dlpi_phdr[j];
+        if (phdr.p_type == PT_LOAD && (phdr.p_flags&PF_X))
+        {
+            uintptr_t beg  = info->dlpi_addr + phdr.p_vaddr;
+            size_t    size = phdr.p_memsz;
+
+            int *idx = &((SoCallbackData*) data)->idx;
+            ReportLinux("%2d. '%s' base address is %p, size is 0x%x", *idx, name, beg, (int)size);
+            (*idx)++;
+            return 0;
+        }
+    }
+    return 0;
+}
+
+void list_loaded_shared_objects()
+{
+    ReportLinux("Dumping loaded shared objects");
+    SoCallbackData data = { str_basename(g_binaryName), 0 };
+    dl_iterate_phdr(so_callback, &data);
+}
+
+
+// from http://spin.atomicobject.com/2013/01/13/exceptions-stack-traces-c/
+static const char* signal_to_string(int sig, siginfo_t *siginfo)
+{
+    switch(sig)
+    {
+    case SIGSEGV: return ("Caught SIGSEGV: Segmentation Fault");
+    case SIGINT: return ("Caught SIGINT: Interactive attention signal, (usually ctrl+c)");
+    case SIGFPE:
+        switch(siginfo->si_code)
+        {
+        case FPE_INTDIV: return ("Caught SIGFPE: (integer divide by zero)");
+        case FPE_INTOVF: return ("Caught SIGFPE: (integer overflow)");
+        case FPE_FLTDIV: return ("Caught SIGFPE: (floating-point divide by zero)");
+        case FPE_FLTOVF: return ("Caught SIGFPE: (floating-point overflow)");
+        case FPE_FLTUND: return ("Caught SIGFPE: (floating-point underflow)");
+        case FPE_FLTRES: return ("Caught SIGFPE: (floating-point inexact result)");
+        case FPE_FLTINV: return ("Caught SIGFPE: (floating-point invalid operation)");
+        case FPE_FLTSUB: return ("Caught SIGFPE: (subscript out of range)");
+        default: return ("Caught SIGFPE: Arithmetic Exception");
+        }
+    case SIGILL:
+        switch(siginfo->si_code)
+        {
+        case ILL_ILLOPC: return ("Caught SIGILL: (illegal opcode)");
+        case ILL_ILLOPN: return ("Caught SIGILL: (illegal operand)");
+        case ILL_ILLADR: return ("Caught SIGILL: (illegal addressing mode)");
+        case ILL_ILLTRP: return ("Caught SIGILL: (illegal trap)");
+        case ILL_PRVOPC: return ("Caught SIGILL: (privileged opcode)");
+        case ILL_PRVREG: return ("Caught SIGILL: (privileged register)");
+        case ILL_COPROC: return ("Caught SIGILL: (coprocessor error)");
+        case ILL_BADSTK: return ("Caught SIGILL: (internal stack error)");
+        default: return ("Caught SIGILL: Illegal Instruction");
+        }
+    case SIGTERM: return ("Caught SIGTERM: a termination request was sent to the program");
+    case SIGABRT: return ("Caught SIGABRT: usually caused by an abort() or assert()");
+    default: return "Caught UNKNOWN";
+    }
+}
+
+static void posix_signal_handler(int sig, siginfo_t *siginfo, void *context)
+{
+    puts("signal handler called");
+    fflush(NULL);
+    ReportLinux("%s (signal %d)", signal_to_string(sig, siginfo), sig);
+    list_loaded_shared_objects();
+    fflush(NULL);
+
+    static const int maxbuf = 128;
+    void* buffer[maxbuf];
+    memset(buffer, 0, sizeof(buffer));
+    const int count = backtrace(buffer, maxbuf);
+
+    ReportLinux("Dumping stack");
+    for (int i=0; i<count; i++)
+        ReportLinux("%2d. Called from %p", i, buffer[i]);
+    fflush(NULL);
+    sdl_os_oncrash();
+}
+
+
+static uint8_t alternate_stack[SIGSTKSZ];
+void set_signal_handler()
+{
+    /* setup alternate stack */
+    {
+        stack_t ss = {};
+        /* malloc is usually used here, I'm not 100% sure my static allocation
+           is valid but it seems to work just fine. */
+        ss.ss_sp = (void*)alternate_stack;
+        ss.ss_size = SIGSTKSZ;
+        ss.ss_flags = 0;
+ 
+        if (sigaltstack(&ss, NULL) != 0) {
+            ReportLinux("signalstack failed: %s", strerror(errno));
+        }
+    }
+ 
+    /* register our signal handlers */
+    {
+        struct sigaction sig_action = {};
+        sig_action.sa_sigaction = posix_signal_handler;
+        sigemptyset(&sig_action.sa_mask);
+ 
+#ifdef __APPLE__
+        /* for some reason we backtrace() doesn't work on osx
+           when we use an alternate stack */
+        sig_action.sa_flags = SA_SIGINFO;
+#else
+        sig_action.sa_flags = SA_SIGINFO | SA_ONSTACK;
+#endif
+ 
+        static const int signals[] = { SIGSEGV, SIGFPE, SIGINT, SIGILL, SIGTERM, SIGABRT };
+        foreach (int sig, signals) {
+            if (sigaction(sig, &sig_action, NULL) != 0) {
+                ReportLinux("sigaction failed: %s", strerror(errno));
+            }
+        }
+    }
+}
+
+int main(int argc, const char** argv)
 {
     g_binaryName = argv[0];
 
+    set_signal_handler();
+
+    // copy icon to icon dir - does not reliably cause desktop file to have icon
+    if (0)
     {
         const char* name = "reassembly_icon.png";
-        string dest = str_format("~/.local/share/icons/%s", name);
+        string src = str_format("linux/%s", name);
+        string dest = str_format("~/.local/share/icons/hicolor/128x128/apps/%s", name);
         int status = 1;
         if (!OL_FileDirectoryPathExists(dest.c_str()))
         {
-            status = os_copy_file(str_format("linux/%s", name).c_str(), dest.c_str());
+            status = OL_CopyFile(src.c_str(), dest.c_str());
         }
         ReportLinux("Copied icon to %s: %s", dest.c_str(), 
                     status == 1 ? "ALREADY OK" : status == 0 ? "OK" : "FAILED");

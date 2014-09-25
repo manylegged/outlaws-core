@@ -43,7 +43,7 @@ using cAudio::cAudioMutexBasicLock;
     F(CLUSTER,     1<<5)                             \
     
 
-DEFINE_ENUM(uint64, EnumAudioFlags, AUDIO_FLAGS);
+DEFINE_ENUM(uint, EnumAudioFlags, AUDIO_FLAGS);
 
 static const uint kStreamSources = 2;
 static const uint kSoundSources = 32 - kStreamSources;
@@ -374,15 +374,15 @@ struct EventDescription {
 
     // read from audio.lua
     vector< vector<lstring> >  samples;
-    float                      volume         = 1.0;
-    float                      pitch          = 1.0;
-    float                      pitchRandomize = 0.f;
-    SerialEnum<EnumAudioFlags> flags;
-    float                      rolloff        = 1.f;
-    float                      minDist        = 1.f;
-    float                      maxDist        = 9999999999.f;
-    int                        priority       = 0;
-    float2                     delay;
+    float          volume         = 1.0;
+    float          pitch          = 1.0;
+    float          pitchRandomize = 0.f;
+    EnumAudioFlags flags;
+    float          rolloff  = 1.f;
+    float          minDist  = 1.f;
+    float          maxDist  = 9999999999.f;
+    int            priority = 0;
+    float2         delay;
 
     lstring                    name;
 

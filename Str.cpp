@@ -141,6 +141,113 @@ std::string str_align(const std::string& input, char token)
     return str;
 }
 
+// http://stackoverflow.com/questions/154536/encode-decode-urls-in-c
+std::string str_urlencode(const std::string &value) 
+{
+    std::string ret;
+
+    for (string::const_iterator i = value.begin(), n = value.end(); i != n; ++i) 
+    {
+        string::value_type c = (*i);
+
+        // Keep alphanumeric and other accepted characters intact
+        if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+            ret += c;
+            continue;
+        }
+
+        // Any other characters are percent-encoded
+        ret += str_format("%%%2x", int((unsigned char) c));
+    }
+
+    return ret;
+}
+
+std::string str_path_standardize(const std::string &str)
+{
+    string path(str.size(), ' ');
+    int rdx = 0;
+    int idx = 0;
+    while (rdx < str.size()) 
+    {
+        while (str[rdx] == '/' && rdx > 0 && str[rdx-1] == '/' && rdx < str.size())
+            rdx++;
+
+        if (rdx > 0 && str[rdx] == '.' && str[rdx-1] == '.' &&
+            idx > 2 && path[idx-3] != '.')
+        {
+            int i=idx-3;
+            while (path[i--] != '/' && i >= 0);
+            rdx++;
+            idx = i+1;
+            while (str[rdx] == '/')
+                rdx++;
+        }
+        path[idx] = str[rdx];
+        idx++;
+        rdx++;
+    }
+    while (idx > 0 && strchr("/ ", path[idx-1]))
+        idx--;
+    path.resize(idx);
+    return path;
+}
+
+
+std::string str_dirname(const std::string &str)
+{
+    size_t end = str.size()-1;
+    while (end > 0 && str[end] == '/')
+        end--;
+    size_t pt = str.rfind("/", end);
+    if (pt == std::string::npos)
+        return ".";
+    else if (pt == 0)
+        return "/";
+    else
+        return str.substr(0, pt);
+}
+
+std::string str_basename(const std::string &str)
+{
+    size_t end = str.size()-1;
+    while (end > 0 && str[end] == '/')
+        end--;
+    size_t pt = str.rfind("/", end);
+    if (pt == std::string::npos)
+        return str;
+    else
+        return str.substr(pt+1);
+}
+
+
+#if DEBUG
+
+#define assert_eql(A, B) ASSERTF(A == B, "'%s' != '%s'", str_tostr(A).c_str(), str_tostr(B).c_str())
+
+static int strtests()
+{
+    assert_eql(str_path_standardize("~/Foo//Bar.lua"), "~/Foo/Bar.lua");
+    assert_eql(str_path_standardize("../../bar.lua"), "../../bar.lua");
+    assert_eql(str_path_standardize("foo/baz/../../bar.lua////"), "bar.lua");
+    assert_eql(str_path_standardize("foo/baz/.."), "foo");
+    assert_eql(str_path_standardize("foo/baz/../"), "foo");
+    assert_eql(str_path_join("foo", "bar"), "foo/bar");
+    assert_eql(str_path_join("foo/", "bar"), "foo/bar");
+    assert_eql(str_path_join("foo/", "/bar"), "foo/bar");
+    assert_eql(str_path_join("foo/", (const char*)NULL), "foo");
+    assert_eql(str_path_join("foo/", ""), "foo");
+    assert_eql(str_path_join("/home/foo", "bar"), "/home/foo/bar");
+    assert_eql(str_path_join(str_path_join("/home/foo", "bar"), "/baz"), "/home/foo/bar/baz");
+    assert_eql(str_dirname("foo/"), ".");
+    assert_eql(str_dirname("/foo/"), "/");
+    assert_eql(str_dirname("foo/baz/bar///"), "foo/baz");
+    return 1;
+}
+
+static int _strtests = strtests();
+
+#endif
 
 #if _MSC_VER
 

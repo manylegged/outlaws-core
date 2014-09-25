@@ -115,7 +115,7 @@ const char *OL_PathForFile(const char *fname, const char* mode)
 
 const char** OL_ListDirectory(const char* path)
 {
-    static const int kMaxElements = 200;
+    static const int kMaxElements = 500;
     static const char* array[kMaxElements];
 
     NSString *nspath = pathForFileName(path, "r");
@@ -123,8 +123,9 @@ const char** OL_ListDirectory(const char* path)
     NSArray *dirFiles = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:nspath error:&error];
     if (!dirFiles || error)
     {
-        LogMessage([NSString stringWithFormat:@"Error listing directory %@: %@",
-                             nspath, error ? [error localizedFailureReason] : @"unknown"]);
+        // do this a lot to test for existence
+        // LogMessage([NSString stringWithFormat:@"Error listing directory %@: %@",
+                             // nspath, error ? [error localizedFailureReason] : @"unknown"]);
         return NULL;
     }
 
@@ -159,7 +160,7 @@ const char *OL_LoadFile(const char *fname)
     return [contents UTF8String];
 }
 
-int OL_SaveFile(const char *fname, const char* data)
+int OL_SaveFile(const char *fname, const char* data, int size)
 {
     NSString *path = pathForFileName(fname, "w");
     NSError *error = nil;
@@ -560,6 +561,13 @@ void OL_ReportMessage(const char *str)
     }
 }
 
+
+int OL_GetCpuCount(void)
+{
+    NSProcessInfo *process = [NSProcessInfo processInfo];
+    return (int) [process processorCount];
+}
+
 const char* OL_GetPlatformDateInfo(void)
 {
     static NSString *buf = nil;
@@ -608,3 +616,19 @@ const char* OL_GetUserName(void)
     return [NSUserName() UTF8String];
 }
 
+int OL_CopyFile(const char* source, const char* dest)
+{
+    NSString *src = pathForFileName(source, "r");
+    NSString *dst = pathForFileName(dest, "w");
+
+    if (!createParentDirectories(dst))
+        return 0;
+
+    NSError *error = nil;
+    if ([[NSFileManager defaultManager] copyItemAtPath:src toPath:dst error:&error])
+        return 1;
+
+    LogMessage([NSString stringWithFormat:@"Error copying file from '%@' to '%@': %@", 
+                         src, dst, error ? [error localizedFailureReason] : @"unknown"]);
+    return 0;
+}

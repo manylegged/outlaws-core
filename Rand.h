@@ -32,7 +32,7 @@ inline std::default_random_engine &random_device()
     static int seed = 0;
     if (!seed) {
         seed = rd();
-        ReportMessagef("Random Seed: %d", seed);
+        ReportMessagef("Random Seed: %#x", seed);
     }
     static std::default_random_engine e1(seed);
     return e1;

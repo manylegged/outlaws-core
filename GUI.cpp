@@ -545,7 +545,7 @@ void TextInputCommandLine::saveHistory(const char *fname)
         str += line;
         str += "\n";
     }
-    int status = OL_SaveFile(fname, str.c_str());
+    int status = OL_SaveFile(fname, str.c_str(), str.size());
     ReportMessagef("Wrote %d lines of console history to '%s': %s",
                    (int) commandHistory.size(), fname, status ? "OK" : "FAILED");
 }
@@ -1008,55 +1008,89 @@ void OptionSlider::render(const ShaderState &s_)
 }
 
 
+void TabWindow::TabButton::render(DMesh &mesh) const
+{
+    static const float o = 0.05f;
+    const float2 r = size / 2.f;
+    //   1      2
+    // 0        3  
+    const float2 v[] = {
+        position + float2(-r),
+        position + float2(lerp(-r.x, r.x, o), r.y),
+        position + float2(r),
+        position + float2(r.x, -r.y), 
+    };
+    mesh.tri.PushPoly(v, arraySize(v));
+    mesh.line.PushStrip(v, arraySize(v));
+}
+
+
 void TabWindow::render(const ShaderState &ss)
 {
-    DMesh mesh;
-
-    const float2 opos = position - float2(0.f, 0.5f * getTabHeight());
-    const float2 osz = 0.5f * (size - float2(0.f, getTabHeight()));
-    mesh.tri.color32(defaultBGColor, alpha);
-    mesh.tri.PushRect(opos, osz);
-    mesh.line.color32(defaultLineColor, alpha);
-
-    const float2 tsize = float2(size.x / buttons.size(), getTabHeight());
-    float2 pos = opos + flipX(osz);
-    int i=0;
-    foreach (TabButton& but, buttons)
+    if (alpha > epsilon)
     {
-        but.size = tsize;
-        but.position = pos + 0.5f * tsize;
-        pos.x += tsize.x;
+        theDMesh().start();
+        DMesh &mesh = theDMesh();
 
-        mesh.line.color32(!but.active ? inactiveLineColor :
-                        but.hovered ? hoveredLineColor : defaultLineColor, alpha);
-        mesh.tri.color32((selected == i) ? defaultBGColor : inactiveBGColor, alpha);
-        but.render(mesh);
+        const float2 opos = position - float2(0.f, 0.5f * getTabHeight());
+        const float2 osz = 0.5f * (size - float2(0.f, getTabHeight()));
+        mesh.tri.color32(defaultBGColor, alpha);
+        mesh.tri.PushRect(opos, osz);
+        mesh.line.color32(defaultLineColor, alpha);
+
+        const float2 tsize = float2(size.x / buttons.size(), getTabHeight());
+        float2 pos = opos + flipX(osz);
+        int i=0;
+        foreach (TabButton& but, buttons)
+        {
+            but.size = tsize;
+            but.position = pos + 0.5f * tsize;
+            pos.x += tsize.x;
+
+            mesh.line.color32(!but.active ? inactiveLineColor :
+                              but.hovered ? hoveredLineColor : defaultLineColor, alpha);
+            mesh.tri.color32((selected == i) ? defaultBGColor : inactiveBGColor, alpha);
+            but.render(mesh);
             
-        i++;
-    }
+            i++;
+        }
         
-    // 4 5 0 1
-    // 3     2
-    const float2 vl[] = {
-        buttons[selected].position + flipY(buttons[selected].size / 2.f),
-        opos + osz,
-        opos + flipY(osz),
-        opos - osz, 
-        opos + flipX(osz), 
-        buttons[selected].position - buttons[selected].size / 2.f
-    };
-    mesh.line.color32(defaultLineColor, alpha);
-    mesh.line.PushStrip(vl, arraySize(vl));
+        // 4 5 0 1
+        // 3     2
+        const float2 vl[] = {
+            buttons[selected].position + flipY(buttons[selected].size / 2.f),
+            opos + osz,
+            opos + flipY(osz),
+            opos - osz, 
+            opos + flipX(osz), 
+            buttons[selected].position - buttons[selected].size / 2.f
+        };
+        mesh.line.color32(defaultLineColor, alpha);
+        mesh.line.PushStrip(vl, arraySize(vl));
 
-    mesh.Draw(ss, ShaderColor::instance(), ShaderColor::instance());
+        mesh.Draw(ss, ShaderColor::instance(), ShaderColor::instance());
 
-    foreach (const TabButton& but, buttons)
-    {
-        GLText::DrawStr(ss, but.position, GLText::MID_CENTERED, MultAlphaAXXX(textColor, alpha),
-                        textSize, but.text);
+        foreach (const TabButton& but, buttons)
+        {
+            GLText::DrawStr(ss, but.position, GLText::MID_CENTERED, MultAlphaAXXX(textColor, alpha),
+                            textSize, but.text);
+        }
+    
+        theDMesh().finish();
     }
-
     buttons[selected].interface->renderTab(getContentsCenter(), getContentsSize(), alpha, alpha2);
+}
+
+int TabWindow::addTab(string txt, int ident, ITabInterface *inf)
+{
+    const int idx = (int)buttons.size();
+    buttons.push_back(TabButton());
+    TabButton &bu = buttons.back();
+    bu.interface = inf;
+    bu.text = txt;
+    bu.keys = lstring(str_format("%d", idx)).c_str();
+    bu.ident = ident;
+    return idx;
 }
 
 bool TabWindow::HandleEvent(const Event* event)

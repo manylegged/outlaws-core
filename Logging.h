@@ -267,9 +267,13 @@ struct FrameLogger {
         m_line.color(COLOR_GREEN);
         m_line.PushLine(kGraphStart, kGraphStart + float2(graphSize.x, 0));
         m_line.PushLine(kGraphStart, kGraphStart + float2(0, graphSize.y));
-        for (uint ms=0; ms<m_maxTimeMs; ms += 5) {
-            const float y = ms * (graphSize.y / m_maxTimeMs);
-            m_line.PushLine(kGraphStart + float2(0, y), kGraphStart + float2(ms&1 ? 10 : 20, y));
+        const int tines = m_maxTimeMs / 5.f;
+        if (tines < graphSize.y/2.f)
+        {
+            for (uint ms=0; ms<m_maxTimeMs; ms += 5) {
+                const float y = ms * (graphSize.y / m_maxTimeMs);
+                m_line.PushLine(kGraphStart + float2(0, y), kGraphStart + float2(ms&1 ? 10 : 20, y));
+            }
         }
         m_line.color(COLOR_GREEN, 0.5f);
         const float dly = 1000.f * m_frameDeadline * (graphSize.y / m_maxTimeMs);

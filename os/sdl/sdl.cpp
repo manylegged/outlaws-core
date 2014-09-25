@@ -15,6 +15,7 @@
 #include <SDL2/SDL_ttf.h>
 #include <SDL2/SDL_image.h>
 #include <sys/utsname.h>
+#include <dlfcn.h>
 #endif
 
 static int2         g_screenSize;
@@ -23,7 +24,7 @@ static float        g_scaling_factor = 1.f;
 static SDL_Window*  g_displayWindow  = NULL;
 static bool         g_quitting       = false;
 static SDL_RWops   *g_logfile        = NULL;
-static string       g_logpath;
+static const char*  g_logpath        = NULL;
 
 
 // don't go through ReportMessagef/ReportMessage!
@@ -47,7 +48,7 @@ void sdl_os_oncrash()
         char mbstr[100];
         std::strftime(mbstr, sizeof(mbstr), "%Y%m%d_%I.%M.%S.%p", std::localtime(&cstart));
         dest = OL_PathForFile(str_format("~/Desktop/%s_crashlog_%s.txt", OLG_GetName(), mbstr).c_str(), "w");
-        ReportSDL("Copying log from %s to %s", g_logpath.c_str(), dest.c_str());
+        ReportSDL("Copying log from %s to %s", g_logpath, dest.c_str());
     }
 
     fflush(NULL);
@@ -59,7 +60,7 @@ void sdl_os_oncrash()
     }
     g_quitting = true;
 
-    os_copy_file(g_logpath.c_str(), dest.c_str());
+    OL_CopyFile(g_logpath, dest.c_str());
 
     os_errormessage(str_format(
         "Oops! %s crashed.\n"
@@ -105,10 +106,11 @@ void OL_ReportMessage(const char *str_)
     if (!g_logfile) {
         const char* path = OL_PathForFile(OLG_GetLogFileName(), "w");
         if (!g_logfile) { // may have been opened by OL_PathForFile
+            os_create_parent_dirs(path);
             g_logfile = SDL_RWFromFile(path, "w");
             if (!g_logfile)
                 return;
-            g_logpath = path;
+            g_logpath = lstring(path).c_str();
             ReportSDL("Log file opened at %s", path); // call self recursively
         }
     }
@@ -160,6 +162,37 @@ double OL_GetCurrentTime()
 #endif
 }
 
+
+#if !WIN32
+static void* getSymbol(const char* module, const char* symbol)
+{
+    void *handle = dlopen(module, RTLD_NOW|RTLD_GLOBAL|RTLD_NOLOAD);
+    if (!handle) {
+        ReportSDL("Failed to access '%s': %s", module, dlerror());
+        return NULL;
+    }
+    void* sym = dlsym(handle, symbol);
+    char* error = NULL;
+    if ((error = dlerror())) {
+        ReportSDL("Failed to get symbol '%s' from '%s': %s", symbol, module, error);
+        return NULL;
+    }
+    return sym;
+}
+#endif
+
+static int getSystemRam()
+{
+#if WIN32
+    return SDL_GetSystemRAM();
+#else
+    typedef int SDLCALL (*PSDL_GetSystemRam)(void);
+    PSDL_GetSystemRam pSDL_GetSystemRam = (PSDL_GetSystemRam) getSymbol("libSDL2-2.0.so.0", "SDL_GetSystemRAM");
+    return pSDL_GetSystemRam ? pSDL_GetSystemRam() : 0;
+#endif
+}
+
+
 const char* OL_GetPlatformDateInfo(void)
 {
     static string str;
@@ -207,7 +240,7 @@ const char* OL_GetPlatformDateInfo(void)
     SDL_GetVersion(&linked);
 
     const int    cpucount = SDL_GetCPUCount();
-    const int    rammb    = SDL_GetSystemRAM();
+    const int    rammb    = getSystemRam();
     const double ramGb    = rammb / 1024.0;
 
     str += str_format(" SDL %d.%d.%d, %d cores %.1f GB, ",
@@ -220,6 +253,11 @@ const char* OL_GetPlatformDateInfo(void)
     str.resize(str.size() - 1); // eat ctime newline
 
     return str.c_str();
+}
+
+int OL_GetCpuCount()
+{
+    return SDL_GetCPUCount();
 }
 
 void OL_DoQuit()
@@ -243,6 +281,8 @@ void OL_GetWindowSize(float *pixelWidth, float *pixelHeight, float *pointWidth, 
 
 void OL_SetWindowSizePoints(int w, int h)
 {
+    if (!g_displayWindow)
+        return;
     SDL_SetWindowSize(g_displayWindow, w * g_scaling_factor, h * g_scaling_factor);
 }
 
@@ -636,8 +676,26 @@ static int keysymToKey(const SDL_Keysym &keysym)
     case SDLK_F10:      return NSF10FunctionKey;
     case SDLK_F11:      return NSF11FunctionKey;
     case SDLK_F12:      return NSF12FunctionKey;
+    case SDLK_KP_0:     return '0';
+    case SDLK_KP_1:     return '1';
+    case SDLK_KP_2:     return '2';
+    case SDLK_KP_3:     return '3';
+    case SDLK_KP_4:     return '4';
+    case SDLK_KP_5:     return '5';
+    case SDLK_KP_6:     return '6';
+    case SDLK_KP_7:     return '7';
+    case SDLK_KP_8:     return '8';
+    case SDLK_KP_9:     return '9';
+    case SDLK_KP_ENTER: return '\r';
+    case SDLK_KP_EQUALS: return '=';
+    case SDLK_KP_PLUS:  return '+';
+    case SDLK_KP_MINUS: return '-';
+    case SDLK_KP_DIVIDE: return '/';
+    case SDLK_KP_MULTIPLY: return '*';
+    case SDLK_KP_PERIOD: return '.';
     case SDLK_RSHIFT:   // fallthrough
     case SDLK_LSHIFT:   return OShiftKey;
+    case SDLK_CAPSLOCK: // fallthrough
     case SDLK_RCTRL:    // fallthrough
     case SDLK_LCTRL:    return OControlKey;
         //case SDLK_RMETA:    // fallthrough
@@ -646,7 +704,9 @@ static int keysymToKey(const SDL_Keysym &keysym)
     case SDLK_LALT:     return OAltKey;
     case SDLK_BACKSPACE: return NSBackspaceCharacter;
     case SDLK_DELETE:   return NSDeleteFunctionKey;
-    default:            return 0;
+    default:
+        ReportSDL("Unhandled Keysym: %#x '%c'", sym, sym);
+        return 0;
     }
 }
 
@@ -800,16 +860,37 @@ void OL_ThreadBeginIteration(int i)
     
 }
 
+struct AutoreleasePool {
+    std::mutex                                 mutex;
+    std::map<std::thread::id, vector<string> > pool;
 
-static std::mutex g_autorelease_mutex;
-static std::map<std::thread::id, vector<string> > g_autorelease;
+    static AutoreleasePool &instance() 
+    {
+        static AutoreleasePool p;
+        return p;
+    }
+
+    const char* autorelease(std::string &val)
+    {
+        std::lock_guard<std::mutex> l(mutex);
+        std::thread::id tid = std::this_thread::get_id();
+        vector<string> &ref= pool[tid];
+        ref.push_back(std::move(val));
+        return ref.back().c_str();
+    }
+
+    void drain()
+    {
+        std::lock_guard<std::mutex> l(mutex);
+        std::thread::id tid = std::this_thread::get_id();
+        pool[tid].clear();
+    }
+    
+};
 
 const char* sdl_os_autorelease(std::string &val)
 {
-    std::lock_guard<std::mutex> l(g_autorelease_mutex);
-    std::thread::id tid = std::this_thread::get_id();
-    g_autorelease[tid].push_back(std::move(val));
-    return g_autorelease[tid].back().c_str();
+    return AutoreleasePool::instance().autorelease(val);
 }
 
 const char *OL_LoadFile(const char *name)
@@ -838,9 +919,7 @@ const char *OL_LoadFile(const char *name)
 
 void OL_ThreadEndIteration(int i)
 {
-    std::lock_guard<std::mutex> l(g_autorelease_mutex);
-    std::thread::id tid = std::this_thread::get_id();
-    g_autorelease[tid].clear();
+    AutoreleasePool::instance().drain();
 }
 
 void OL_WarpCursorPosition(float x, float y)
@@ -881,7 +960,27 @@ static void setupInitialResolution()
     ReportSDL("Initial window size is %dx%d", g_screenSize.x, g_screenSize.y);
 }
 
-int sdl_os_main(int argc, char **argv)
+static int initGlew()
+{
+    glewExperimental = GL_TRUE;
+    GLenum err = glewInit();
+    if (GLEW_OK != err)
+    {
+        os_errormessage(str_format("Glew Error! %s", glewGetErrorString(err)).c_str());
+        return 1;
+    }
+
+    const GLubyte* glsl_ver = glGetString(GL_SHADING_LANGUAGE_VERSION);
+    if (!glsl_ver)
+    {
+        os_errormessage("Video Card Unsupported (Or no graphics drivers installed)");
+        return 1;
+    }
+    return 0;
+}
+    
+
+int sdl_os_main(int argc, const char **argv)
 {
     SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER);
 
@@ -891,33 +990,56 @@ int sdl_os_main(int argc, char **argv)
     SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE, 8);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0);
 
+    int mode = OLG_Init(argc, argv);
+
+    if (mode == 0)
+    {
+        SDL_Window *window = SDL_CreateWindow("OpenGL test", -32, -32, 32, 32, SDL_WINDOW_OPENGL|SDL_WINDOW_HIDDEN);
+        if (window) {
+            SDL_GLContext context = SDL_GL_CreateContext(window);
+            if (context) {
+                if (initGlew() != 0)
+                    return 1;
+
+                OLG_Draw();
+
+                SDL_GL_DeleteContext(context);
+            }
+            SDL_DestroyWindow(window);
+        }
+        return 0;
+    }
+
     setupInitialResolution();
     g_displayWindow = SDL_CreateWindow(OLG_GetName(), 
                                        SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
                                        g_screenSize.x, g_screenSize.y,
                                        SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+
+#if !WIN32
+    const char* spath = OL_PathForFile("linux/reassembly_icon.png", "r");
+    SDL_Surface *surface = IMG_Load(spath);
+    if (surface)
+    {
+        SDL_SetWindowIcon(g_displayWindow, surface);
+        SDL_FreeSurface(surface);
+    }
+    else
+    {
+        ReportSDL("Failed to load icon from %s", spath);
+    }
+#endif
+
     SDL_GLContext _glcontext = SDL_GL_CreateContext(g_displayWindow);
 
-    glewExperimental = GL_TRUE;
-    GLenum err = glewInit();
-    if (GLEW_OK != err)
-    {
-        os_errormessage(str_format("Glew Error! %s", glewGetErrorString(err)).c_str());
-        exit(1);
-    }
-
-    
-    // if (!glewIsSupported("GL_VERSION_2_0"))
-    // {
-    //     os_errormessage("Video Card Unsupported");
-    //     exit(1);
-    // }
+    if (initGlew() != 0)
+        return 1;
  
     SDL_ShowCursor(0);
     if (TTF_Init() != 0)
     {
         os_errormessage(str_format("TTF_Init() failed: %s", TTF_GetError()).c_str());
-        exit(1);
+        return 1;
     }
 
     static const double kFrameTime = 1.0 / 60.0;

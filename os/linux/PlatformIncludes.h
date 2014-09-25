@@ -23,4 +23,6 @@
 #define __has_feature(X) 0
 #endif
 
+#define HAS_SOUND 1
+
 #endif

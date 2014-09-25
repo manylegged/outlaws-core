@@ -371,17 +371,9 @@ struct View {
     float2 sizePoints;
     float2 position;            // in world coordinates
     float2 velocity;            // change in position
-    float  scale;               // larger values are more zoomed out
-    float  angle;               // rotation is applied after position
-    float  zfar;
-
-    View()
-    {
-        scale = 1.f;
-        angle = 0.f;
-
-        zfar  = 3500;
-    }
+    float  scale = 1.f;               // larger values are more zoomed out
+    float  angle = 0.f;               // rotation is applied after position
+    float  zfar = 3500.f;
 
     // interpolation support
     friend View operator+(const View& a, const View& b)
@@ -1625,6 +1617,7 @@ void PushRect(TriMesh<VertexPosColor>* triP, LineMesh<VertexPosColor>* lineP, fl
 void DrawFilledRect(const ShaderState &data, float2 pos, float2 r, uint bgColor, uint fgColor, float alpha=1);
 
 void fadeFullScreen(const ShaderState &ss, const View& view, uint color, float alpha);
+void sexyFillScreen(const ShaderState &ss, const View& view, uint color, uint color1, float alpha);
 
 void DrawAlignedGrid(ShaderState &wss, const View& view, float size, float z); 
 

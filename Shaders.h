@@ -38,7 +38,7 @@ struct ShaderPosBase: public ShaderProgramBase {
     // c d
     void DrawQuad(const ShaderState& ss, float2 a, float2 b, float2 c, float2 d) const
     {
-        float2 v[] = { a, b, c, d };
+        const float2 v[] = { a, b, c, d };
         static const ushort i[] = {0, 1, 2, 1, 3, 2};
 
         UseProgram(ss, &v[0]);
@@ -105,7 +105,7 @@ struct ShaderPosBase: public ShaderProgramBase {
     void DrawLineQuad(const ShaderState& ss, float2 a, float2 b, float2 c, float2 d, 
                       bool outline=true, bool cross=false) const
     {
-        float2              v[] = { a, b, c, d };
+        const float2        v[] = { a, b, c, d };
         static const ushort i[] = {0, 1, 1, 3, 3, 2, 2, 0, 0, 3, 1, 2};
 
         UseProgram(ss, v);
@@ -557,6 +557,37 @@ public:
     static const ShaderColor& instance()   
     {
         static ShaderColor* p = new ShaderColor();
+        return *p;
+    }
+
+};
+
+struct ShaderColorDither : public ShaderProgramBase {
+
+private:
+    int SourceColor, dithertex;
+
+    ShaderColorDither()
+    {
+        LoadProgram("ShaderColorDither");
+        GET_ATTR_LOC(SourceColor);
+        GET_UNIF_LOC(dithertex);
+    }
+
+public:
+
+    template <typename Vtx>
+    void UseProgram(const ShaderState&ss, const Vtx* ptr, const Vtx* base) const
+    {
+        UseProgramBase(ss, &ptr->pos, base);
+        vertexAttribPointer(SourceColor, &ptr->color, base);
+        getDitherTex().BindTexture(0);
+        glUniform1i(dithertex, 0);
+    }
+
+    static const ShaderColorDither& instance()   
+    {
+        static ShaderColorDither* p = new ShaderColorDither();
         return *p;
     }
 

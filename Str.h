@@ -87,12 +87,12 @@ public:
     
     static size_t lexicon_bytes()
     {
-        size_t sz = 0;
-        std::lock_guard<std::mutex> l(Lexicon::instance().mutex);
-        for (const std::string &str : Lexicon::instance().strings)
-        {
+        size_t sz = sizeof(Lexicon);
+        Lexicon &lex = Lexicon::instance();
+        std::lock_guard<std::mutex> l(lex.mutex);
+        sz += lex.strings.bucket_count() * lex.strings.load_factor() * sizeof(std::string);
+        for (const std::string &str : lex.strings)
             sz += str.size();
-        }
         return sz;
     }
     
@@ -109,12 +109,17 @@ namespace std {
     };
 }
 
-template <typename T>
-inline std::string str_replace(T&& s, const char* a, const char* b)
+inline size_t str_len(std::nullptr_t null) { return 0; }
+inline size_t str_len(long null) { return 0; }
+inline size_t str_len(const char* str) { return str ? strlen(str) : 0; }
+inline size_t str_len(const std::string& str) { return str.size(); }
+
+template <typename T, typename S1, typename S2>
+inline std::string str_replace(T&& s, const S1 &a, const S2 &b)
 {
     std::string r(std::forward<T>(s));
-    std::string::size_type n = strlen(a);
-    std::string::size_type bn = strlen(b);
+    std::string::size_type n = str_len(a);
+    std::string::size_type bn = str_len(b);
     for (std::string::size_type i = r.find(a); i != r.npos; i = r.find(a, i + bn))
     {
         r.replace(i, n, b);
@@ -221,18 +226,19 @@ inline std::string str_tostr(float a) { return str_format("%f", a); }
 inline std::string str_tostr(int a)   { return str_format("%d", a); }
 inline std::string str_tostr(uint a)  { return a < 0xfffff ? str_format("%d", a) : str_format("%#x", a); }
 inline std::string str_tostr(const char *a) { return a ? a : ""; }
-inline std::string str_tostr(const std::string &a) { return a; }
 inline std::string str_tostr(lstring a) { return a.str(); }
+inline const std::string &str_tostr(const std::string &a) { return a; }
+inline std::string str_tostr(std::string &&a) { return a; }
 
 template <class A>
 std::string str_join( const std::string &sep, const A &cont)
 {
     std::string result;
-    for (typename A::const_iterator it=cont.begin(), end=cont.end(); it!=end; ++it)
+    for (auto &it : cont)
     {
         if (!result.empty())
             result.append(sep);
-        result.append(str_tostr(*it));
+        result.append(str_tostr(it));
     }
     return result;
 }
@@ -326,6 +332,11 @@ inline bool str_contains(const std::string& str, const char *substr)
     return str.find(substr) != std::string::npos;
 }
 
+inline bool str_contains(const char* str, const char* substr)
+{
+    return strstr(str, substr) != NULL;
+}
+
 long chr_unshift(long chr);
 
 std::string str_demangle(const char* str);
@@ -353,14 +364,30 @@ inline std::string str_no_extension(const std::string &str)
         return str.substr(0, pt);
 }
 
-inline std::string str_basename(const std::string &str)
+std::string str_basename(const std::string &str);
+std::string str_dirname(const std::string &str);
+std::string str_path_standardize(const std::string &str);
+
+template <typename T, typename S>
+inline std::string str_path_join(T &&a, const S &b)
 {
-    size_t pt = str.rfind("/");
-    if (pt == std::string::npos)
-        return str;
-    else
-        return str.substr(pt+1);
+    std::string r(std::forward<T>(a));
+    if (r.back() == '/')
+        r.pop_back();
+    if (str_len(b)) {
+        if (b[0] != '/')
+            r += '/';
+        r += b;
+    }
+    return r;
 }
+
+template <typename T, typename S1, typename S2>
+inline std::string str_path_join(T &&a, const S1 &b, const S2 &c)
+{
+    return str_path_join(str_path_join(std::forward<T>(a), b), c);
+}
+
 
 template <typename Fun>
 inline std::string str_interpolateVariables(const std::string &str_, const Fun& fun)
@@ -376,5 +403,7 @@ inline std::string str_interpolateVariables(const std::string &str_, const Fun& 
     return str;
 }
 
+
+std::string str_urlencode(const std::string &value);
 
 #endif

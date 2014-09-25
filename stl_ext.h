@@ -82,6 +82,12 @@ inline void setBits(T &bits, const T &flag, bool val)
         bits &= ~flag;
 }
 
+template <typename T>
+inline bool hasBits(const T& val, const T& bits)
+{
+    return (val&bits) == bits;
+}
+
 inline bool isPow2(int x)
 { 
     return (x&(x-1)) == 0; 
@@ -845,13 +851,13 @@ inline bool vector_all(const T& v, const F& f)
 }
 
 
-template <typename R, typename T, typename Fun>
-inline std::vector<R> vector_map(const T &inv, Fun fun)
+template <typename T, typename Fun>
+inline auto vector_map(const T &inv, const Fun &fun) -> std::vector<decltype(fun(*std::begin(inv)))>
 {
-    std::vector<R> outs;
-    for (typename T::const_iterator it=inv.begin(), end=inv.end(); it != end; ++it)
+    std::vector<decltype(fun(*std::begin(inv)))> outs;
+    foreach (const auto &x, inv)
     {
-        outs.push_back(fun(*it));
+        outs.push_back(fun(x));
     }
     return outs;
 }

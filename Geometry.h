@@ -140,6 +140,9 @@ namespace std {
 template <typename T>
 inline bool fpu_error(T x) { return (std::isinf(x) || std::isnan(x)); }
 
+inline bool fpu_error(float2 x) { return fpu_error(x.x) || fpu_error(x.y); }
+inline bool fpu_error(float3 x) { return fpu_error(x.x) || fpu_error(x.y) || fpu_error(x.z); }
+
 
 static const float epsilon = 0.0001f;
 
@@ -365,6 +368,8 @@ inline float2 minlen(float min, float2 v)
 inline float lengthSqr(const float2 &a) { return a.x * a.x + a.y * a.y; }
 inline float distanceSqr(const float2 &a, const float2& b) { return lengthSqr(a-b); }
 
+inline float lengthSqr(const float3 &a) { return a.x * a.x + a.y * a.y + a.z * a.z; }
+inline float distanceSqr(const float3 &a, const float3& b) { return lengthSqr(a-b); }
 
 inline float todegrees(float radians) { return 360.f / (2.f * M_PIf) * radians; }
 inline float toradians(float degrees) { return 2.f * M_PIf / 360.0f * degrees; }
@@ -832,6 +837,7 @@ struct AABBox {
 
     float2 getRadius() const { return 0.5f * (mx-mn); }
     float2 getCenter() const { return 0.5f * (mx+mn); }
+    float getBRadius() const { return length(getRadius()); }
     bool   empty() const { return mn == mx; }
     
     float getArea() const

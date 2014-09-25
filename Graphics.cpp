@@ -65,7 +65,7 @@ static const char* textureFormatToString(GLint fmt)
     }
 }
 
-static GLint s_defaultFramebuffer = 0;
+static GLint s_defaultFramebuffer = -1;
 
 void GLRenderTexture::Generate()
 {
@@ -80,12 +80,12 @@ void GLRenderTexture::Generate()
     // textures must be a power of 2 on ios
     width = roundUpPower2(width);
     height = roundUpPower2(height);
-
-    if (s_defaultFramebuffer == 0)
+#endif
+    
+    if (s_defaultFramebuffer < 0)
     {
         glGetIntegerv(GL_FRAMEBUFFER_BINDING, &s_defaultFramebuffer);
     }
-#endif
 
     m_texsize = float2(width, height);
     DPRINT(SHADER, ("Generating render texture, %dx%d %s", width, height,
@@ -172,13 +172,16 @@ void GLRenderTexture::BindFramebuffer(float2 size, bool keepz)
     {
         const GLuint def = s_bound.size() ? s_bound.back()->m_fbname : s_defaultFramebuffer;
         ASSERT(def != m_fbname);
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, def);
-        glReportError();
-        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_fbname);
-        glReportError();
-        glBlitFramebufferEXT(0, 0, m_size.x, m_size.y, 0, 0, m_size.x, m_size.y,
-                             GL_DEPTH_BUFFER_BIT, GL_NEAREST);
-        glReportError();
+        if (def >= 0)
+        {
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, def);
+            glReportError();
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_fbname);
+            glReportError();
+            glBlitFramebufferEXT(0, 0, m_size.x, m_size.y, 0, 0, m_size.x, m_size.y,
+                                 GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+            glReportError();
+        }
     }
     else
 #endif
@@ -219,11 +222,14 @@ void GLRenderTexture::UnbindFramebuffer() const
     else
     {
         glReportFramebufferError();
-        glBindFramebuffer(GL_FRAMEBUFFER, s_defaultFramebuffer);
-        glReportError();
-        glReportFramebufferError();
-        glViewport(0, 0, globals.windowSizePixels.x, globals.windowSizePixels.y);
-        glReportError();
+        if (s_defaultFramebuffer >= 0)
+        {
+            glBindFramebuffer(GL_FRAMEBUFFER, s_defaultFramebuffer);
+            glReportError();
+            glReportFramebufferError();
+            glViewport(0, 0, globals.windowSizePixels.x, globals.windowSizePixels.y);
+            glReportError();
+        }
     }
 }
 
@@ -328,13 +334,10 @@ static bool ignoreShaderLog(const char* buf)
 {
     // damnit ATI driver
     static string kNoErrors = "No errors.\n";
-    static string kValidationSuccessful = "Validation successful";
-    static string kSuccessfulyCompiled = "successfully compiled";
-    static string kLinked = "Fragment shader(s) linked, vertex shader(s) linked. ";
     return (buf == kNoErrors ||
-            str_contains(buf, kValidationSuccessful) ||
-            str_contains(buf, kSuccessfulyCompiled) ||
-            str_contains(buf, kLinked));
+            str_contains(buf, "Validation successful") ||
+            str_contains(buf, "successfully compiled") ||
+            str_contains(buf, "Fragment shader(s) linked, vertex shader(s) linked. "));
 }
 
 static bool checkShaderInfoLog(const char* txt, GLuint prog)
@@ -359,7 +362,7 @@ static bool checkProgramInfoLog(GLuint prog, const char* name)
     GLsizei length = 0;
     glGetProgramInfoLog(prog, bufsize, &length, buf);
     if (length && !ignoreShaderLog(buf)) {
-        ReportMessagef("GL Program Info log %s: %s", name, buf);
+        ReportMessagef("GL Program Info log for '%s': %s", name, buf);
         ASSERT(length < bufsize);
         return 1;
     }
@@ -405,6 +408,7 @@ GLenum glReportError1(const char *file, uint line, const char *function)
 static string getGLFrameBufferStatusString(GLenum err)
 {
     switch(err) {
+        case 0: return "Error checking framebuffer status";
         CASE_STR(GL_FRAMEBUFFER_COMPLETE);
         CASE_STR(GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT);
         CASE_STR(GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT);
@@ -724,6 +728,34 @@ void fadeFullScreen(const ShaderState &s_, const View& view, uint color, float a
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_TRUE);
 }
+
+void sexyFillScreen(const ShaderState &ss, const View& view, uint color0, uint color1, float alpha)
+{
+    if (alpha < epsilon || (color0 == 0 && color1 == 0))
+        return;
+    glDepthMask(GL_FALSE);
+    glDisable(GL_DEPTH_TEST);
+    const float2 ws = view.sizePoints;
+    const float t = globals.renderTime / 20.f;
+    const uint a = ALPHAF(alpha);
+
+    // 1 2
+    // 0 3
+    const VertexPosColor v[] = {
+        VertexPosColor(float2(),  a|RGB2BGR(lerpXXX(color0, color1, unorm_sin(t)))),
+        VertexPosColor(justY(ws), a|RGB2BGR(lerpXXX(color0, color1, unorm_sin(3.f * t)))),
+        VertexPosColor(ws,        a|RGB2BGR(lerpXXX(color0, color1, unorm_sin(5.f * t)))),
+        VertexPosColor(justX(ws), a|RGB2BGR(lerpXXX(color0, color1, unorm_sin(7.f * t)))),
+    };
+    static const ushort i[] = {0, 1, 2, 0, 2, 3};
+
+    ShaderColorDither::instance().UseProgram(ss, &v[0], (VertexPosColor*) NULL);
+    ss.DrawElements(GL_TRIANGLES, 6, i);
+    ShaderColorDither::instance().UnuseProgram();
+
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+}    
 
 
 void PostProc::BindWriteFramebuffer()

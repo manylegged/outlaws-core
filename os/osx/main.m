@@ -13,6 +13,21 @@ void LogMessage(NSString *str);
 
 int main(int argc, char *argv[])
 {
+    const int mode = OLG_Init(argc, (const char**)argv);
+    if (mode == 0)
+    {
+        static NSOpenGLPixelFormatAttribute glAttributes[] = {
+            NSOpenGLPFADepthSize, (NSOpenGLPixelFormatAttribute)16, // 16 bit depth buffer
+        };
+        NSOpenGLPixelFormat *pixelFormat = [[NSOpenGLPixelFormat alloc]
+                                               initWithAttributes:glAttributes];
+        NSOpenGLContext *ctx = [[NSOpenGLContext alloc]
+                                initWithFormat:pixelFormat shareContext:nil];
+        [ctx makeCurrentContext];
+        OLG_Draw();
+        return 0;
+    }
+    
     @try 
     {
         return NSApplicationMain(argc, (const char **)argv);

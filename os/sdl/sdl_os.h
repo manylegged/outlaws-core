@@ -7,7 +7,7 @@
 //////////////// implemented in sdl.cpp
 
 // run the main loop
-int sdl_os_main(int argc, char **argv);
+int sdl_os_main(int argc, const char **argv);
 
 // store a string for one frame, then autorelease
 const char* sdl_os_autorelease(std::string &val);
@@ -22,8 +22,6 @@ void sdl_set_scaling_factor(float factor);
 
 // display a message box to the user on unrecoverable errors
 void os_errormessage(const char* msg);
-
-int os_copy_file(const char* source, const char* dest);
 
 int os_create_parent_dirs(const char* path);
 
