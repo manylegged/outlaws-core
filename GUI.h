@@ -60,15 +60,9 @@ struct WidgetBase {
 
 };
 
-inline bool isEventKey(const Event* event, const char* keys)
-{
-    return event && keys && event->key < 255 && strchr(keys, event->key);
-}
-
 struct ButtonBase : public WidgetBase {
-    
-    const char* keys = NULL;
-    
+
+    int keys[4];
     string tooltip;
     bool   pressed          = false;
     bool   visible          = true;
@@ -79,9 +73,8 @@ struct ButtonBase : public WidgetBase {
     uint   defaultBGColor   = kGUIBg;
     float  subAlpha         = 1.f;
 
-    
-    ButtonBase() {}
-    ButtonBase(const char* ks) : keys(ks) {}
+    ButtonBase() { memset(keys, 0, sizeof(keys)); }
+    ButtonBase(const char* ks) { setKeys(ks); }
 
     bool HandleEvent(const Event* event, bool* isActivate, bool* isPress=NULL);
     
@@ -90,6 +83,31 @@ struct ButtonBase : public WidgetBase {
 
     // draw selection triangle next to selected button
     void renderSelected(const ShaderState &ss, uint bgcolor, uint linecolor, float alpha) const;
+
+    void setKeys(const char* ks)
+    {
+        if (!ks || *ks == '\0')
+            return;
+        const int len = strlen(ks);
+        ASSERT(ks && isBetween(len, 1, (int)arraySize(keys)));
+        for (int i = 0; i < arraySize(keys); i++) {
+            keys[i] = i < len ? ks[i] : 0;
+        }
+    }
+
+    void setKeys(std::initializer_list<int> lst)
+    {
+        ASSERT(isBetween((int)lst.size(), 1, (int)arraySize(keys)));
+        for (int i = 0; i < arraySize(keys); i++) {
+            keys[i] = i < lst.size() ? *(lst.begin() + i) : 0;
+        }
+    }
+
+    void setEscapeKeys() { setKeys({ EscapeCharacter, GamepadB }); }
+    void setReturnKeys() { setKeys({ EscapeCharacter, '\r', GamepadA, GamepadB }); }
+    void setYesKeys()    { setKeys({ '\r', GamepadA }); }
+    void setNoKeys()     { setKeys({ EscapeCharacter, GamepadB }); }
+    void setDiscardKeys(){ setKeys({ NSDeleteFunctionKey, NSBackTabCharacter, GamepadY }); }
 };
 
 struct Button : public ButtonBase
@@ -522,6 +540,7 @@ struct TabWindow : public WidgetBase {
     int addTab(string txt, int ident, ITabInterface *inf);
 
     int getTab() const { return selected; }
+    ITabInterface* getActive() { return buttons[selected].interface; }
 
     float getTabHeight() const { return 2.f * kPadDist + 1.5f * GLText::getScaledSize(textSize); }
     float2 getContentsCenter() const { return position - float2(0.f, 0.5f * getTabHeight()); }
@@ -644,7 +663,7 @@ struct MessageBoxWidget : public WidgetBase {
     MessageBoxWidget()
     {
         okbutton.text = "OK";
-        okbutton.keys = "\r\033 ";
+        okbutton.setReturnKeys();
     }
 
     void updateFade();
@@ -663,9 +682,9 @@ struct ConfirmWidget : public WidgetBase {
     ConfirmWidget()
     {
         buttons[0].text = "OK";
-        buttons[0].keys = "";
+        buttons[0].setYesKeys();
         buttons[1].text = "Cancel";
-        buttons[1].keys = "\033";
+        buttons[1].setNoKeys();
     }
 };
 

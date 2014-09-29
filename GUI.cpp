@@ -35,7 +35,10 @@ bool ButtonBase::HandleEvent(const Event* event, bool* isActivate, bool* isPress
     bool handled = false;
     if (event->type == Event::KEY_DOWN || event->type == Event::KEY_UP)
     {
-        if (active && isEventKey(event, keys))
+        if (active && event->key && (event->key == keys[0] || 
+                                     event->key == keys[1] ||
+                                     event->key == keys[2] || 
+                                     event->key == keys[3]))
         {
             bool activate = !pressed && (event->type == Event::KEY_DOWN);
             handled       = true;
@@ -113,29 +116,17 @@ void ButtonBase::renderSelected(const ShaderState &ss, uint bgcolor, uint lineco
     ShaderUColor::instance().DrawLineTri(s, p + float2(0, sz.y), p + float2(sz.y / 2, 0), p + float2(0, -sz.y));
 }
 
-void Button::render(const ShaderState &s_, bool selected)
+void Button::render(const ShaderState &ss, bool selected)
 {
     if (!visible)
         return;
-    ShaderState ss = s_;
-    const GLText* tx = GLText::get(textFont, GLText::getScaledSize(textSize), text);
-    if (text.size() && !(style&S_FIXED)) {
-        size.y = tx->getSize().y + padding.y;
-        size.x = max(max(size.x, tx->getSize().x + padding.x),
-                     size.y * (float)kGoldenRatio);
-    }
 
-    if (style&S_BOX) {
-        DrawFilledRect(ss, position, 0.5f * size, getBGColor(), getFGColor(selected), alpha);
-    } else if (style&S_CORNERS) {
-        DrawButton(&ss, position, 0.5f * size, getBGColor(), getFGColor(selected), alpha);
-    }
-
-    if (tx) {
-        const uint tcolor = (!active) ? inactiveTextColor : textColor;
-        ss.color32(tcolor, alpha);
-        tx->render(&ss, position -0.5f * tx->getSize());
-    }
+    theDMesh().start();
+    renderButton(theDMesh());
+    theDMesh().Draw(ss, ShaderColor::instance(), ShaderColor::instance());
+    theDMesh().finish();
+    
+    renderText(ss);
 
     // draw selection triangle next to selected button
     if (selected)
@@ -165,8 +156,8 @@ void Button::renderButton(DMesh& mesh)
     if (text.size() && !(style&S_FIXED))
     {
         const float2 sz = getTextSize();
-        size.x = max(sz.x, sz.x + padding.x);
-        size.y = sz.y + padding.y;
+        size.y = sz.y;
+        size.x = max(max(size.x, sz.x), size.y * (float)kGoldenRatio);
     }
     
     if (style&S_BOX) {
@@ -181,13 +172,14 @@ void Button::renderText(const ShaderState &s_) const
     if (!visible)
         return;
     const uint tcolor = MultAlphaAXXX((!active) ? inactiveTextColor : textColor, alpha);
-    GLText::DrawStr(s_, position, subtext.size() ? GLText::CENTERED : GLText::MID_CENTERED,
-                    tcolor, textSize, text);
+    const float2 pos = position + justY(subtext.size() ? size.y * (0.5f - (textSize / (subtextSize + textSize))) : 0.f);
+    GLText::DrawStr(s_, pos, subtext.size() ? GLText::CENTERED : GLText::MID_CENTERED,
+                    textFont, tcolor, textSize, text);
     
     if (subtext.size())
     {
         const uint stc = MultAlphaAXXX(subtextColor, alpha);
-        GLText::DrawStr(s_, position , GLText::DOWN_CENTERED, stc, subtextSize, subtext);
+        GLText::DrawStr(s_, pos , GLText::DOWN_CENTERED, textFont, stc, subtextSize, subtext);
     }
 }
 
@@ -199,14 +191,17 @@ void TextInputBase::setText(const char* text, bool setSize)
     lines.push_back(string());
     string* line = &lines.back();
     uint longestLine = 0;
-    for (const char* ptr=text; *ptr != '\0'; ptr++) {
-        if (*ptr == '\n') {
-            lines.push_back(string());
-            line = &lines.back();
-        }
-        else {
-            line->push_back(*ptr);
-            longestLine = max(longestLine, (uint)line->size());
+    if (text)
+    {
+        for (const char* ptr = text; *ptr != '\0'; ptr++) {
+            if (*ptr == '\n') {
+                lines.push_back(string());
+                line = &lines.back();
+            }
+            else {
+                line->push_back(*ptr);
+                longestLine = max(longestLine, (uint)line->size());
+            }
         }
     }
     cursor = int2(lines[lines.size()-1].size(), lines.size()-1);
@@ -1088,7 +1083,8 @@ int TabWindow::addTab(string txt, int ident, ITabInterface *inf)
     TabButton &bu = buttons.back();
     bu.interface = inf;
     bu.text = txt;
-    bu.keys = lstring(str_format("%d", idx)).c_str();
+    if (idx < 9)
+        bu.keys[0] = str_format("%d", idx+1)[0];
     bu.ident = ident;
     return idx;
 }
@@ -1114,13 +1110,14 @@ bool TabWindow::HandleEvent(const Event* event)
         }
         i++;
     }
-    if (event->type == Event::KEY_DOWN && event->key == '\t')
+    
+    const int dkey = KeyState::instance().getDownKey(event);
+    const bool isLeft = dkey == (MOD_SHFT | '\t') || dkey == GamepadLeftShoulder;
+    const bool isRight = dkey == '\t' || dkey == GamepadRightShoulder;
+
+    if (isLeft || isRight)
     {
-        int next;
-        if (KeyState::instance()[OShiftKey])
-            next = modulo(selected-1, buttons.size());
-        else
-            next = (selected+1) % buttons.size();
+        int next = modulo(selected + (isLeft ? -1 : 1), buttons.size());
         if (next != selected)
             buttons[selected].interface->onSwapOut();
         selected = next;

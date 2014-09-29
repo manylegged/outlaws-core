@@ -170,7 +170,7 @@ void GLRenderTexture::BindFramebuffer(float2 size, bool keepz)
 #if !OPENGL_ES
     if (keepz)
     {
-        const GLuint def = s_bound.size() ? s_bound.back()->m_fbname : s_defaultFramebuffer;
+        const GLint def = s_bound.size() ? s_bound.back()->m_fbname : s_defaultFramebuffer;
         ASSERT(def != m_fbname);
         if (def >= 0)
         {

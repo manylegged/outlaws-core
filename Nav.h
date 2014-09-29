@@ -136,7 +136,7 @@ struct sNav {
     // output result
     snAction         action;
 
-    void tryRotateForAccel(float2 dir);
+    bool tryRotateForAccel(float2 dir);
 
     void setDest(const snConfig &dest1, uint dimensions, const snPrecision& prec)
     {

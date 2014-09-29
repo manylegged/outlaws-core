@@ -27,70 +27,6 @@
 
 inline string keyToString(int key);
 
-struct Event {
-    // !!! KEEP IN SYNC WITH Outlaws.h VERSION !!!
-    enum Type { KEY_DOWN=0, KEY_UP, MOUSE_DOWN, MOUSE_UP, MOUSE_DRAGGED, 
-                MOUSE_MOVED, SCROLL_WHEEL, LOST_FOCUS, GAINED_FOCUS,
-                TOUCH_BEGIN, TOUCH_MOVED, TOUCH_STATIONARY, TOUCH_ENDED, TOUCH_CANCELLED,
-                INVALID };
-    Type   type = INVALID;
-    int    key = 0;
-    int    rawkey = 0;
-    float2 pos;
-    float2 vel;
-
-    string toString() const
-    {
-        const string skey = keyToString(key);
-        switch(type)
-        {
-        case KEY_DOWN:      return str_format("KEY_DOWN %s",     skey.c_str());
-        case KEY_UP:        return str_format("KEY_UP %s",       skey.c_str());
-        case MOUSE_DOWN:    return str_format("MOUSE_DOWN %d (%.f, %.f)", (int)key, pos.x, pos.y);
-        case MOUSE_UP:      return str_format("MOUSE_UP %d (%.f, %.f)", (int)key, pos.x, pos.y);
-        case MOUSE_DRAGGED: return str_format("MOUSE_DRAGGED %d (%.f, %.f)",(int)key, pos.x, pos.y);
-        case MOUSE_MOVED:   return str_format("MOUSE_MOVED %d, (%.f, %.f)",  (int)key, pos.x, pos.y);
-        case SCROLL_WHEEL:  return str_format("SCROLL_WHEEL %g", vel.y);
-        case LOST_FOCUS:    return str_format("LOST_FOCUS");
-        default:            return "unknown";
-        }
-    }
-
-    bool isMouse() const
-    {
-        switch (type) {
-        case MOUSE_DOWN:
-        case MOUSE_UP:
-        case MOUSE_DRAGGED:
-        case MOUSE_MOVED:
-            return true;
-        default:
-            return false;
-        }
-    }
-
-    bool isKey() const
-    {
-        switch (type) {
-        case KEY_DOWN:
-        case KEY_UP:
-            return true;
-        default:
-            return false;
-        }
-    }
-
-    bool isDown() const
-    {
-        return type == KEY_DOWN || type == MOUSE_DOWN;
-    }
-
-    bool isUp() const
-    {
-        return type == KEY_UP || type == MOUSE_UP;
-    }
-};
-
 enum : int {
     NSEnterCharacter                = 0x0003,
     NSBackspaceCharacter            = 0x0008,
@@ -182,20 +118,125 @@ enum : int {
     MiddleMouseButton = 0xF74A,
 
     // OShiftKey, OControlKey, and OAltKey from Outlaws.h go here
+    
+    // gamepad buttons
+    GamepadA = 0xF74E,
+    GamepadB,
+    GamepadX,
+    GamepadY,
+    GamepadBack,
+    GamepadGuide,
+    GamepadStart,
+    GamepadLeftStick,
+    GamepadRightSitck,
+    GamepadLeftShoulder,
+    GamepadRightShoulder,
+    GamepadDPadUp,
+    GamepadDPadDown,
+    GamepadDPadLeft,
+    GamepadDPadRight,
 
-    SpecialKeyCount = 0xF74E,
+    // synthetic gamepad axis buttons
+    GamepadLeftUp,
+    GamepadLeftDown,
+    GamepadLeftLeft,
+    GamepadLeftRight,
+    GamepadRightUp,
+    GamepadRightDown,
+    GamepadRightLeft,
+    GamepadRightRight,
+    GamepadTriggerLeft,
+    GamepadTriggerRight,
+
+    // gamepad axes
+    GamepadAxisLeftX,
+    GamepadAxisLeftY,
+    GamepadAxisRightX,
+    GamepadAxisRightY,
+    GamepadAxisTriggerLeftY,
+    GamepadAxisTriggerRightY,
+
+    SpecialKeyCount
+};
+
+
+struct Event {
+    // !!! KEEP IN SYNC WITH Outlaws.h VERSION !!!
+    enum Type { KEY_DOWN=0, KEY_UP, MOUSE_DOWN, MOUSE_UP, MOUSE_DRAGGED, 
+                MOUSE_MOVED, SCROLL_WHEEL, LOST_FOCUS, GAINED_FOCUS,
+                TOUCH_BEGIN, TOUCH_MOVED, TOUCH_STATIONARY, TOUCH_ENDED, TOUCH_CANCELLED,
+                GAMEPAD_AXIS,
+                INVALID };
+    Type   type = INVALID;
+    int    key = 0;
+    int    rawkey = 0;
+    float2 pos;
+    float2 vel;
+
+    string toString() const;
+    bool isMouse() const;
+    bool isKey() const;
+
+    bool isKeyDown(const char* keys) const
+    {
+        return type == KEY_DOWN && keys && key < 255 && strchr(keys, key);
+    }
+
+    bool isKeyDown(int k) const
+    {
+        return type == KEY_DOWN && key == k;
+    }
+
+    bool isDown() const
+    {
+        return type == KEY_DOWN || type == MOUSE_DOWN;
+    }
+
+    bool isUp() const
+    {
+        return type == KEY_UP || type == MOUSE_UP;
+    }
+
+    bool isStart() const
+    {
+        return type == KEY_DOWN && (key == EscapeCharacter || 
+                                    key == GamepadStart);
+    }
+
+    bool isEscape() const
+    {
+        return type == KEY_DOWN && (key == EscapeCharacter || 
+                                    key == GamepadB ||
+                                    key == GamepadBack);
+    }
+
+    bool isEnter() const
+    {
+        return type == KEY_DOWN && (key == '\r' || key == GamepadA);
+    }
+
 };
 
 enum KeyMods {
     MOD_CTRL = 1<<18,
-    MOD_ALT     = 1<<19,
-    MOD_SHFT   = 1<<20
+    MOD_ALT  = 1<<19,
+    MOD_SHFT = 1<<20,
+    MOD_MASK = MOD_CTRL|MOD_ALT|MOD_SHFT,
+};
+
+enum GamepadAxis {
+    GamepadAxisLeft = 0,
+    GamepadAxisRight,
+    GamepadAxisTriggerLeft,
+    GamepadAxisTriggerRight,
+    GamepadAxisCount
 };
 
 class KeyState {
     bool ascii[256];
     bool function[SpecialKeyCount - NSUpArrowFunctionKey];
     bool misc;
+    float2 gamepadAxis[GamepadAxisCount + 1];
 
 public:
 
@@ -206,28 +247,30 @@ public:
         reset();
     }
 
-    bool& operator[](int c)
+    float2 &getAxis(GamepadAxis axis)
     {
-        if (0 <= c && c < 256)
-            return ascii[c];
-        if (NSUpArrowFunctionKey <= c && c < SpecialKeyCount)
-            return function[c - NSUpArrowFunctionKey];
+        if (0 > axis || axis >= GamepadAxisCount)
+            return gamepadAxis[GamepadAxisCount];
         else
-            ASSERT(0);
-        return misc;
+            return gamepadAxis[axis];
     }
+
+    bool anyAxis() const
+    {
+        foreach (const float2& ax, gamepadAxis)
+            if (!isZero(ax))
+                return true;
+        return false;
+    }
+
+    bool& operator[](int c);
 
     bool operator[](int c) const
     {
         return (*const_cast<KeyState*>(this))[c];
     }
 
-    void reset()
-    {
-        memset(ascii, false, sizeof(ascii));
-        memset(function, false, sizeof(function));
-        misc = false;
-    }
+    void reset();
 
     void cancelMouseDown()
     {
@@ -236,17 +279,35 @@ public:
         (*this)[2 + LeftMouseButton] = false;
     }
 
-    uint keyMods() const
+    uint keyMods() const;
+
+    int getUpKey(const Event *evt) const
     {
-        uint mods = 0;
-        if ((*this)[OControlKey])
-            mods |= MOD_CTRL;
-        if ((*this)[OShiftKey])
-            mods |= MOD_SHFT;
-        if ((*this)[OAltKey])
-            mods |= MOD_ALT;
-        return mods;
+        return ((evt->type == Event::KEY_UP) ? (getModKey(evt->key)) :
+                (evt->type == Event::MOUSE_UP) ? getModKey(evt->key + LeftMouseButton) :
+                0);
     }
+
+    int getDownKey(const Event *evt) const
+    {
+        return ((evt->type == Event::KEY_DOWN) ? getModKey(evt->key) :
+                (evt->type == Event::MOUSE_DOWN) ? getModKey(evt->key + LeftMouseButton) :
+                0);
+    }
+
+    int getModKey(int key) const
+    {
+        const int mkey = key|keyMods();
+        if (chr_unshift(key) != key)
+        {
+            return mkey&~MOD_SHFT;
+        }
+        return mkey;
+    }
+
+    // update current button state
+    // returns new synthetic event to process
+    Event OnEvent(const Event* event);
 
     static KeyState &instance()
     {
@@ -256,48 +317,18 @@ public:
 
 };
 
-inline string keyToString(int key)
+string keyToString(int key);
+
+inline bool isKeyMod(int key)
 {
-    switch (key) 
+    switch (key)
     {
-    case LeftMouseButton: return "Left Mouse";
-    case RightMouseButton: return "Right Mouse";
-    case MiddleMouseButton: return "Middle Mouse";
-    case NSUpArrowFunctionKey: return "Up";
-    case NSDownArrowFunctionKey: return "Down";
-    case NSRightArrowFunctionKey: return "Right";
-    case NSLeftArrowFunctionKey: return "Left";
-    case OShiftKey: return "Shift";
-    case OControlKey: return "Control";
-    case OAltKey: return "Alt";
-    case '\t': return "Tab";
-    case '\r': return "Enter";
-    case ' ': return "Space";
-    case NSPageUpFunctionKey: return "Page Up";
-    case NSPageDownFunctionKey: return "Page Down";
-    case NSHomeFunctionKey: return "Home";
-    case NSEndFunctionKey: return "End";
-    case NSDeleteFunctionKey: return "Delete";
-    case NSBackspaceCharacter: return "Backspace";
-    case EscapeCharacter: return "Escape";
-    case NSF1FunctionKey: return "F1";
-    case NSF2FunctionKey: return "F2";
-    case NSF3FunctionKey: return "F3";
-    case NSF4FunctionKey: return "F4";
-    case NSF5FunctionKey: return "F5";
-    case NSF6FunctionKey: return "F6";
-    case NSF7FunctionKey: return "F7";
-    case NSF8FunctionKey: return "F8";
-    case NSF9FunctionKey: return "F9";
-    case NSF10FunctionKey: return "F10";
-    case NSF11FunctionKey: return "F11";
-    case NSF12FunctionKey: return "F12";
-    case 0: return " ";
+    case OControlKey:
+    case OShiftKey:
+    case OAltKey:
+        return true;
     default:
-        if (isprint(key))
-            return str_format("%c", key);
-        else
-            return str_format("%#x", key);
+        return false;
     }
 }
 

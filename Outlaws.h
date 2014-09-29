@@ -42,6 +42,7 @@ struct OLEvent {
     enum EventType { KEY_DOWN=0, KEY_UP, MOUSE_DOWN, MOUSE_UP, MOUSE_DRAGGED, 
                      MOUSE_MOVED, SCROLL_WHEEL, LOST_FOCUS, GAINED_FOCUS,
                      TOUCH_BEGIN, TOUCH_MOVED, TOUCH_STATIONARY, TOUCH_ENDED, TOUCH_CANCELLED,
+                     GAMEPAD_AXIS,
                      INVALID };
     enum EventType type;
     long key;

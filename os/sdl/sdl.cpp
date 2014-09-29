@@ -92,7 +92,7 @@ void anonymizeUsername(string &str)
 void OL_ReportMessage(const char *str_)
 {
 #if _MSC_VER
-	OutputDebugStringA((LPCSTR)str_);
+    OutputDebugStringA((LPCSTR)str_);
 #else
     printf("%s", str_);
 #endif
@@ -148,7 +148,7 @@ double OL_GetCurrentTime()
         frequency = (double)freq.QuadPart;
     }
 
-	LARGE_INTEGER count;
+    LARGE_INTEGER count;
     QueryPerformanceCounter(&count);
 
     static LARGE_INTEGER start = count;
@@ -186,6 +186,7 @@ static int getSystemRam()
 #if WIN32
     return SDL_GetSystemRAM();
 #else
+    // this call introduced in SDL 2.0.1 - backwards compatability
     typedef int SDLCALL (*PSDL_GetSystemRam)(void);
     PSDL_GetSystemRam pSDL_GetSystemRam = (PSDL_GetSystemRam) getSymbol("libSDL2-2.0.so.0", "SDL_GetSystemRAM");
     return pSDL_GetSystemRam ? pSDL_GetSystemRam() : 0;
@@ -345,13 +346,13 @@ struct OutlawTexture OL_LoadTexture(const char* fname)
     glBindTexture(GL_TEXTURE_2D, texture);
  
     //glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
  
     glTexImage2D(GL_TEXTURE_2D, 0, nOfColors, surface->w, surface->h, 0,
                   texture_format, GL_UNSIGNED_BYTE, surface->pixels);
 
-	//gluBuild2DMipmaps( GL_TEXTURE_2D, nOfColors, surface->w, surface->h,
+    //gluBuild2DMipmaps( GL_TEXTURE_2D, nOfColors, surface->w, surface->h,
     //               texture_format, GL_UNSIGNED_BYTE, surface->pixels );
  
     SDL_FreeSurface(surface);
@@ -426,7 +427,7 @@ TTF_Font* getFont(int fontName, float size)
 {
     std::lock_guard<std::mutex> l(g_fontMutex);
 
-	const int   isize = int(round(size * g_scaling_factor));
+    const int   isize = int(round(size * g_scaling_factor));
     const uint  key   = (fontName<<16)|isize;
     TTF_Font*  &font  = g_fonts[key];
 
@@ -455,26 +456,26 @@ void OL_SetFont(int index, const char* file, const char* name)
 void OL_FontAdvancements(int fontName, float size, struct OLSize* advancements)
 {
     TTF_Font* font = getFont(fontName, size);
-	for (uint i=0; i<128; i++)
-	{
-		int minx,maxx,miny,maxy,advance;
-		if (TTF_GlyphMetrics(font,i,&minx,&maxx,&miny,&maxy,&advance) == 0)
-		{
-			advancements[i].x = advance / g_scaling_factor;
-		}
-		else
-		{
-			ReportSDL("Error getting glyph size for glyph %d/'%c'", i, i);
-			advancements[i].x = 0.f;
-		}
-		advancements[i].y = 0.f;
-	}
+    for (uint i=0; i<128; i++)
+    {
+        int minx,maxx,miny,maxy,advance;
+        if (TTF_GlyphMetrics(font,i,&minx,&maxx,&miny,&maxy,&advance) == 0)
+        {
+            advancements[i].x = advance / g_scaling_factor;
+        }
+        else
+        {
+            ReportSDL("Error getting glyph size for glyph %d/'%c'", i, i);
+            advancements[i].x = 0.f;
+        }
+        advancements[i].y = 0.f;
+    }
 }
 
 float OL_FontHeight(int fontName, float size)
 {
     const TTF_Font* font = getFont(fontName, size);
-	return TTF_FontLineSkip(font) / g_scaling_factor;
+    return TTF_FontLineSkip(font) / g_scaling_factor;
 }
 
 struct Strip {
@@ -486,7 +487,7 @@ struct Strip {
 
 int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int _font, float maxw, float maxh)
 {
-	TTF_Font* font = getFont(_font, size);
+    TTF_Font* font = getFont(_font, size);
     if (!font)
         return 0;
 
@@ -559,7 +560,7 @@ int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int _font,
     const int font_pixel_height = TTF_FontLineSkip(font);
     const int text_pixel_height = newlines * font_pixel_height;
 
-	SDL_Surface *intermediary = SDL_CreateRGBSurface(0, text_pixel_width, text_pixel_height, 32, 0x00ff0000, 0x0000ff00, 0x000000ff, 0xff000000);
+    SDL_Surface *intermediary = SDL_CreateRGBSurface(0, text_pixel_width, text_pixel_height, 32, 0x00ff0000, 0x0000ff00, 0x000000ff, 0xff000000);
 
     SDL_Color color;
     memset(&color, 255, sizeof(color));
@@ -593,14 +594,14 @@ int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int _font,
     }
 
     glGenTextures(1, &tex->texnum);
-	glBindTexture(GL_TEXTURE_2D, tex->texnum);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE_ALPHA, text_pixel_width, text_pixel_height, 
+    glBindTexture(GL_TEXTURE_2D, tex->texnum);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE_ALPHA, text_pixel_width, text_pixel_height, 
                  0, GL_BGRA, GL_UNSIGNED_BYTE, intermediary->pixels);
     glReportError();
 
-	SDL_FreeSurface(intermediary);
+    SDL_FreeSurface(intermediary);
 
     tex->width = text_pixel_width;
     tex->height = text_pixel_height;
@@ -710,6 +711,47 @@ static int keysymToKey(const SDL_Keysym &keysym)
     }
 }
 
+static bool initGamepad()
+{
+    static bool loadedMappings = true;
+    if (!loadedMappings)
+    {
+        SDL_version linked;
+        SDL_GetVersion(&linked);
+        if (linked.minor > 0 || linked.patch > 1)
+        {
+            const int mappings = SDL_GameControllerAddMappingsFromFile(OL_PathForFile("data/gamecontrollerdb.txt", "r"));
+            ReportSDL("Loaded %d game controller mappings: %s", max(0, mappings), mappings < 0 ? SDL_GetError() : "OK");
+        }
+        loadedMappings = true;
+    }
+
+    /* Open the first available controller. */
+    static SDL_GameController *controller = NULL;
+
+    if (controller)
+    {
+        SDL_GameControllerClose(controller);
+    }
+
+    for (int i = 0; i < SDL_NumJoysticks(); ++i) {
+        if (SDL_IsGameController(i)) {
+            controller = SDL_GameControllerOpen(i);
+            if (controller) {
+                break;
+            } else {
+                ReportSDL("Could not open gamecontroller %i: %s", i, SDL_GetError());
+            }
+        }
+    }
+
+    if (!controller)
+        return false;
+
+    ReportSDL("Found a valid controller, named: %s", SDL_GameControllerName(controller));
+    
+    return true;
+}
 
 static void HandleEvents()
 {
@@ -810,10 +852,15 @@ static void HandleEvents()
             e.x = evt.motion.x / g_scaling_factor;
             e.y = (g_screenSize.y - evt.motion.y) / g_scaling_factor;
             const Uint8 state = evt.motion.state;
-            e.key = ((state&SDL_BUTTON_LMASK) ? 0 : 
-                     (state&SDL_BUTTON_RMASK) ? 1 :
-                     (state&SDL_BUTTON_MMASK) ? 2 : -1);
-            e.type = e.key != -1 ? OLEvent::MOUSE_DRAGGED : OLEvent::MOUSE_MOVED;
+            const int key = ((state&SDL_BUTTON_LMASK) ? 0 : 
+                             (state&SDL_BUTTON_RMASK) ? 1 :
+                             (state&SDL_BUTTON_MMASK) ? 2 : -1);
+            if (key == -1) {
+                e.type = OLEvent::MOUSE_MOVED;
+            } else {
+                e.key = key;
+                e.type = OLEvent::MOUSE_DRAGGED;
+            }
             OLG_OnEvent(&e);
             break;
         }
@@ -840,7 +887,45 @@ static void HandleEvents()
             OLG_OnEvent(&e);
             break;
         }
-        break;
+        case SDL_CONTROLLERDEVICEADDED:
+        {
+            const SDL_ControllerDeviceEvent &cdev = evt.cdevice;
+            ReportSDL("SDL_CONTROLLERDEVICEADDED");
+            initGamepad();
+            break;
+        }
+        case SDL_CONTROLLERDEVICEREMOVED:
+        {
+            const SDL_ControllerDeviceEvent &cdev = evt.cdevice;
+            ReportSDL("SDL_CONTROLLERDEVICEREMOVED");
+            break;
+        }
+        case SDL_CONTROLLERAXISMOTION: 
+        {
+            const SDL_ControllerAxisEvent &caxis = evt.caxis;
+            e.type = OLEvent::GAMEPAD_AXIS;
+            e.y = caxis.value / 32767.f;
+            switch (caxis.axis)
+            {
+            case SDL_CONTROLLER_AXIS_LEFTX: e.key = GamepadAxisLeftX; break;
+            case SDL_CONTROLLER_AXIS_LEFTY: e.key = GamepadAxisLeftY; break;
+            case SDL_CONTROLLER_AXIS_RIGHTX: e.key = GamepadAxisRightX; break;
+            case SDL_CONTROLLER_AXIS_RIGHTY: e.key = GamepadAxisRightY; break;
+            case SDL_CONTROLLER_AXIS_TRIGGERLEFT: e.key = GamepadAxisTriggerLeftY; break;
+            case SDL_CONTROLLER_AXIS_TRIGGERRIGHT: e.key = GamepadAxisTriggerRightY; break;
+            }
+            OLG_OnEvent(&e);
+            break;
+        }
+        case SDL_CONTROLLERBUTTONDOWN: // fallthrough
+        case SDL_CONTROLLERBUTTONUP:
+        {
+            const SDL_ControllerButtonEvent &cbutton = evt.cbutton;
+            e.key = (int)cbutton.button + GamepadA;
+            e.type = cbutton.state == SDL_PRESSED ? OLEvent::KEY_DOWN : OLEvent::KEY_UP;
+            OLG_OnEvent(&e);
+            break;
+        }
         case SDL_QUIT:
             // FIXME call OLG_OnClose
             g_quitting = true;
@@ -978,11 +1063,15 @@ static int initGlew()
     }
     return 0;
 }
-    
+
 
 int sdl_os_main(int argc, const char **argv)
 {
-    SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER);
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_GAMECONTROLLER ) < 0)
+    {
+        os_errormessage("SDL Init failed");
+        return 1;
+    }
 
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     SDL_GL_SetAttribute(SDL_GL_RED_SIZE, 8);
