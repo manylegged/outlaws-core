@@ -24,7 +24,7 @@ supported compilers
 libraries
 --------------
 * OpenGL: http://www.opengl.org
+* OpenGL Extension Wrangler Library (GLEW): http://glew.sourceforge.net
 * OpenGL Mathematics Library: http://glm.g-truc.net
 * Simple DirectMedia Layer: http://www.libsdl.org
-* OpenGL Extension Wrangler Library (GLEW): http://glew.sourceforge.net
 * cAudio 3D audio engine based on OpenAL (with my modifications): https://github.com/manylegged/cAudio

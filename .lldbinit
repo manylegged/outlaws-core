@@ -3,26 +3,28 @@
 #
 # Causes common types used in my game to be more easily readable in the Xcode debugger
 #
+# Careful! some summary formats crash xcode
+
+settings set target.x86-disassembly-flavor intel
 
 type summary add --summary-string "${var.m_ptr}" lstring
 #type summary add --inline-children --omit-names lstring
-type summary add --summary-string "${var.val}" trit
-type summary add --summary-string "${var.x}, ${var.y}" float2
-type summary add --summary-string "${var.x}, ${var.y}" double2
-type summary add --summary-string "${var.x}, ${var.y}" cpVect
-type summary add --summary-string "${var.x}, ${var.y}" int2
-type summary add --summary-string "${var.x}, ${var.y}, ${var.z}" float3
-type summary add --summary-string "${var.x}, ${var.y}, ${var.z}" double3
-type summary add --inline-children --omit-names float4
-type summary add --inline-children --omit-names double4
+type summary add --inline-children --omit-names float2 double2 cpVect int2 trit float3
+#type summary add --inline-children --omit-names float2 double2 cpVect int2 float3 double3 float4 double4 watch_ptr_base trit
+type summary add --inline-children AABBox
 
-type summary add --inline-children --omit-names -x "copy_ptr.*"
-type summary add --inline-children --omit-names -x "watch_ptr.*"
+#type summary add --inline-children --omit-names -x "^SerialEnum<.+>(( )?&)?$"
+# type summary add --inline-children --omit-names -x "^copy_ptr<.+>(( )?&)?$"
+# type summary add --inline-children --omit-names -x "^watch_ptr<.+>(( )?&)?$"
+
+type format add -f hex Features uint64 "unsigned long long"
+type summary add --inline-children --omit-names -x "SerialEnum"
+
 type summary add --inline-children --omit-names -x "^std::pair<.+>(( )?&)?$"
-type summary add --summary-string "elements=${var.m_elements} ${var.m_cells}" -x "^spacial_hash<.+>(( )?&)?$"
+#type summary add --summary-string "elements=${var.m_elements} ${var.m_cells}" -x "^spacial_hash<.+>(( )?&)?$"
 
 #type summary add --summary-string "{name=${var.name}} ${var.blocks}" SerialCluster
-#type summary add --summary-string "{addr=${var%V} name=${var.name}} ${var.blocks}" BlockCluster
+type summary add --summary-string "{addr=${var%V} name=${var.name} ${var.blocks}}" BlockCluster
 type summary add --summary-string "{name=${var.name} ident=${var.ident} features=${var.features%x}}" SerialBlock
 type summary add --summary-string "addr=${var%V} ${var.sb}" Block
 # type summary add --inline-children BlockPosition
