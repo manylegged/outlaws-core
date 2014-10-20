@@ -26,6 +26,7 @@
 #include "StdAfx.h"
 #include "Event.h"
 
+
 string Event::toString() const
 {
     const string skey = keyToString(key);
@@ -133,6 +134,7 @@ Event KeyState::OnEvent(const Event* event)
     case Event::MOUSE_DRAGGED:
     {
         cursorPosScreen = event->pos;
+        gamepadActive = false;
         break;
     }
     case Event::GAMEPAD_AXIS: 
@@ -147,29 +149,35 @@ Event KeyState::OnEvent(const Event* event)
         case GamepadAxisTriggerLeftY:  val = &getAxis(GamepadAxisTriggerLeft).y; break;
         case GamepadAxisTriggerRightY: val = &getAxis(GamepadAxisTriggerRight).y; break;
         }
-        // create button up or down events when each axis toggles
-        const bool isDown = *val == 0.f && event->pos.y != 0.f;
-        const bool isUp   = *val != 0.f && event->pos.y == 0.f;
-        if (isDown || isUp)
+        if (val)
         {
-            revent.type = isDown ? Event::KEY_DOWN : Event::KEY_UP;
-            const int key = event->key;
-            const bool isPlus = *val > 0.f || event->pos.y > 0.f;
-            if (key == GamepadAxisLeftX && isPlus)        revent.key = GamepadLeftLeft;
-            else if (key == GamepadAxisLeftX && !isPlus)  revent.key = GamepadLeftRight;
-            else if (key == GamepadAxisLeftY && isPlus)   revent.key = GamepadLeftDown;
-            else if (key == GamepadAxisLeftY && !isPlus)  revent.key = GamepadLeftUp;
-            else if (key == GamepadAxisRightX && isPlus)  revent.key = GamepadRightLeft;
-            else if (key == GamepadAxisRightX && !isPlus) revent.key = GamepadRightRight;
-            else if (key == GamepadAxisRightY && isPlus)  revent.key = GamepadRightDown;
-            else if (key == GamepadAxisRightY && !isPlus) revent.key = GamepadRightUp;
-            else if (key == GamepadAxisTriggerLeftY)      revent.key = GamepadTriggerLeft;
-            else if (key == GamepadAxisTriggerRightY)     revent.key = GamepadTriggerRight;
-            revent.rawkey = revent.key;
+            // create button up or down events when each axis toggles
+            const bool isDown = *val == 0.f && event->pos.y != 0.f;
+            const bool isUp   = *val != 0.f && event->pos.y == 0.f;
+            if (isDown || isUp)
+            {
+                revent.type = isDown ? Event::KEY_DOWN : Event::KEY_UP;
+                const int key = event->key;
+                const bool isPlus = *val > 0.f || event->pos.y > 0.f;
+                if (key == GamepadAxisLeftX && isPlus)        revent.key = GamepadLeftLeft;
+                else if (key == GamepadAxisLeftX && !isPlus)  revent.key = GamepadLeftRight;
+                else if (key == GamepadAxisLeftY && isPlus)   revent.key = GamepadLeftDown;
+                else if (key == GamepadAxisLeftY && !isPlus)  revent.key = GamepadLeftUp;
+                else if (key == GamepadAxisRightX && isPlus)  revent.key = GamepadRightLeft;
+                else if (key == GamepadAxisRightX && !isPlus) revent.key = GamepadRightRight;
+                else if (key == GamepadAxisRightY && isPlus)  revent.key = GamepadRightDown;
+                else if (key == GamepadAxisRightY && !isPlus) revent.key = GamepadRightUp;
+                else if (key == GamepadAxisTriggerLeftY)      revent.key = GamepadTriggerLeft;
+                else if (key == GamepadAxisTriggerRightY)     revent.key = GamepadTriggerRight;
+                revent.rawkey = revent.key;
+            }
+            *val = event->pos.y;
+            if (abs(event->pos.y) > epsilon)
+                gamepadActive = true;
         }
-        *val = event->pos.y;
         break;
     }
+    case Event::GAMEPAD_REMOVED:
     case Event::LOST_FOCUS:
         reset();
         fflush(NULL); // flush all open streams

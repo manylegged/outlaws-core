@@ -190,7 +190,8 @@ inline float vectorToAngle(float2 vec) { return std::atan2(vec.y, vec.x); }
 // return [-1, 1] indicating how closely the angles are alligned
 inline float dotAngles(float a, float b)
 {
-    return dot(angleToVector(a), angleToVector(b));
+    //return dot(angleToVector(a), angleToVector(b));
+    return cos(abs(a-b));
 }
 
 #define M_PIf float(M_PI)
@@ -210,6 +211,14 @@ inline float2 rotateN90(float2 v) { return float2(v.y, -v.x); }
 
 inline float getAngleError(float a, float b)
 {
+#if 1
+    const float e = dotAngles(a, b + M_PI_2f);
+    if (dotAngles(a, b) >= 0.f)
+        return e;
+    else
+        // return sign(e) * 2.f - e;
+        return std::copysign(2.f, e) - e;
+#else
     const float2 va = angleToVector(a);
     const float2 vb = angleToVector(b);
     const float e = dot(va, rotate90(vb));
@@ -218,6 +227,7 @@ inline float getAngleError(float a, float b)
     else
         // return sign(e) * 2.f - e;
         return std::copysign(2.f, e) - e;
+#endif
 }
 
 static const double kGoldenRatio = 1.61803398875;
@@ -580,6 +590,23 @@ inline float smootherstep(float edge0, float edge1, float x)
 inline float bellcurve(float x)
 {
     return 0.5f * (-cos(M_TAOf * x) + 1);
+}
+
+float snoise(float2 v);
+
+
+// x is -2.5 to 1
+// y is   -1 to 1
+inline int mandelbrot(double x0, double y0, int max_iteration)
+{
+    int i=0;
+    for (double x=0, y=0; x*x + y*y < 4.0 && i < max_iteration; i++)
+    {
+        double xtemp = x*x - y*y + x0;
+        y = 2.0*x*y + y0;
+        x = xtemp;
+    }
+    return i;
 }
 
 struct BCircle { 

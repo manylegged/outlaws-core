@@ -56,7 +56,7 @@ void GLText::load(const string& str, int font_, float size, float pointSize)
         }
     }
 
-    DPRINT(GUI, ("Rendered string texture %3d chars, %d/%.1f: %3dx%3d@%.fx", 
+    DPRINT(GUI, ("Rendered string texture %3d chars, %d/%.1f: %03dx%03d@%.fx", 
                  (int)str.size(), font, size, texture.width, texture.height, texPointSize));
 }
 

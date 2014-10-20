@@ -34,6 +34,8 @@
 #define ASSERT_MAIN_THREAD()
 #endif
 
+bool supports_ARB_Framebuffer_object = false;
+
 static const uint kDebugFrames = 10;
 
 bool isGLExtensionSupported(const char *name)
@@ -178,8 +180,8 @@ void GLRenderTexture::BindFramebuffer(float2 size, bool keepz)
             glReportError();
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_fbname);
             glReportError();
-            glBlitFramebufferEXT(0, 0, m_size.x, m_size.y, 0, 0, m_size.x, m_size.y,
-                                 GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+            glBlitFramebuffer(0, 0, m_size.x, m_size.y, 0, 0, m_size.x, m_size.y,
+                              GL_DEPTH_BUFFER_BIT, GL_NEAREST);
             glReportError();
         }
     }
@@ -347,7 +349,7 @@ static bool checkShaderInfoLog(const char* txt, GLuint prog)
     GLsizei length = 0;
     glGetShaderInfoLog(prog, bufsize, &length, buf);
     if (length && !ignoreShaderLog(buf)) {
-        string st = str_addLineNumbers(txt);
+        string st = str_add_line_numbers(txt);
         ReportMessagef("GL Shader Info Log:\n%s\n%s", st.c_str(), buf);
         ASSERT(length < bufsize);
         return 1;
@@ -416,6 +418,7 @@ static string getGLFrameBufferStatusString(GLenum err)
 #if OPENGL_ES
         CASE_STR(GL_FRAMEBUFFER_INCOMPLETE_DIMENSIONS);
 #else
+        CASE_STR(GL_FRAMEBUFFER_INCOMPLETE_DIMENSIONS_EXT);
         CASE_STR(GL_FRAMEBUFFER_UNDEFINED);
         CASE_STR(GL_FRAMEBUFFER_INCOMPLETE_DRAW_BUFFER);
         CASE_STR(GL_FRAMEBUFFER_INCOMPLETE_READ_BUFFER);
@@ -691,18 +694,18 @@ void DrawButton(const ShaderState *data, float2 pos, float2 r, uint bgColor, uin
 {
     if (alpha < epsilon)
         return;
-    DMesh vp;
-    PushButton(&vp.tri, &vp.line, pos, r, bgColor, fgColor, alpha);
-    vp.Draw(*data, ShaderColor::instance(), ShaderColor::instance());
+    DMesh::Handle h(theDMesh());
+    PushButton(&h.mp.tri, &h.mp.line, pos, r, bgColor, fgColor, alpha);
+    h.Draw(*data);
 }
 
-void DrawFilledRect(const ShaderState &s_, float2 pos, float2 size, uint bgColor, uint fgColor, float alpha)
+void DrawFilledRect(const ShaderState &s_, float2 pos, float2 rad, uint bgColor, uint fgColor, float alpha)
 {
     ShaderState ss = s_;
     ss.color32(bgColor, alpha);
-    ShaderUColor::instance().DrawRect(ss, pos, size);
+    ShaderUColor::instance().DrawRect(ss, pos, rad);
     ss.color32(fgColor,alpha);
-    ShaderUColor::instance().DrawLineRect(ss, pos, size);
+    ShaderUColor::instance().DrawLineRect(ss, pos, rad);
 }
 
 void PushRect(TriMesh<VertexPosColor>* triP, LineMesh<VertexPosColor>* lineP, float2 pos, float2 r, 
@@ -742,10 +745,10 @@ void sexyFillScreen(const ShaderState &ss, const View& view, uint color0, uint c
     // 1 2
     // 0 3
     const VertexPosColor v[] = {
-        VertexPosColor(float2(),  a|RGB2BGR(lerpXXX(color0, color1, unorm_sin(t)))),
-        VertexPosColor(justY(ws), a|RGB2BGR(lerpXXX(color0, color1, unorm_sin(3.f * t)))),
-        VertexPosColor(ws,        a|RGB2BGR(lerpXXX(color0, color1, unorm_sin(5.f * t)))),
-        VertexPosColor(justX(ws), a|RGB2BGR(lerpXXX(color0, color1, unorm_sin(7.f * t)))),
+        VertexPosColor(float2(),  a|rgb2bgr(lerpXXX(color0, color1, unorm_sin(t)))),
+        VertexPosColor(justY(ws), a|rgb2bgr(lerpXXX(color0, color1, unorm_sin(3.f * t)))),
+        VertexPosColor(ws,        a|rgb2bgr(lerpXXX(color0, color1, unorm_sin(5.f * t)))),
+        VertexPosColor(justX(ws), a|rgb2bgr(lerpXXX(color0, color1, unorm_sin(7.f * t)))),
     };
     static const ushort i[] = {0, 1, 2, 0, 2, 3};
 

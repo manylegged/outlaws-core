@@ -103,11 +103,6 @@ struct ButtonBase : public WidgetBase {
         }
     }
 
-    void setEscapeKeys() { setKeys({ EscapeCharacter, GamepadB }); }
-    void setReturnKeys() { setKeys({ EscapeCharacter, '\r', GamepadA, GamepadB }); }
-    void setYesKeys()    { setKeys({ '\r', GamepadA }); }
-    void setNoKeys()     { setKeys({ EscapeCharacter, GamepadB }); }
-    void setDiscardKeys(){ setKeys({ NSDeleteFunctionKey, NSBackTabCharacter, GamepadY }); }
 };
 
 struct Button : public ButtonBase
@@ -116,7 +111,7 @@ struct Button : public ButtonBase
     string subtext;
     float  textSize          = 24.f;
     int    textFont          = kDefaultFont;
-    float  subtextSize       = 18.f;
+    float  subtextSize       = 16.f;
     uint   subtextColor      = kGUITextLow;
     uint   pressedBGColor    = kGUIBgActive;
     uint   inactiveLineColor = kGUIInactive;
@@ -145,8 +140,20 @@ struct Button : public ButtonBase
                                                    (hovered||selected) ? hoveredLineColor : defaultLineColor); }
     float2 getTextSize() const;
     void render(const ShaderState &s_, bool selected=false);
-    void renderButton(DMesh& mesh);
+    void renderButton(DMesh& mesh, bool selected=false);
     void renderText(const ShaderState &s_) const;
+    
+    void setEscapeKeys() { setKeys({ EscapeCharacter, GamepadB });
+                           subtext = KeyState::instance().stringNo(); }
+    void setReturnKeys() { setKeys({ EscapeCharacter, '\r', GamepadA, GamepadB });
+                           subtext = KeyState::instance().stringYes(); }
+    void setYesKeys()    { setKeys({ '\r', GamepadA });
+                           subtext = KeyState::instance().stringYes(); }
+    void setNoKeys()     { setKeys({ EscapeCharacter, GamepadB });
+                           subtext = KeyState::instance().stringNo(); }
+    void setDiscardKeys(){ setKeys({ NSDeleteFunctionKey, NSBackspaceCharacter, GamepadY });
+                           subtext = KeyState::instance().stringDiscard(); }
+
 };
 
 struct ToggleButton : public Button {
@@ -490,12 +497,12 @@ struct ColorPicker : public WidgetBase {
 
     void setInitialColor(uint initial)
     {
-        hsvColor = hsvOfRgb(RGB2RGBf(initial));
+        hsvColor = rgb2hsvf(initial);
         hueSlider.setValueFloat(hsvColor.x / 360.f);
         initialColor = initial;
     }
     
-    uint getColor() const { return RGBf2RGB(rgbOfHsv(hsvColor)); }
+    uint getColor() const { return hsvf2rgb(hsvColor); }
 
     void render(const ShaderState &s_);
     bool HandleEvent(const Event* event, bool *valueChanged=NULL);

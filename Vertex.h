@@ -48,8 +48,8 @@ struct VertexPosColor {
     VertexPosColor() {}
     VertexPosColor(float2 p, uint c) : pos(p, 0.f), color(c) {}
 
-//    void setColor(uint c, float a=1)   { color = ARGB2ABGR(c|0xff000000, a); }
-//    void setColor32(uint c, float a=1) { color = ARGB2ABGR(c, a); }
+//    void setColor(uint c, float a=1)   { color = argb2abgr(c|0xff000000, a); }
+//    void setColor32(uint c, float a=1) { color = argb2abgr(c, a); }
 };
 
 struct VertexPosColorLuma {
@@ -70,13 +70,13 @@ struct VertexPos2ColorTime {
 
     void setColor(uint c, uint c1, float a=1)
     {
-        color = ARGB2ABGR(c|0xff000000, a);
-        color1 = ARGB2ABGR(c1|0xff000000, a);
+        color = argb2abgr(c|0xff000000, a);
+        color1 = argb2abgr(c1|0xff000000, a);
     }
     void setColor32(uint c, float a, uint c1, float a1)
     {
-        color = ARGB2ABGR(c, a); 
-        color1 = ARGB2ABGR(c1|0xff000000, a1);
+        color = argb2abgr(c, a); 
+        color1 = argb2abgr(c1|0xff000000, a1);
     }
 };
 

@@ -74,6 +74,8 @@ struct SerialEnum : public T {
     typename T::Fields enm() const { return (typename T::Fields) value; }
     string toString() const;
 
+    void set(U bits, bool val) { setBits<U>(value, bits, val); }
+
     static uint getBitUnion()
     {
         static typename T::Type uni = 0;
@@ -92,8 +94,8 @@ struct SerialEnum : public T {
 
 #undef DEFINE_ENUM_OP
 
-#define SERIAL_TO_SAVEENUM(K, V) SaveEnum(#K, V),
-#define SERIAL_TO_ENUM(X, V) X=V,
+#define SERIAL_TO_SAVEENUM(K, V) SaveEnum(#K, (V)),
+#define SERIAL_TO_ENUM(X, V) X=(V),
 
 #define DEFINE_ENUM(TYPE, NAME, FIELDS)                                 \
     struct NAME ## _ {                                                  \
@@ -130,10 +132,15 @@ struct SerialEnum : public T {
 #define SERIAL_TO_STRUCT_FIELD(TYPE, NAME, DEFAULT) TYPE NAME = DEFAULT;
 #define SERIAL_VISIT_FIELD_AND(TYPE, NAME, DEFAULT) vis.visit(#NAME, (NAME), TYPE(DEFAULT)) &&
 #define SERIAL_INITIALIZE_FIELD(_TYPE, NAME, DEFAULT) NAME = (DEFAULT);
-#define SERIAL_COPY_FIELD(TYPE, NAME, _DEFAULT) NAME = sb.NAME;
-#define SERIAL_ELSE_FIELD_NEQUAL(_TYPE, NAME, _DEFAULT) else if ((this->NAME) != (sb.NAME)) return 0;
+#define SERIAL_COPY_FIELD(TYPE, NAME, ...) NAME = sb.NAME;
+#define SERIAL_MOVE_FIELD(TYPE, NAME, ...) NAME = std::move(sb.NAME);
+#define SERIAL_ELSE_FIELD_NEQUAL(_TYPE, NAME, ...) else if ((this->NAME) != (sb.NAME)) return 0;
 #define VISIT(FIELD) visit(#FIELD, (FIELD))
 #define VISIT_DEF(FIELD, DEF) visit(#FIELD, (FIELD), (DEF))
+#define VISIT_SKIP(TYPE, NAME) template visitSkip< TYPE >(NAME)
+
+#define SERIAL_TO_STRUCT_FIELD2(TYPE, NAME) TYPE NAME = TYPE();
+#define SERIAL_VISIT_FIELD_AND2(TYPE, NAME) vis.visit(#NAME, (NAME)) &&
 
 template <typename T>
 struct GetFieldVisitor {
@@ -188,19 +195,26 @@ bool hasField(const T& obj, const char* field)
     return vs.value;
 }
 
+#define DECLARE_SERIAL_STRUCT_OPS(STRUCT_NAME)  \
+    static const STRUCT_NAME &getDefault();                         \
+    bool operator==(const STRUCT_NAME& sb) const;                   \
+    STRUCT_NAME& operator=(const STRUCT_NAME& sb);                  \
+    STRUCT_NAME& operator=(STRUCT_NAME&& sb);                       \
+    
+
 #define DECLARE_SERIAL_STRUCT_CONTENTS(STRUCT_NAME, FIELDS_MACRO)   \
     FIELDS_MACRO(SERIAL_TO_STRUCT_FIELD);                           \
     STRUCT_NAME() {}                                                \
     STRUCT_NAME(const STRUCT_NAME& o) { *this = o; }                \
+    STRUCT_NAME(STRUCT_NAME&& o) { *this = o; }                     \
     template <typename V>                                           \
     bool accept(V& vis)                                             \
     {                                                               \
-        return FIELDS_MACRO(SERIAL_VISIT_FIELD_AND) true;       \
+        return FIELDS_MACRO(SERIAL_VISIT_FIELD_AND) true;           \
     }                                                               \
-    static const STRUCT_NAME &getDefault();                         \
-    bool operator==(const STRUCT_NAME& sb) const;                   \
-    STRUCT_NAME& operator=(const STRUCT_NAME& sb);                  \
     typedef int VisitEnabled;                                       \
+    DECLARE_SERIAL_STRUCT_OPS(STRUCT_NAME)                          \
+    
 
 #define DECLARE_SERIAL_STRUCT(STRUCT_NAME, FIELDS_MACRO)            \
     struct STRUCT_NAME {                                            \
@@ -217,6 +231,11 @@ bool hasField(const T& obj, const char* field)
     STRUCT_NAME& STRUCT_NAME::operator=(const STRUCT_NAME& sb)    \
     {                                                           \
         FIELDS_MACRO(SERIAL_COPY_FIELD);                        \
+        return *this;                                           \
+    }                                                           \
+    STRUCT_NAME& STRUCT_NAME::operator=(STRUCT_NAME&& sb)       \
+    {                                                           \
+        FIELDS_MACRO(SERIAL_MOVE_FIELD);                        \
         return *this;                                           \
     }                                                           \
     const STRUCT_NAME &STRUCT_NAME::getDefault()                \

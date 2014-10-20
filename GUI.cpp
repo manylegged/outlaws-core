@@ -70,7 +70,7 @@ bool ButtonBase::HandleEvent(const Event* event, bool* isActivate, bool* isPress
                 pressed = true;
             }
         }
-        else 
+        else if (event->type == Event::MOUSE_MOVED || event->type == Event::LOST_FOCUS)
         {
             pressed = false;
         }
@@ -121,18 +121,11 @@ void Button::render(const ShaderState &ss, bool selected)
     if (!visible)
         return;
 
-    theDMesh().start();
-    renderButton(theDMesh());
-    theDMesh().Draw(ss, ShaderColor::instance(), ShaderColor::instance());
-    theDMesh().finish();
+    DMesh::Handle h(theDMesh());
+    renderButton(theDMesh(), selected);
+    h.Draw(ss);
     
     renderText(ss);
-
-    // draw selection triangle next to selected button
-    if (selected)
-    {
-        renderSelected(ss, defaultBGColor, hoveredLineColor, alpha);
-    }
 }
 
 float2 Button::getTextSize() const
@@ -148,7 +141,7 @@ float2 Button::getTextSize() const
     return sz;
 }
 
-void Button::renderButton(DMesh& mesh)
+void Button::renderButton(DMesh& mesh, bool selected)
 {
     if (!visible)
         return;
@@ -159,11 +152,24 @@ void Button::renderButton(DMesh& mesh)
         size.y = sz.y;
         size.x = max(max(size.x, sz.x), size.y * (float)kGoldenRatio);
     }
+
+    if (style&S_3D)
+    {
+        DMesh::Scope s(mesh);
+        const float z = -size.y * (pressed ? 1.f : hovered ? 0.75f : 0.5f);
+        mesh.tri.translateZ(z);
+        mesh.line.translateZ(z);
+        if (style&S_BOX) {
+            PushRect(&mesh.tri, &mesh.line, position, 0.5f * size, getBGColor(), getFGColor(selected), alpha);
+        } else if (style&S_CORNERS) {
+            PushButton(&mesh.tri, &mesh.line,  position, 0.5f * size, getBGColor(), getFGColor(selected), alpha);
+        }
+    }
     
     if (style&S_BOX) {
-        PushRect(&mesh.tri, &mesh.line, position, 0.5f * size, getBGColor(), getFGColor(false), alpha);
+        PushRect(&mesh.tri, &mesh.line, position, 0.5f * size, getBGColor(), getFGColor(selected), alpha);
     } else if (style&S_CORNERS) {
-        PushButton(&mesh.tri, &mesh.line,  position, 0.5f * size, getBGColor(), getFGColor(false), alpha);
+        PushButton(&mesh.tri, &mesh.line,  position, 0.5f * size, getBGColor(), getFGColor(selected), alpha);
     }
 }
 
@@ -553,7 +559,7 @@ void TextInputCommandLine::loadHistory(const char *fname)
 #if WIN32
        sdat = str_replace(sdat, "\r", "");
 #endif
-        str_split(sdat, '\n', commandHistory);
+        commandHistory = str_split(sdat, '\n');
     }
     historyIndex = commandHistory.size();
 }
@@ -1024,14 +1030,13 @@ void TabWindow::render(const ShaderState &ss)
 {
     if (alpha > epsilon)
     {
-        theDMesh().start();
-        DMesh &mesh = theDMesh();
+        DMesh::Handle h(theDMesh());
 
         const float2 opos = position - float2(0.f, 0.5f * getTabHeight());
         const float2 osz = 0.5f * (size - float2(0.f, getTabHeight()));
-        mesh.tri.color32(defaultBGColor, alpha);
-        mesh.tri.PushRect(opos, osz);
-        mesh.line.color32(defaultLineColor, alpha);
+        h.mp.tri.color32(defaultBGColor, alpha);
+        h.mp.tri.PushRect(opos, osz);
+        h.mp.line.color32(defaultLineColor, alpha);
 
         const float2 tsize = float2(size.x / buttons.size(), getTabHeight());
         float2 pos = opos + flipX(osz);
@@ -1042,10 +1047,10 @@ void TabWindow::render(const ShaderState &ss)
             but.position = pos + 0.5f * tsize;
             pos.x += tsize.x;
 
-            mesh.line.color32(!but.active ? inactiveLineColor :
+            h.mp.line.color32(!but.active ? inactiveLineColor :
                               but.hovered ? hoveredLineColor : defaultLineColor, alpha);
-            mesh.tri.color32((selected == i) ? defaultBGColor : inactiveBGColor, alpha);
-            but.render(mesh);
+            h.mp.tri.color32((selected == i) ? defaultBGColor : inactiveBGColor, alpha);
+            but.render(h.mp);
             
             i++;
         }
@@ -1060,18 +1065,16 @@ void TabWindow::render(const ShaderState &ss)
             opos + flipX(osz), 
             buttons[selected].position - buttons[selected].size / 2.f
         };
-        mesh.line.color32(defaultLineColor, alpha);
-        mesh.line.PushStrip(vl, arraySize(vl));
+        h.mp.line.color32(defaultLineColor, alpha);
+        h.mp.line.PushStrip(vl, arraySize(vl));
 
-        mesh.Draw(ss, ShaderColor::instance(), ShaderColor::instance());
+        h.mp.Draw(ss, ShaderColor::instance(), ShaderColor::instance());
 
         foreach (const TabButton& but, buttons)
         {
             GLText::DrawStr(ss, but.position, GLText::MID_CENTERED, MultAlphaAXXX(textColor, alpha),
                             textSize, but.text);
         }
-    
-        theDMesh().finish();
     }
     buttons[selected].interface->renderTab(getContentsCenter(), getContentsSize(), alpha, alpha2);
 }
@@ -1203,7 +1206,7 @@ static void setupHsvRect(VertexPosColor* verts, float2 pos, float2 rad, float al
     verts[3].pos = float3(pos + flipY(rad), 0.f);
 
     for (int i=0; i<4; i++)
-        verts[i].color = ALPHAF(alpha)|RGB2BGR(RGBf2RGB(c.begin()[i]));
+        verts[i].color = ALPHAF(alpha)|rgb2bgr(rgbf2rgb(c.begin()[i]));
 }
 
 void ColorPicker::render(const ShaderState &ss)
@@ -1220,9 +1223,9 @@ void ColorPicker::render(const ShaderState &ss)
     
     const float2 csize = size - float2(svRectSize.x, hueSlider.size.y) - 3.f * kButtonPad;
     const float2 ccPos = position + flipY(size / 2.f) + flipX(kButtonPad + csize / 2.f);
-    
-    LineMesh<VertexPosColor> &lmesh = theDMesh().line;
-    theDMesh().start();
+
+    DMesh::Handle h(theDMesh());
+    LineMesh<VertexPosColor> &lmesh = h.mp.line;
     
     // draw color picker
     {
@@ -1256,12 +1259,11 @@ void ColorPicker::render(const ShaderState &ss)
     lmesh.color(GetContrastWhiteBlack(getColor()), alpha);
     lmesh.PushCircle(svRectPos - svRectSize/2.f + float2(hsvColor.y, hsvColor.z) * svRectSize,
                      4.f, 6);
-    lmesh.color(GetContrastWhiteBlack(rgbOfHsv(float3(hsvColor.x, 1.f, 1.f))), alpha);
+    lmesh.color(GetContrastWhiteBlack(hsvf2rgbf(float3(hsvColor.x, 1.f, 1.f))), alpha);
     lmesh.PushRect(float2(hueSlider.position.x - hueSlider.size.x / 2.f + hueSlider.size.x * (hsvColor.x / 360.f),
                           hueSlider.position.y),
                    float2(kPadDist, hueSlider.size.y / 2.f));
     lmesh.Draw(ss, ShaderColor::instance());
-    theDMesh().finish();
 
     // draw selected color box
     DrawFilledRect(ss, ccPos, csize/2.f, ALPHA_OPAQUE|getColor(), kGUIFg, alpha);

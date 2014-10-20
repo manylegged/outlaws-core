@@ -13,16 +13,22 @@ int sdl_os_main(int argc, const char **argv);
 const char* sdl_os_autorelease(std::string &val);
 
 // call from crash handler. flush log, etc.
-void sdl_os_oncrash();
+void sdl_os_oncrash(const char* message);
 
 void sdl_set_scaling_factor(float factor);
 
 
 /////////////// implemented in per-os file
 
+struct SDL_SysWMinfo;
+
 // display a message box to the user on unrecoverable errors
-void os_errormessage(const char* msg);
+void os_errormessage1(const char* msg, const string& data, SDL_SysWMinfo *info);
 
 int os_create_parent_dirs(const char* path);
+
+string os_get_platform_info();
+
+int os_init();
 
 #endif

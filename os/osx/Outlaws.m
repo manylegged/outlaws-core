@@ -237,16 +237,16 @@ struct OutlawImage OL_LoadImage(const char* fname)
     t.height = (unsigned)CGImageGetHeight(image);
     
     t.data = calloc(t.width * t.height, 4);
-    if (!t.data)
-        return t;
-    
-    CGColorSpaceRef color_space = CGColorSpaceCreateDeviceRGB();
-    CGContextRef context = CGBitmapContextCreate(t.data, t.width, t.height, 8, t.width * 4, color_space, kCGImageAlphaPremultipliedFirst);
-    
-    CGContextDrawImage(context, CGRectMake(0, 0, t.width, t.height), image);
-
-    CFRelease(context);
-    CFRelease(color_space);
+    if (t.data)
+    {
+        CGColorSpaceRef color_space = CGColorSpaceCreateDeviceRGB();
+        CGContextRef context = CGBitmapContextCreate(t.data, t.width, t.height, 8, t.width * 4, color_space, kCGImageAlphaPremultipliedFirst);
+        
+        CGContextDrawImage(context, CGRectMake(0, 0, t.width, t.height), image);
+        
+        CFRelease(context);
+        CFRelease(color_space);
+    }
     CFRelease(image);
     CFRelease(image_source);
     CFRelease(texture_url);
@@ -452,7 +452,7 @@ int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int fontNa
     {
         const BOOL useAA = size > 10.f;
         [[NSGraphicsContext currentContext] setShouldAntialias:useAA];
-        //[[NSColor blackColor] setFill];
+        //[[NSCol=or blackColor] setFill];
         //[NSBezierPath fillRect:NSMakeRect(0, 0, frameSize.width, frameSize.height)];
         @try {
             [string drawAtPoint:NSMakePoint (0, 0)]; // draw at offset position
@@ -546,12 +546,21 @@ void OL_ReportMessage(const char *str)
         NSString *fname = pathForFileName(OLG_GetLogFileName(), "w");
         if (createParentDirectories(fname))
         {
-            g_logfile = fopen([fname UTF8String], "w");
+            const char* logpath = [fname UTF8String];
+            g_logfile = fopen(logpath, "w");
             NSString *tildeFname = [fname stringByAbbreviatingWithTildeInPath];
-            if (g_logfile)
+            if (g_logfile) {
                 LogMessage([NSString stringWithFormat:@"Opened log at %@", tildeFname]);
-            else
+                const char* latestpath = [pathForFileName("data/log_latest.txt", "w") UTF8String];
+                int status = unlink(latestpath);
+                if (status && status != ENOENT)
+                    LogMessage([NSString stringWithFormat:@"Error unlink('%s'): %s", latestpath, strerror(errno)]);
+                if (symlink(logpath, latestpath))
+                    LogMessage([NSString stringWithFormat:@"Error symlink('%s', '%s'): %s",
+                                         logpath, latestpath, strerror(errno)]);
+            } else {
                 NSLog(@"Error opening log at %@: %s", tildeFname, strerror(errno));
+            }
         }
     }
     //NSLog(@"[DBG] %s\n", str);
@@ -632,3 +641,4 @@ int OL_CopyFile(const char* source, const char* dest)
                          src, dst, error ? [error localizedFailureReason] : @"unknown"]);
     return 0;
 }
+

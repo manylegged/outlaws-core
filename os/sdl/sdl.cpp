@@ -3,20 +3,8 @@
 
 #include "StdAfx.h"
 #include "Graphics.h"
+#include "sdl_inc.h"
 #include "sdl_os.h"
-
-
-#ifdef _MSC_VER
-#include "../../SDL2_ttf-2.0.12/include/SDL_ttf.h"
-#include "../../SDL2_image-2.0.0/include/SDL_image.h"
-#include "SDL_keyboard.h"
-#else
-#include <SDL2/SDL.h>
-#include <SDL2/SDL_ttf.h>
-#include <SDL2/SDL_image.h>
-#include <sys/utsname.h>
-#include <dlfcn.h>
-#endif
 
 static int2         g_screenSize;
 static uint         g_sdl_flags      = 0;
@@ -25,7 +13,15 @@ static SDL_Window*  g_displayWindow  = NULL;
 static bool         g_quitting       = false;
 static SDL_RWops   *g_logfile        = NULL;
 static const char*  g_logpath        = NULL;
+static string       g_logdata;
+static bool         g_openinglog = false;
 
+void os_errormessage(const char* msg)
+{
+    SDL_SysWMinfo info;
+    SDL_GetWindowWMInfo(g_displayWindow, &info);
+    return os_errormessage1(msg, g_logdata, &info);
+}
 
 // don't go through ReportMessagef/ReportMessage!
 static void ReportSDL(const char *format, ...)
@@ -37,7 +33,7 @@ static void ReportSDL(const char *format, ...)
     va_end(vl);
 }
 
-void sdl_os_oncrash()
+void sdl_os_oncrash(const char* message)
 {
     fflush(NULL);
 
@@ -63,19 +59,19 @@ void sdl_os_oncrash()
     OL_CopyFile(g_logpath, dest.c_str());
 
     os_errormessage(str_format(
-        "Oops! %s crashed.\n"
+        "%s\n"
         "Please email\n"
         "%s\nto arthur@anisopteragames.com",
-        OLG_GetName(), dest.c_str()).c_str());
+        message, dest.c_str()).c_str());
     exit(1);
 }
 
 void anonymizeUsername(string &str)
 {
-#if _MSC_VER
-    const char *name = "Users";
-#else
+#if OL_LINUX
     const char *name = "/home";
+#else
+    const char *name = "Users";
 #endif
     size_t start = str.find(name);
     if (start == string::npos)
@@ -91,8 +87,8 @@ void anonymizeUsername(string &str)
 
 void OL_ReportMessage(const char *str_)
 {
-#if _MSC_VER
-    OutputDebugStringA((LPCSTR)str_);
+#if OL_WINDOWS
+    OutputDebugStringA(str_);
 #else
     printf("%s", str_);
 #endif
@@ -104,6 +100,11 @@ void OL_ReportMessage(const char *str_)
     anonymizeUsername(str);
     
     if (!g_logfile) {
+        if (g_openinglog) {
+            g_logdata += str;
+            return;
+        }
+        g_openinglog = true;
         const char* path = OL_PathForFile(OLG_GetLogFileName(), "w");
         if (!g_logfile) { // may have been opened by OL_PathForFile
             os_create_parent_dirs(path);
@@ -111,10 +112,24 @@ void OL_ReportMessage(const char *str_)
             if (!g_logfile)
                 return;
             g_logpath = lstring(path).c_str();
-            ReportSDL("Log file opened at %s", path); // call self recursively
+            g_openinglog = false;
+            if (g_logdata.size())
+                SDL_RWwrite(g_logfile, g_logdata.c_str(), g_logdata.size(), 1);
+            // call self recursively
+            ReportSDL("Log file opened at %s", path);
+            const char* latestpath = OL_PathForFile("data/log_latest.txt", "w");
+#if !OL_WINDOWS
+            int status = unlink(latestpath);
+            if (status && status != ENOENT) {
+                ReportSDL("Error unlink('%s'): %s", latestpath, strerror(errno));
+            }
+            if (symlink(g_logpath, latestpath)) {
+                ReportSDL("Error symlink('%s', '%s'): %s", g_logpath, latestpath, strerror(errno));
+            }
+#endif
         }
     }
-#if _MSC_VER
+#if OL_WINDOWS
     str = str_replace(str, "\n", "\r\n");
 #endif
     
@@ -139,7 +154,7 @@ int OL_GetFullscreen(void)
 double OL_GetCurrentTime()
 {
     // SDL_GetTicks is in milliseconds
-#if _MSC_VER
+#if OL_WINDOWS
     static double frequency = 0.0;
     if (frequency == 0.0)
     {
@@ -163,7 +178,8 @@ double OL_GetCurrentTime()
 }
 
 
-#if !WIN32
+#if OL_LINUX
+
 static void* getSymbol(const char* module, const char* symbol)
 {
     void *handle = dlopen(module, RTLD_NOW|RTLD_GLOBAL|RTLD_NOLOAD);
@@ -179,62 +195,31 @@ static void* getSymbol(const char* module, const char* symbol)
     }
     return sym;
 }
-#endif
 
 static int getSystemRam()
 {
-#if WIN32
-    return SDL_GetSystemRAM();
-#else
     // this call introduced in SDL 2.0.1 - backwards compatability
     typedef int SDLCALL (*PSDL_GetSystemRam)(void);
     PSDL_GetSystemRam pSDL_GetSystemRam = (PSDL_GetSystemRam) getSymbol("libSDL2-2.0.so.0", "SDL_GetSystemRAM");
     return pSDL_GetSystemRam ? pSDL_GetSystemRam() : 0;
-#endif
 }
+
+#else
+
+static int getSystemRam()
+{
+    return SDL_GetSystemRAM();
+}
+
+#endif
 
 
 const char* OL_GetPlatformDateInfo(void)
 {
     static string str;
-    str.clear();
 
-#if WIN32
-    OSVERSIONINFO osvi;
-    ZeroMemory(&osvi, sizeof(OSVERSIONINFO));
-    osvi.dwOSVersionInfoSize = sizeof(OSVERSIONINFO);
+    str = os_get_platform_info();
 
-    GetVersionEx(&osvi);
-    const char* name = NULL;
-    if (osvi.dwMajorVersion == 5 && osvi.dwMajorVersion == 1)
-        name = "XP";
-    else if (osvi.dwMajorVersion == 6 && osvi.dwMinorVersion == 0)
-        name = "Vista";
-    else if (osvi.dwMajorVersion == 6 && osvi.dwMinorVersion == 1)
-        name = "7";
-    else if (osvi.dwMajorVersion == 6 && osvi.dwMinorVersion == 2)
-        name = "8";
-    else if (osvi.dwMajorVersion == 6 && osvi.dwMinorVersion == 3)
-        name = "8.1";
-    else
-        name = "Unknown";
-    str += str_format("Windows %s (NT %d.%d), build %d", name, osvi.dwMajorVersion, 
-                      osvi.dwMinorVersion, osvi.dwBuildNumber);
-#else
-    utsname buf;
-    if (!uname(&buf))
-    {
-        str += buf.sysname;
-        // str += buf.nodename;
-        str += " ";
-        str += buf.release;
-        str += " ";
-        str += buf.version;
-        str += " ";
-        str += buf.machine;
-    }
-#endif
-    
     SDL_version compiled;
     SDL_version linked;
     SDL_VERSION(&compiled);
@@ -251,7 +236,7 @@ const char* OL_GetPlatformDateInfo(void)
     std::chrono::time_point<std::chrono::system_clock> start = std::chrono::system_clock::now();
     std::time_t cstart = std::chrono::system_clock::to_time_t(start);
     str += std::ctime(&cstart);
-    str.resize(str.size() - 1); // eat ctime newline
+    str.pop_back();             // eat ctime newline
 
     return str.c_str();
 }
@@ -367,7 +352,7 @@ struct OutlawTexture OL_LoadTexture(const char* fname)
 
 int OL_SaveTexture(const OutlawTexture *tex, const char* fname)
 {
-    if (!tex || !tex->texnum || tex->width <= 0 || tex->height <= 0)
+    if (!tex || !tex->texnum || tex->width <= 0|| tex->height <= 0)
         return 0;
 
     const size_t size = tex->width * tex->height * 4;
@@ -618,7 +603,7 @@ static int keysymToKey(const SDL_Keysym &keysym)
     
     if (keysym.mod & (KMOD_SHIFT|KMOD_CAPS) ) {
         // a -> A
-        if (sym >= 'a' && sym <= 'z')
+        if ('a' <= sym && sym <= 'z')
             return sym - 32;
         // 1 -> !
         switch (sym) {
@@ -626,7 +611,7 @@ static int keysymToKey(const SDL_Keysym &keysym)
         case SDLK_2: return SDLK_AT;
         case SDLK_3: return SDLK_HASH;
         case SDLK_4: return SDLK_DOLLAR;
-        case SDLK_5: return '%';
+        case SDLK_5: return SDLK_PERCENT;
         case SDLK_6: return SDLK_CARET;
         case SDLK_7: return SDLK_AMPERSAND;
         case SDLK_8: return SDLK_ASTERISK;
@@ -711,53 +696,15 @@ static int keysymToKey(const SDL_Keysym &keysym)
     }
 }
 
-static bool initGamepad()
-{
-    static bool loadedMappings = true;
-    if (!loadedMappings)
-    {
-        SDL_version linked;
-        SDL_GetVersion(&linked);
-        if (linked.minor > 0 || linked.patch > 1)
-        {
-            const int mappings = SDL_GameControllerAddMappingsFromFile(OL_PathForFile("data/gamecontrollerdb.txt", "r"));
-            ReportSDL("Loaded %d game controller mappings: %s", max(0, mappings), mappings < 0 ? SDL_GetError() : "OK");
-        }
-        loadedMappings = true;
-    }
-
-    /* Open the first available controller. */
-    static SDL_GameController *controller = NULL;
-
-    if (controller)
-    {
-        SDL_GameControllerClose(controller);
-    }
-
-    for (int i = 0; i < SDL_NumJoysticks(); ++i) {
-        if (SDL_IsGameController(i)) {
-            controller = SDL_GameControllerOpen(i);
-            if (controller) {
-                break;
-            } else {
-                ReportSDL("Could not open gamecontroller %i: %s", i, SDL_GetError());
-            }
-        }
-    }
-
-    if (!controller)
-        return false;
-
-    ReportSDL("Found a valid controller, named: %s", SDL_GameControllerName(controller));
-    
-    return true;
-}
 
 static void HandleEvents()
 {
     SDL_Event evt;
     while (SDL_PollEvent(&evt))
     {
+        if (Controller_HandleEvent(&evt))
+            return;
+
         OLEvent e;
         memset(&e, 0, sizeof(e));
 
@@ -844,7 +791,6 @@ static void HandleEvents()
 
             break;
         }
-            
         case SDL_MOUSEMOTION:
         {
             e.dx = evt.motion.xrel / g_scaling_factor;
@@ -884,45 +830,6 @@ static void HandleEvents()
             case SDL_BUTTON_RIGHT: e.key = 1; break;
             case SDL_BUTTON_MIDDLE: e.key = 2; break;
             }
-            OLG_OnEvent(&e);
-            break;
-        }
-        case SDL_CONTROLLERDEVICEADDED:
-        {
-            const SDL_ControllerDeviceEvent &cdev = evt.cdevice;
-            ReportSDL("SDL_CONTROLLERDEVICEADDED");
-            initGamepad();
-            break;
-        }
-        case SDL_CONTROLLERDEVICEREMOVED:
-        {
-            const SDL_ControllerDeviceEvent &cdev = evt.cdevice;
-            ReportSDL("SDL_CONTROLLERDEVICEREMOVED");
-            break;
-        }
-        case SDL_CONTROLLERAXISMOTION: 
-        {
-            const SDL_ControllerAxisEvent &caxis = evt.caxis;
-            e.type = OLEvent::GAMEPAD_AXIS;
-            e.y = caxis.value / 32767.f;
-            switch (caxis.axis)
-            {
-            case SDL_CONTROLLER_AXIS_LEFTX: e.key = GamepadAxisLeftX; break;
-            case SDL_CONTROLLER_AXIS_LEFTY: e.key = GamepadAxisLeftY; break;
-            case SDL_CONTROLLER_AXIS_RIGHTX: e.key = GamepadAxisRightX; break;
-            case SDL_CONTROLLER_AXIS_RIGHTY: e.key = GamepadAxisRightY; break;
-            case SDL_CONTROLLER_AXIS_TRIGGERLEFT: e.key = GamepadAxisTriggerLeftY; break;
-            case SDL_CONTROLLER_AXIS_TRIGGERRIGHT: e.key = GamepadAxisTriggerRightY; break;
-            }
-            OLG_OnEvent(&e);
-            break;
-        }
-        case SDL_CONTROLLERBUTTONDOWN: // fallthrough
-        case SDL_CONTROLLERBUTTONUP:
-        {
-            const SDL_ControllerButtonEvent &cbutton = evt.cbutton;
-            e.key = (int)cbutton.button + GamepadA;
-            e.type = cbutton.state == SDL_PRESSED ? OLEvent::KEY_DOWN : OLEvent::KEY_UP;
             OLG_OnEvent(&e);
             break;
         }
@@ -1018,7 +925,7 @@ const char* OL_ReadClipboard()
     if (!ptr)
         return NULL;
     string str = ptr;
-#if WIN32
+#if OL_WINDOWS
     str_replace(ptr, "\r\n", "\n");
 #endif
     SDL_free(ptr);
@@ -1045,20 +952,46 @@ static void setupInitialResolution()
     ReportSDL("Initial window size is %dx%d", g_screenSize.x, g_screenSize.y);
 }
 
+#define COPY_GL_EXT_IMPL(X) if (!(X) && (X ## EXT)) { ReportSDL("Using " #X "EXT"); (X) = (X ## EXT); } else if (!(X)) { ReportSDL(#X " Not found! Aborting"); return 0; }
+#define ASSERT_EXT_EQL(X) static_assert(X == X ## _EXT, #X "EXT mismatch")
+
 static int initGlew()
 {
     glewExperimental = GL_TRUE;
     GLenum err = glewInit();
     if (GLEW_OK != err)
     {
-        os_errormessage(str_format("Glew Error! %s", glewGetErrorString(err)).c_str());
+        sdl_os_oncrash(str_format("Glew Error! %s", glewGetErrorString(err)).c_str());
         return 1;
     }
+    // GL_EXT_framebuffer_blit
+    COPY_GL_EXT_IMPL(glBlitFramebuffer);
 
-    const GLubyte* glsl_ver = glGetString(GL_SHADING_LANGUAGE_VERSION);
-    if (!glsl_ver)
+    // GL_EXT_framebuffer_object
+    ASSERT_EXT_EQL(GL_FRAMEBUFFER);
+    ASSERT_EXT_EQL(GL_RENDERBUFFER);
+    ASSERT_EXT_EQL(GL_DEPTH_ATTACHMENT);
+    ASSERT_EXT_EQL(GL_COLOR_ATTACHMENT0);
+    ASSERT_EXT_EQL(GL_FRAMEBUFFER_COMPLETE);
+    ASSERT_EXT_EQL(GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT);
+    COPY_GL_EXT_IMPL(glBindFramebuffer);
+    COPY_GL_EXT_IMPL(glBindRenderbuffer);
+    COPY_GL_EXT_IMPL(glCheckFramebufferStatus);
+    COPY_GL_EXT_IMPL(glDeleteFramebuffers);
+    COPY_GL_EXT_IMPL(glDeleteRenderbuffers);
+    COPY_GL_EXT_IMPL(glFramebufferRenderbuffer);
+    COPY_GL_EXT_IMPL(glFramebufferTexture2D);
+    COPY_GL_EXT_IMPL(glGenFramebuffers);
+    COPY_GL_EXT_IMPL(glGenRenderbuffers);
+    COPY_GL_EXT_IMPL(glGenerateMipmap);
+    COPY_GL_EXT_IMPL(glIsFramebuffer);
+    COPY_GL_EXT_IMPL(glIsRenderbuffer);
+    COPY_GL_EXT_IMPL(glRenderbufferStorage);
+
+    int success = OLG_InitGL();
+    if (!success)
     {
-        os_errormessage("Video Card Unsupported (Or no graphics drivers installed)");
+        sdl_os_oncrash("Opengl Init failed");
         return 1;
     }
     return 0;
@@ -1069,7 +1002,7 @@ int sdl_os_main(int argc, const char **argv)
 {
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_GAMECONTROLLER ) < 0)
     {
-        os_errormessage("SDL Init failed");
+        sdl_os_oncrash(str_format("SDL Init failed: %s", SDL_GetError()).c_str());
         return 1;
     }
 
@@ -1080,6 +1013,9 @@ int sdl_os_main(int argc, const char **argv)
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0);
 
     int mode = OLG_Init(argc, argv);
+
+    if (!os_init())
+        return 1;
 
     if (mode == 0)
     {
@@ -1105,7 +1041,7 @@ int sdl_os_main(int argc, const char **argv)
                                        g_screenSize.x, g_screenSize.y,
                                        SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
 
-#if !WIN32
+#if OL_LINUX
     const char* spath = OL_PathForFile("linux/reassembly_icon.png", "r");
     SDL_Surface *surface = IMG_Load(spath);
     if (surface)
@@ -1120,14 +1056,14 @@ int sdl_os_main(int argc, const char **argv)
 #endif
 
     SDL_GLContext _glcontext = SDL_GL_CreateContext(g_displayWindow);
-
+    
     if (initGlew() != 0)
         return 1;
  
     SDL_ShowCursor(0);
     if (TTF_Init() != 0)
     {
-        os_errormessage(str_format("TTF_Init() failed: %s", TTF_GetError()).c_str());
+        sdl_os_oncrash(str_format("TTF_Init() failed: %s", TTF_GetError()).c_str());
         return 1;
     }
 

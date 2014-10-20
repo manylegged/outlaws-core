@@ -6,7 +6,7 @@
 
 #include <ftw.h>
 #include <unistd.h>
-
+#include <sys/utsname.h>
 #include <libgen.h>
 #include <stdio.h>
 #include <errno.h>
@@ -107,7 +107,7 @@ const char *OL_PathForFile(const char *fname, const char* flags)
         return sdl_os_autorelease(p);
     }
 
-    string path = getSaveDir() + fname;
+    string path = str_path_join(getSaveDir(), fname);
     if (!OLG_UseDevSavePath() && (flags[0] == 'w' || 
                                   flags[0] == 'a' || 
                                   fileDirectoryPathExists(path.c_str())))
@@ -115,7 +115,7 @@ const char *OL_PathForFile(const char *fname, const char* flags)
     }
     else
     {
-        path = getDataDir() + fname;
+        path = str_path_join(getDataDir(), fname);
     }
     return sdl_os_autorelease(path);
 }
@@ -217,7 +217,7 @@ const char** OL_ListDirectory(const char* path1)
     const char* path = OL_PathForFile(path1, "r");
     DIR *dir = opendir(path);
     if (!dir) {
-        ReportLinux("Error opening directory '%s': %s", path, strerror(errno));
+        // ReportLinux("Error opening directory '%s': %s", path, strerror(errno));
         return NULL;
     }
     elements.clear();
@@ -232,9 +232,18 @@ const char** OL_ListDirectory(const char* path1)
     return &elements[0];
 }
 
-void os_errormessage(const char* msg)
+void os_errormessage1(const char* msg, const string& data, SDL_SysWMinfo *info)
 {
-    ReportMessage(msg);
+    OL_ReportMessage(msg);
+}
+
+string os_get_platform_info()
+{
+    utsname buf;
+    if (uname(&buf))
+        return "Linux (uname failed)";
+
+    return str_format("%s %s %s %s", buf.sysname, buf.release, buf.version, buf.machine);
 }
 
 int OL_CopyFile(const char* pa, const char* pb)
@@ -379,16 +388,16 @@ static void posix_signal_handler(int sig, siginfo_t *siginfo, void *context)
     ReportLinux("Dumping stack");
     for (int i=0; i<count; i++)
         ReportLinux("%2d. Called from %p", i, buffer[i]);
-    fflush(NULL);
-    sdl_os_oncrash();
+    sdl_os_oncrash(str_format("Oops! %s crashed.\n", OLG_GetName()).c_str());
 }
 
 
-static uint8_t alternate_stack[SIGSTKSZ];
 void set_signal_handler()
 {
     /* setup alternate stack */
     {
+        static uint8_t alternate_stack[SIGSTKSZ];
+
         stack_t ss = {};
         /* malloc is usually used here, I'm not 100% sure my static allocation
            is valid but it seems to work just fine. */
@@ -415,7 +424,7 @@ void set_signal_handler()
         sig_action.sa_flags = SA_SIGINFO | SA_ONSTACK;
 #endif
  
-        static const int signals[] = { SIGSEGV, SIGFPE, SIGINT, SIGILL, SIGTERM, SIGABRT };
+        const int signals[] = { SIGSEGV, SIGFPE, SIGINT, SIGILL, SIGTERM, SIGABRT };
         foreach (int sig, signals) {
             if (sigaction(sig, &sig_action, NULL) != 0) {
                 ReportLinux("sigaction failed: %s", strerror(errno));
@@ -424,12 +433,8 @@ void set_signal_handler()
     }
 }
 
-int main(int argc, const char** argv)
+int os_init()
 {
-    g_binaryName = argv[0];
-
-    set_signal_handler();
-
     // copy icon to icon dir - does not reliably cause desktop file to have icon
     if (0)
     {
@@ -444,6 +449,14 @@ int main(int argc, const char** argv)
         ReportLinux("Copied icon to %s: %s", dest.c_str(), 
                     status == 1 ? "ALREADY OK" : status == 0 ? "OK" : "FAILED");
     }
+    return 1;
+}
+
+int main(int argc, const char** argv)
+{
+    g_binaryName = argv[0];
+
+    set_signal_handler();
 
     try {
         return sdl_os_main(argc, argv);

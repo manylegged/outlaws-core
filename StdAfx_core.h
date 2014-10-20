@@ -77,10 +77,18 @@ inline void ReportMessagef(const char *format, ...)
 #define ASSERT(X) (__builtin_expect(!(X), 0) ? OLG_OnAssertFailed(__FILE__, __LINE__, __func__, #X, "failed") : 0)
 #define ASSERTF(X, Y, ...) (__builtin_expect(!(X), 0) ? OLG_OnAssertFailed(__FILE__, __LINE__, __func__, #X, (Y), __VA_ARGS__) : 0)
 
-
 #if defined(DEBUG) || defined(DEVELOP)
 #  define WARN(X) ReportMessagef X
-#  define DPRINTVAR(X) DebugPrintVar(#X, (X))
+template <int Y, typename T>
+void DPRINTVAR1(const char* name, const T& X)
+{
+    static T _x{};
+    if (X != _x) {
+        ReportMessagef("%s = %s", name, str_tostr(X).c_str());
+        _x = X;
+    }
+}
+#  define DPRINTVAR(X) DPRINTVAR1<__LINE__>(#X, X)
 #  define IS_DEVEL (1)
 #else
 #  define DPRINTVAR(X) do{(void)sizeof(X);}while(0)
@@ -111,11 +119,5 @@ struct IDeletable {
 #include "SpacialHash.h"
 #include "SerialCore.h"
 #include "Event.h"
-
-inline void DebugPrintVar(const char* str, int v) { ReportMessagef("%s = %d", str, v); }
-inline void DebugPrintVar(const char* str, float v) { ReportMessagef("%s = %g", str, v); }
-inline void DebugPrintVar(const char* str, float2 v) { ReportMessagef("%s = (%g, %g)", str, v.x, v.y); }
-inline void DebugPrintVar(const char* str, float3 v) { ReportMessagef("%s = (%g, %g, %g)", str, v.x, v.y, v.z); }
-
 
 #endif // STDAFX_CORE_H

@@ -95,6 +95,7 @@ ShaderIridescent::ShaderIridescent()
 
 ShaderTonemap::ShaderTonemap()
 {
+    m_header = "#define DITHER 0\n";
     LoadProgram("ShaderTonemap");
     GET_UNIF_LOC(texture1);
     GET_ATTR_LOC(SourceTexCoord);
@@ -111,7 +112,8 @@ void ShaderTonemap::UseProgram(const ShaderState &ss, const VertexPosTex *ptr, c
 
 ShaderTonemapDither::ShaderTonemapDither()
 {
-    LoadProgram("ShaderTonemapDither");
+    m_header = "#define DITHER 1\n";
+    LoadProgram("ShaderTonemap");
     GET_UNIF_LOC(texture1);
     GET_UNIF_LOC(dithertex);
     GET_ATTR_LOC(SourceTexCoord);

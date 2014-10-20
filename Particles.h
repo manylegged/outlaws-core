@@ -27,11 +27,11 @@ public:
 
         float2 offset;
         
-        uint color = 0;             // premultiplied alpha ABGR
+        uint color = 0;             // premultiplied alpha abgr
 
         void setColor(uint c, float alpha)
         {
-            color = ALPHAF(alpha)|RGB2BGR(PremultiplyAlphaAXXX(c));
+            color = ALPHAF(alpha)|rgb2bgr(PremultiplyAlphaAXXX(c));
             DASSERT(color != 0);
         }
     };

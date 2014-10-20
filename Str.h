@@ -113,6 +113,39 @@ inline size_t str_len(std::nullptr_t null) { return 0; }
 inline size_t str_len(long null) { return 0; }
 inline size_t str_len(const char* str) { return str ? strlen(str) : 0; }
 inline size_t str_len(const std::string& str) { return str.size(); }
+inline size_t str_len(char chr) { return 1; }
+
+template <typename T>
+inline size_t str_find(const std::string &s, const T& v, size_t pos=0) { return s.find(v, pos); }
+
+inline size_t str_find(const char* s, char v, size_t pos=0)
+{
+    if (pos > strlen(s))
+        return std::string::npos;
+    const char *p = strchr(s+pos, v);
+    return p ? (size_t) (p - s) : std::string::npos;
+}
+
+inline size_t str_find(const char* s, const char* v, size_t pos=0)
+{
+    if (pos > strlen(s))
+        return std::string::npos;
+    const char *p = strstr(s+pos, v);
+    return p ? (size_t) (p - s) : std::string::npos;
+}
+
+template <typename T>
+inline size_t str_find(const char* &s, const std::string& v, size_t pos=0)
+{
+    return str_find(s, v.c_str(), pos);
+}
+
+inline std::string str_substr(const std::string &st, size_t idx, size_t len=std::string::npos) { return st.substr(idx, len); }
+
+inline std::string str_substr(const char* st, size_t idx, size_t len=std::string::npos)
+{
+    return std::string(st + idx, len != std::string::npos ? len : strlen(st) - idx);
+}
 
 template <typename T, typename S1, typename S2>
 inline std::string str_replace(T&& s, const S1 &a, const S2 &b)
@@ -180,6 +213,16 @@ inline bool str_startswith(const char* str, const char* prefix)
     return true;
 }
 
+inline const char* str_tocstr(const char *v) { return v; }
+inline const char* str_tocstr(const std::string &v) { return v.c_str(); }
+inline const char* str_tocstr(const lstring &v) { return v.c_str(); }
+
+template <typename S1, typename S2>
+inline bool str_startswith(const S1& s1, const S2& s2)
+{
+    return str_startswith(str_tocstr(s1), str_tocstr(s2));
+}
+
 inline bool str_endswith(const char* str_, const char* prefix_)
 {
     std::string str = str_;
@@ -190,7 +233,7 @@ inline bool str_endswith(const char* str_, const char* prefix_)
 std::string str_vformat(const char *format, va_list vl) __printflike(1, 0);
 std::string str_format(const char *format, ...)  __printflike(1, 2);
 
-inline std::string str_addLineNumbers(const char* s, int start=1)
+inline std::string str_add_line_numbers(const char* s, int start=1)
 {
     std::string r;
     int i=start;
@@ -204,21 +247,23 @@ inline std::string str_addLineNumbers(const char* s, int start=1)
     return r;
 }
 
-inline std::vector<std::string> &str_split(const std::string &s, char delim, std::vector<std::string> &elems) 
-{
-    std::stringstream ss(s);
-    std::string item;
-    while (std::getline(ss, item, delim)) {
-        elems.push_back(item);
-    }
-    return elems;
-}
-
-
-inline std::vector<std::string> str_split(const std::string &s, char delim) 
+template <typename T, typename U>
+inline std::vector<std::string> str_split(const T &s, const U &delim)
 {
     std::vector<std::string> elems;
-    str_split(s, delim, elems);
+    size_t i = 0;
+    const size_t dlen = str_len(delim);
+    do {
+        size_t n = str_find(s, delim, i);
+        if (n == std::string::npos) {
+            elems.push_back(str_substr(s, i));
+            return elems;
+        }
+        elems.push_back(str_substr(s, i, n-i));
+        i = n + dlen;
+    }
+    while (i != std::string::npos);
+    
     return elems;
 }
 
@@ -390,7 +435,7 @@ inline std::string str_path_join(T &&a, const S1 &b, const S2 &c)
 
 
 template <typename Fun>
-inline std::string str_interpolateVariables(const std::string &str_, const Fun& fun)
+inline std::string str_interpolate_variables(const std::string &str_, const Fun& fun)
 {
     std::string str = str_;
     for (size_t idx = str.find("$"); idx != std::string::npos; idx=str.find("$", idx))

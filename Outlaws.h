@@ -42,7 +42,7 @@ struct OLEvent {
     enum EventType { KEY_DOWN=0, KEY_UP, MOUSE_DOWN, MOUSE_UP, MOUSE_DRAGGED, 
                      MOUSE_MOVED, SCROLL_WHEEL, LOST_FOCUS, GAINED_FOCUS,
                      TOUCH_BEGIN, TOUCH_MOVED, TOUCH_STATIONARY, TOUCH_ENDED, TOUCH_CANCELLED,
-                     GAMEPAD_AXIS,
+                     GAMEPAD_AXIS, GAMEPAD_ADDED, GAMEPAD_REMOVED,
                      INVALID };
     enum EventType type;
     long key;
@@ -61,6 +61,9 @@ void OLG_OnClose(void);
 
 // init, process args. Return 1 if create window and interactive, 0 if headless mode
 int OLG_Init(int argc, const char** argv);
+
+// init opengl, return NULL if supported or error message if not
+int OLG_InitGL(void);
 
 // called when window manager changes full screen state
 void OLG_SetFullscreenPref(int enabled);

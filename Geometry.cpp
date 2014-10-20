@@ -25,6 +25,8 @@
 #include "StdAfx.h"
 #include "Geometry.h"
 
+#define MYINF std::numeric_limits<float>::max()
+
 // intersect two circles, returning number of intersections with points in RA and RB
 int intersectCircleCircle(float2 *ra, float2 *rb, const float2 &p, float pr, const float2 &c, float cr)
 {
@@ -119,7 +121,7 @@ int convexHull(vector<float2> &points)
     if (points.size() == 3)
         return 3;
         
-    float minY  = std::numeric_limits<float>::max();
+    float minY  = MYINF;
     int   minYI = -1;
     
     for (int i=0; i<points.size(); i++)
@@ -205,18 +207,17 @@ bool intersectRayCircle(float2 *o, float2 E, float2 d, float2 C, float r)
     return false;
 }
 
-
 float intersectBBSegmentV(float bbl, float bbb, float bbr, float bbt, float2 a, float2 b)
 {
 	float idx = 1.0f/(b.x - a.x);
-	float tx1 = (bbl == a.x ? -INFINITY : (bbl - a.x)*idx);
-	float tx2 = (bbr == a.x ?  INFINITY : (bbr - a.x)*idx);
+	float tx1 = (bbl == a.x ? -MYINF : (bbl - a.x)*idx);
+	float tx2 = (bbr == a.x ?  MYINF : (bbr - a.x)*idx);
 	float txmin = min(tx1, tx2);
 	float txmax = max(tx1, tx2);
 	
 	float idy = 1.0f/(b.y - a.y);
-	float ty1 = (bbb == a.y ? -INFINITY : (bbb - a.y)*idy);
-	float ty2 = (bbt == a.y ?  INFINITY : (bbt - a.y)*idy);
+	float ty1 = (bbb == a.y ? -MYINF : (bbb - a.y)*idy);
+	float ty2 = (bbt == a.y ?  MYINF : (bbt - a.y)*idy);
 	float tymin = min(ty1, ty2);
 	float tymax = max(ty1, ty2);
 	
@@ -228,7 +229,7 @@ float intersectBBSegmentV(float bbl, float bbb, float bbr, float bbt, float2 a, 
             return (minv > 0.f) ? minv : min(maxv, 1.f);
 	}
 	
-	return INFINITY;
+	return MYINF;
 }
 
 bool intersectPointTriangle(float2 P, float2 A, float2 B, float2 C)
@@ -339,4 +340,76 @@ float2 rectangleEdge(float2 rpos, float2 rrad, float2 dir)
     if (intersectSegmentSegment(&pos, rpos - rrad, rpos - flipX(rrad), rpos, end))
         return pos;
     return rpos;
+}
+
+
+// ported from glsl https://github.com/ashima/webgl-noise
+
+using glm::vec2;
+using glm::vec3;
+using glm::vec4;
+using glm::fract;
+
+static vec3 mod289(vec3 x) {
+    return x - floor(x * (1.f / 289.f)) * 289.f;
+}
+
+static vec2 mod289(vec2 x) {
+    return x - floor(x * (1.f / 289.f)) * 289.f;
+}
+
+static vec3 permute(vec3 x) {
+    return mod289(((x*34.f)+1.f)*x);
+}
+
+float snoise(vec2 v)
+{
+    const vec4 C = vec4(0.211324865405187f,  // (3.0-sqrt(3.0))/6.0
+                        0.366025403784439f,  // 0.5*(sqrt(3.0)-1.0)
+                        -0.577350269189626f,  // -1.0 + 2.0 * C.x
+                        0.024390243902439f); // 1.0 / 41.0
+    // First corner
+    vec2 i  = floor(v + dot(v, vec2(C.y, C.y)) );
+    vec2 x0 = v -   i + dot(i, vec2(C.x, C.x));
+
+    // Other corners
+    vec2 i1;
+    //i1.x = step( x0.y, x0.x ); // x0.x > x0.y ? 1.0 : 0.0
+    //i1.y = 1.0 - i1.x;
+    i1 = (x0.x > x0.y) ? vec2(1.f, 0.f) : vec2(0.f, 1.f);
+    // x0 = x0 - 0.0 + 0.0 * C.xx ;
+    // x1 = x0 - i1 + 1.0 * C.xx ;
+    // x2 = x0 - 1.0 + 2.0 * C.xx ;
+    vec4 x12 = vec4(x0.x, x0.y, x0.x, x0.y) + vec4(C.x, C.x, C.z, C.z);
+    x12.x -= i1.x;
+    x12.y -= i1.y;
+
+    // Permutations
+    i = mod289(i); // Avoid truncation effects in permutation
+    vec3 p = permute( permute( i.y + vec3(0.f, i1.y, 1.f ))
+                      + i.x + vec3(0.f, i1.x, 1.f ));
+
+    vec3 m = max(0.5f - vec3(dot(x0,x0), dot(vec2(x12.x, x12.y),vec2(x12.x, x12.y)), dot(vec2(x12.z, x12.w),vec2(x12.z, x12.w))), 0.f);
+    m = m*m ;
+    m = m*m ;
+
+    // Gradients: 41 points uniformly over a line, mapped onto a diamond.
+    // The ring size 17*17 = 289 is close to a multiple of 41 (41*7 = 287)
+
+    vec3 x = 2.f * fract(p * vec3(C.w, C.w, C.w)) - 1.f;
+    vec3 h = abs(x) - 0.5f;
+    vec3 ox = floor(x + 0.5f);
+    vec3 a0 = x - ox;
+
+    // Normalise gradients implicitly by scaling m
+    // Approximation of: m *= inversesqrt( a0*a0 + h*h );
+    m *= 1.79284291400159f - 0.85373472095314f * ( a0*a0 + h*h );
+
+    // Compute final noise value at P
+    vec3 g;
+    g.x  = a0.x  * x0.x  + h.x  * x0.y;
+    vec2 g_yz = vec2(a0.y, a0.z) * vec2(x12.x, x12.z) + vec2(h.y, h.z) * vec2(x12.y, x12.w);
+    g.y = g_yz.x;
+    g.z = g_yz.y;
+    return 130.f * dot(m, g);
 }

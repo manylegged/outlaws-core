@@ -189,7 +189,7 @@ public:
     void UseProgram(const ShaderState& ss, const float2* ptr) const
     {
         UseProgramBase(ss, ptr, (float2*)NULL);
-        float4 c = ABGR2RGBAf(ss.uColor);
+        float4 c = abgr2rgbaf(ss.uColor);
         glUniform4fv(m_colorSlot, 1, &c[0]);
         glReportError();
     }
@@ -197,7 +197,7 @@ public:
     void UseProgram(const ShaderState& ss, const VertexPos* ptr, const VertexPos* base) const
     {
         UseProgramBase(ss, &ptr->pos, base);
-        float4 c = ABGR2RGBAf(ss.uColor);
+        float4 c = abgr2rgbaf(ss.uColor);
         glUniform4fv(m_colorSlot, 1, &c[0]);
         glReportError();
     }
@@ -277,8 +277,8 @@ public:
     void UseProgram(const ShaderState& ss, const VertexPosTime* ptr, const VertexPosTime* base) const
     {
         UseProgramBase(ss, &ptr->pos, base);
-        float4 c0 = ABGR2RGBAf(ss.uColor);
-        float4 c1 = ABGR2RGBAf(ss.uColor1);
+        float4 c0 = abgr2rgbaf(ss.uColor);
+        float4 c1 = abgr2rgbaf(ss.uColor1);
         glUniform4fv(SourceColor0, 1, &c0[0]);
         glUniform4fv(SourceColor1, 1, &c1[0]);
         glUniform1f(TimeU, globals.renderTime);
@@ -363,23 +363,7 @@ private:
 public:
     ShaderTexture()
     {
-        LoadProgram("ShaderTexture",
-                    "varying vec2 DestTexCoord;\n"
-                    "varying vec4 DestColor;\n"
-                    ,
-                    "attribute vec2 SourceTexCoord;\n"
-                    "uniform vec4 SourceColor;\n"
-                    "void main(void) {\n"
-                    "    DestTexCoord = SourceTexCoord;\n"
-                    "    DestColor    = SourceColor;\n"
-                    "    gl_Position  = Transform * Position;\n"
-                    "}\n"
-                    ,
-                    "uniform sampler2D texture1;\n"
-                    "void main(void) {\n"
-                    "    gl_FragColor = DestColor * texture2D(texture1, DestTexCoord);\n"
-                    "}\n"
-                    );
+        LoadProgram("ShaderTexture");
         m_uTexture = getUniformLocation("texture1");
         m_uColorSlot = getUniformLocation("SourceColor");
         m_aTexCoords = getAttribLocation("SourceTexCoord");
@@ -398,13 +382,64 @@ public:
         vertexAttribPointer(m_aTexCoords, &ptr->texCoord, base);
         glUniform1i(m_uTexture, 0);
 
-        float4 c = ABGR2RGBAf(ss.uColor);
+        float4 c = abgr2rgbaf(ss.uColor);
         glUniform4fv(m_uColorSlot, 1, &c[0]); 
     }
 
     static const ShaderTexture& instance()   
     {
         static ShaderTexture* p = new ShaderTexture();
+        return *p;
+    }
+
+};
+
+struct ShaderTextureWarp : public ShaderTextureBase {
+
+private:
+    GLuint texture1, warpTex, SourceColor, SourceTexCoord, camWorldPos, camWorldSize, time;
+
+public:
+    
+    mutable float2 camPos;
+    mutable float2 camSize;
+
+    ShaderTextureWarp()
+    { 
+       LoadProgram("ShaderTextureWarp");
+        GET_UNIF_LOC(texture1);
+        GET_UNIF_LOC(warpTex);
+        GET_UNIF_LOC(SourceColor);
+        GET_UNIF_LOC(camWorldPos);
+        GET_UNIF_LOC(camWorldSize);
+        GET_UNIF_LOC(time);
+        GET_ATTR_LOC(SourceTexCoord);
+    }
+
+    void UseProgram(const ShaderState &ss, const VertexPosTex *ptr, const OutlawTexture &ot) const override
+    {
+        UseProgram(ss, ptr, (const VertexPosTex*) NULL);
+    }
+
+    template <typename Vtx>
+    void UseProgram(const ShaderState &ss, const Vtx *ptr, const Vtx *base) const
+    {
+        UseProgramBase(ss, &ptr->pos, base);
+
+        vertexAttribPointer(SourceTexCoord, &ptr->texCoord, base);
+        glUniform1i(texture1, 0);
+        glUniform1i(warpTex, 1);
+        glUniform2fv(camWorldPos, 1, &camPos[0]);
+        glUniform2fv(camWorldSize, 1, &camSize[0]);
+        glUniform1f(time, globals.renderTime);
+
+        float4 c = abgr2rgbaf(ss.uColor);
+        glUniform4fv(SourceColor, 1, &c[0]); 
+    }
+
+    static const ShaderTextureWarp& instance()   
+    {
+        static ShaderTextureWarp* p = new ShaderTextureWarp();
         return *p;
     }
 
@@ -439,7 +474,7 @@ public:
         vertexAttribPointer(m_aTexCoords, &ptr->texCoord, base);
         glUniform1i(m_uTexture, 0);
 
-        float4 c = ABGR2RGBAf(ss.uColor);
+        float4 c = abgr2rgbaf(ss.uColor);
         glUniform4fv(m_uColorSlot, 1, &c[0]); 
     }
 
@@ -561,6 +596,12 @@ public:
     }
 
 };
+
+template <typename T, typename L>
+void MeshPair<T, L>::Handle::Draw(const ShaderState& ss)
+{
+    mp.Draw(ss, ShaderColor::instance(), ShaderColor::instance());
+}
 
 struct ShaderColorDither : public ShaderProgramBase {
 

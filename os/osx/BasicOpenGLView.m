@@ -4,6 +4,7 @@
 #import "BasicOpenGLView.h"
 #include <sys/signal.h>
 
+#include "sdl_inc.h"
 #include "Outlaws.h"
 
 BasicOpenGLView * gView = NULL;
@@ -384,6 +385,10 @@ static NSCursor* invisibleCursor()
         [[self window] performClose: gView];
         LogMessage(@"performing close");
     } else {
+        SDL_Event evt;
+        while (SDL_PollEvent(&evt))
+            Controller_HandleEvent(&evt);
+        
         NSRect rectView = [self convertRectToBacking:[self bounds]];
         glViewport (0, 0, rectView.size.width, rectView.size.height);
         // draw the whole game
@@ -418,6 +423,7 @@ void OL_SetSwapInterval(int interval)
 - (void) prepareOpenGL
 {
     [self setWantsBestResolutionOpenGLSurface:YES];
+    OLG_InitGL();
 }
 // ---------------------------------
 
@@ -548,6 +554,8 @@ static void sigtermHandler()
     self->closing = 0;
 
     [[self window] setDelegate:self];
+
+    Controller_Init();
 }
 
 

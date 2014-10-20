@@ -25,8 +25,6 @@
 #ifndef CORE_EVENT_H
 #define CORE_EVENT_H
 
-inline string keyToString(int key);
-
 enum : int {
     NSEnterCharacter                = 0x0003,
     NSBackspaceCharacter            = 0x0008,
@@ -165,7 +163,7 @@ struct Event {
     enum Type { KEY_DOWN=0, KEY_UP, MOUSE_DOWN, MOUSE_UP, MOUSE_DRAGGED, 
                 MOUSE_MOVED, SCROLL_WHEEL, LOST_FOCUS, GAINED_FOCUS,
                 TOUCH_BEGIN, TOUCH_MOVED, TOUCH_STATIONARY, TOUCH_ENDED, TOUCH_CANCELLED,
-                GAMEPAD_AXIS,
+                GAMEPAD_AXIS, GAMEPAD_ADDED, GAMEPAD_REMOVED,
                 INVALID };
     Type   type = INVALID;
     int    key = 0;
@@ -215,6 +213,11 @@ struct Event {
         return type == KEY_DOWN && (key == '\r' || key == GamepadA);
     }
 
+    bool isNext() const
+    {
+        return isEnter() || (type == MOUSE_DOWN && key == 0) || isEscape();
+    }
+
 };
 
 enum KeyMods {
@@ -232,6 +235,13 @@ enum GamepadAxis {
     GamepadAxisCount
 };
 
+string keyToString(int key);
+
+inline bool isGamepadKey(int key)
+{
+    return GamepadA <= key && key <= GamepadTriggerRight;
+}
+
 class KeyState {
     bool ascii[256];
     bool function[SpecialKeyCount - NSUpArrowFunctionKey];
@@ -241,6 +251,7 @@ class KeyState {
 public:
 
     float2 cursorPosScreen;
+    bool   gamepadActive = false;
 
     KeyState()
     {
@@ -283,14 +294,14 @@ public:
 
     int getUpKey(const Event *evt) const
     {
-        return ((evt->type == Event::KEY_UP) ? (getModKey(evt->key)) :
+        return ((evt->type == Event::KEY_UP)   ? getModKey(evt->key) :
                 (evt->type == Event::MOUSE_UP) ? getModKey(evt->key + LeftMouseButton) :
                 0);
     }
 
     int getDownKey(const Event *evt) const
     {
-        return ((evt->type == Event::KEY_DOWN) ? getModKey(evt->key) :
+        return ((evt->type == Event::KEY_DOWN)   ? getModKey(evt->key) :
                 (evt->type == Event::MOUSE_DOWN) ? getModKey(evt->key + LeftMouseButton) :
                 0);
     }
@@ -305,6 +316,11 @@ public:
         return mkey;
     }
 
+    const char* stringNext() const { return gamepadActive ? "B" : "ENTER/Click"; }
+    const char* stringYes() const { return gamepadActive ? "A" : "ENTER"; }
+    const char* stringNo() const { return gamepadActive ? "B" : "ESC"; }
+    const char* stringDiscard() const { return gamepadActive ? "Y" : "DELETE"; }
+
     // update current button state
     // returns new synthetic event to process
     Event OnEvent(const Event* event);
@@ -317,7 +333,6 @@ public:
 
 };
 
-string keyToString(int key);
 
 inline bool isKeyMod(int key)
 {

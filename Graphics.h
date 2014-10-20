@@ -32,6 +32,7 @@
 #include "Vertex.h"
 
 extern uint graphicsDrawCount;
+extern bool supports_ARB_Framebuffer_object;
 
 GLenum glReportError1(const char *file, uint line, const char *function);
 GLenum glReportFramebufferError1(const char *file, uint line, const char *function);
@@ -309,13 +310,13 @@ struct ShaderState {
         rotate(a);
     }
 
-    void color(uint c, float a=1)   { uColor = ARGB2ABGR(0xff000000|c, a); }
-    void color32(uint c, float a=1) { uColor = ARGB2ABGR(c, a); }
+    void color(uint c, float a=1)   { uColor = argb2abgr(0xff000000|c, a); }
+    void color32(uint c, float a=1) { uColor = argb2abgr(c, a); }
 
     void color2(uint c, float ca, uint c1, float c1a)  
     { 
-        uColor = ARGB2ABGR(0xff000000|c, ca); 
-        uColor1 = ARGB2ABGR(0xff000000|c1, c1a); 
+        uColor = argb2abgr(0xff000000|c, ca); 
+        uColor1 = argb2abgr(0xff000000|c1, c1a); 
     }
 
     void DrawElements(uint dt, size_t ic, const ushort* i) const;
@@ -342,7 +343,7 @@ void GLTexture::DrawFullscreen() const
     DrawFSEnd();
 }
 
-// RIAA for a render target
+// RAII for a render target
 class GLRenderTexture : public GLTexture {
     
     GLuint m_fbname = 0;
@@ -799,8 +800,8 @@ public:
     bool empty() const { return m_il.empty(); }
 
     Vtx& cur() { return m_curVert; }
-    void color(uint c, float a=1)   { m_curVert.color = ARGB2ABGR(c|0xff000000, a); }
-    void color32(uint c, float a=1) { m_curVert.color = ARGB2ABGR(c, a); }
+    void color(uint c, float a=1)   { m_curVert.color = argb2abgr(c|0xff000000, a); }
+    void color32(uint c, float a=1) { m_curVert.color = argb2abgr(c, a); }
 
     uint getColor() const { return m_curVert.color; }
 
@@ -1542,20 +1543,37 @@ struct MeshPair {
 
     struct Scope {
 
+        typedef MeshPair<TriV, LineV> MP;
         typename Mesh<TriV>::scope  s0;
         typename Mesh<LineV>::scope s1;
 
-        Scope(MeshPair<TriV, LineV> &mp, float2 pos, float angle) : s0(mp.tri), s1(mp.line)
+        Scope(MP &mp) : s0(mp.tri), s1(mp.line) {}
+        
+        Scope(MP &mp, float2 pos, float angle) : s0(mp.tri), s1(mp.line)
         {
             mp.tri.translateRotate(pos, angle);
             mp.line.transform = mp.tri.transform;
         }
 
-        Scope(MeshPair<TriV, LineV> &mp, float2 pos) : s0(mp.tri), s1(mp.line)
+        Scope(MP &mp, float2 pos) : s0(mp.tri), s1(mp.line)
         {
             mp.tri.translate(pos);
             mp.line.transform = mp.tri.transform;
         }
+    };
+
+    struct Handle {
+        MeshPair &mp;
+        Handle(MeshPair &m) : mp(m) { mp.start(); }
+        ~Handle() { mp.finish(); }
+
+        template <typename TriP, typename LineP>
+        void Draw(const ShaderState& ss, const TriP &trip, const LineP &linep)
+        {
+            mp.Draw(ss, trip, linep);
+        }
+
+        void Draw(const ShaderState& ss);
     };
 
     void start()
@@ -1606,7 +1624,7 @@ inline DMesh& theDMesh()
     return mesh;
 }
 
-enum ButtonStyle { S_BOX=1, S_CORNERS=2, S_FIXED=4, S_OVAL=8 };
+enum ButtonStyle { S_BOX=1, S_CORNERS=2, S_FIXED=4, S_OVAL=8, S_3D=16 };
 
 void PushButton(TriMesh<VertexPosColor>* triP, LineMesh<VertexPosColor>* lineP, float2 pos, float2 r, 
                 uint bgColor, uint fgColor, float alpha);

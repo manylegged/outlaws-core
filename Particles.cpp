@@ -179,15 +179,8 @@ struct ShaderParticles : public IParticleShader {
     }
 };
 
-static bool compareParticlesByZ(const ParticleSystem::Particle& a, const ParticleSystem::Particle& b)
-{
-    return a.position.z < b.position.z;
-}
-
-
 void ParticleSystem::updateRange(uint first, uint size)
 {
-    // std::stable_sort(m_vertices.begin() + first, m_vertices.begin() + first + size, compareParticlesByZ);
     m_vbo.BufferSubData(first, size, &m_vertices[first]);
 }
 

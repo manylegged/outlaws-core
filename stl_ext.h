@@ -50,11 +50,18 @@
 
 #define unless(X) if (!(X))
 
-// lambda((int* a), return *a + 3)
+// lambda((int* a), *a + 3)
 #define lambda(X, Y) [&] X { return (Y); }
 
 template <typename T> T or_(const T& a, const T& b) { return a ? a : b; }
 template <typename T> T or_(const T& a, const T& b, const T& c) { return a ? a : b ? b : c; }
+template <typename T> T or_(const T& a, const T& b, const T& c, const T& d) { return a ? a : b ? b : c ? c : d; }
+
+template <typename S, typename T> 
+T and_(const S& a, const T& b) { return a ? b : T(a); }
+
+template <typename S, typename T> 
+T and_(const S& a, const T& b, const T& c) { return a ? (b ? c : b) : T(a); }
 
 // return bit index of leading 1 (0x80000000 == 0x80030100 == 31, 0x1 == 0, 0x0 == -1)
 inline int findLeadingOne(uint v, int i=0)
@@ -984,17 +991,10 @@ inline const V &map_get(const std::map<std::string, V> &m, const char* key, cons
     return (it != m.end()) ? it->second : def;
 }
 
-template <typename K, typename V>
-inline const V *map_get_addr(const std::map<K, V> &m, const K& key)
+template <typename M>
+inline const typename M::mapped_type *map_get_addr(const M &m, const typename M::key_type& key)
 {
-    const typename std::map<K, V>::const_iterator it = m.find(key);
-    return (it != m.end()) ? &it->second : NULL;
-}
-
-template <typename V>
-inline const V *map_get_addr(const std::map<std::string, V> &m, const char* key)
-{
-    const typename std::map<std::string, V>::const_iterator it = m.find(key);
+    const typename M::const_iterator it = m.find(key);
     return (it != m.end()) ? &it->second : NULL;
 }
 

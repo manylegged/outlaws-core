@@ -82,6 +82,55 @@
       }"
    },
 
+   ShaderTexture = {
+      "varying vec2 DestTexCoord;
+       varying vec4 DestColor;\n"
+      ,
+      "attribute vec2 SourceTexCoord;
+      uniform vec4 SourceColor;
+      void main(void) {
+          DestTexCoord = SourceTexCoord;
+          DestColor    = SourceColor;
+          gl_Position  = Transform * Position;
+      }"
+      ,
+      "uniform sampler2D texture1;
+       void main(void) {
+           vec2 texCoord = DestTexCoord;
+           gl_FragColor = DestColor * texture2D(texture1, texCoord);
+       }"
+   }
+
+   ShaderTextureWarp = {
+      "varying vec2 DestTexCoord;
+       varying vec4 DestColor;"
+      ,
+      "attribute vec2 SourceTexCoord;
+      uniform vec4 SourceColor;
+      void main(void) {
+          DestTexCoord = SourceTexCoord;
+          DestColor    = SourceColor;
+          gl_Position  = Transform * Position;
+      }"
+      ,
+      "uniform sampler2D texture1;
+       uniform sampler2D warpTex;
+       uniform vec2      camWorldPos;
+       uniform vec2      camWorldSize;
+       uniform float     time;
+      #include 'noise2D.glsl'
+      void main(void) {
+         vec2 texCoord = DestTexCoord;
+          //vec2 roll = (texCoord - vec2(0.5));
+          //texCoord += 3.0 * vec2(roll.y, -roll.x) * max(0.0, (0.5 - length(roll)));
+          float warpv = length(texture2D(warpTex, texCoord).rgb);
+          if (warpv > 0.0)
+              texCoord += 100.0 * warpv * snoise(camWorldPos + 0.1 * time + 0.01 * texCoord * camWorldSize) /
+                          max(camWorldSize.x, camWorldSize.y);
+          gl_FragColor = DestColor * texture2D(texture1, texCoord);
+      }"
+   }
+
    ShaderTonemap = {
       "varying vec2 DestTexCoord;"
       ,
@@ -94,48 +143,20 @@
       "uniform sampler2D texture1;
       uniform sampler2D dithertex;
       void main(void) {
-          vec4 color = texture2D(texture1, DestTexCoord);
-          float mx = max(color.r, max(color.g, color.b));
-          if (mx > 1.0) {
-              // color.rgb += 1.0 * vec3(mx - 1.0);
-              color.rgb += 1.0 * vec3(log(mx));
-          }
-      //    color.rgb = max(color.rgb, vec3(0.01, 0.01, 0.01));
-      //    color.rgb *= 1.5;
-      //    color.rgb = color.rgb / (1 + max(color.r, max(color.g, color.b)));
-      //    color.rgb = color.rgb / (1 + color.rgb);
-      //    color.rgb = pow(color.rgb,vec3(1/2.2));
-          gl_FragColor = color;
-      }"
-   },
-   
-   ShaderTonemapDither = {
-      "varying vec2 DestTexCoord;"
-      ,
-      "attribute vec2 SourceTexCoord;
-      void main(void) {
-          DestTexCoord = SourceTexCoord;
-          gl_Position  = Transform * Position;
-      }"
-      ,
-      "uniform sampler2D texture1;
-      uniform sampler2D dithertex;
-      void main(void) {
-          vec4 color = texture2D(texture1, DestTexCoord);
+          vec2 texCoord = DestTexCoord;
+          vec4 color = texture2D(texture1, texCoord);
           if (color.rgb != vec3(0.0))
           {
               float mx = max(color.r, max(color.g, color.b));
               if (mx > 1.0) {
-                  color.rgb += 1.0 * vec3(mx - 1.0);
+                  //color.rgb += 1.0 * vec3(mx - 1.0);
+                  color.rgb += 1.0 * vec3(log(mx));
               }
+      #if DITHER
               float ditherv = texture2D(dithertex, gl_FragCoord.xy / 8.0).r / 128.0 - (1.0 / 128.0);
               color += vec4(ditherv);
+      #endif
           }
-      //    color.rgb = max(color.rgb, vec3(0.01, 0.01, 0.01));
-      //    color.rgb *= 1.5;
-      //    color.rgb = color.rgb / (1 + max(color.r, max(color.g, color.b)));
-      //    color.rgb = color.rgb / (1 + color.rgb);
-      //    color.rgb = pow(color.rgb,vec3(1/2.2));
           gl_FragColor = color;
       }"
    },
