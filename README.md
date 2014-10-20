@@ -7,7 +7,7 @@ Not cleaned up enough to be #included directly by other projects without changes
 
 Highlights:
 * polygon intersections, interpolation, vector helpers, ternary digits, and more in Geometry.h
-* fast 2d spacial hash in SpacialHash.h
+* fast 2d spatial hash in SpacialHash.h
 * a class 'lstring' for fast symbol manipulation and easy to use string utils in Str.h
 * 'copy_ptr' and 'watch_ptr' smart pointers for managing sparse structs and automatically nulling object references on deletion, respectively, in stl_ext.h
 * C++ wrappers for OpenGL buffers and polygon drawing code in Graphics.h
@@ -17,14 +17,14 @@ Highlights:
 
 supported compilers
 -------------------
-* Xcode 5.1 (clang)
+* Xcode 6.1 (clang)
 * Visual Studio 2013
 * GCC 4.8
 
-used libraries
+libraries
 --------------
 * OpenGL: http://www.opengl.org
 * OpenGL Mathematics Library: http://glm.g-truc.net
-* Simple DirectMedia Layer (windows and linux): http://www.libsdl.org
+* Simple DirectMedia Layer: http://www.libsdl.org
 * OpenGL Extension Wrangler Library (GLEW): http://glew.sourceforge.net
 * cAudio 3D audio engine based on OpenAL (with my modifications): https://github.com/manylegged/cAudio
