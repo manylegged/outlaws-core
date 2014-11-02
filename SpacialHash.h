@@ -27,7 +27,7 @@
 #define SPACIALHASH_H
 
 template <typename T>
-class spacial_hash {
+class spatial_hash {
 
 public:
 
@@ -107,8 +107,8 @@ public:
     float cell_size() const { return m_cell_size; }
     int   elements()  const { return m_elements.size(); }
 
-    spacial_hash(float cell_size, uint cells) { reset(cell_size, cells); }
-    spacial_hash() : m_cell_size(0) { }
+    spatial_hash(float cell_size, uint cells) { reset(cell_size, cells); }
+    spatial_hash() : m_cell_size(0) { }
 
     void insertPoint(float2 p, const T& v)
     {

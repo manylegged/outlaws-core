@@ -259,7 +259,7 @@ public:
                 const int             pri = m_sources[i].second;
                 if (!src->isPlaying()) {
                     src->drop();
-                    vector_remove_index(m_sources, i);
+                    vec_pop(m_sources, i);
                 } else {
                     if (pri < minPri)
                     {
@@ -287,7 +287,7 @@ public:
                     return NULL;
                 }
                 cAudio::IAudioSource *src = m_sources[minIdx].first;
-                vector_remove_index(m_sources, minIdx);
+                vec_pop(m_sources, minIdx);
                 src->stop();
                 src->drop();
             }
@@ -320,7 +320,7 @@ public:
                 if (!m_streamSources[i]->isPlaying()) {
                     m_streamSources[i]->stop();
                     m_streamSources[i]->drop();
-                    vector_remove_index(m_streamSources, i);
+                    vec_pop(m_streamSources, i);
                 } else {
                     const float vol = m_streamSources[i]->getVolume();
                     if (vol < minVol) {
@@ -337,7 +337,7 @@ public:
                 
                 m_streamSources[minVolIdx]->stop();
                 m_streamSources[minVolIdx]->drop();
-                vector_remove_index(m_streamSources, minVolIdx);
+                vec_pop(m_streamSources, minVolIdx);
             }
         }
 
@@ -477,7 +477,7 @@ public:
             if (!m_source) {
                 // DPRINT(SOUND, ("Failed to load stream sample %s:%d, erasing",
                                // m_se->name.c_str(), m_se->m_index));
-                // vector_erase(const_cast<vector<lstring>&>(m_se->samples[m_layer]), m_se->m_index);
+                // vec_erase(const_cast<vector<lstring>&>(m_se->samples[m_layer]), m_se->m_index);
                 return NULL;
             }
         } else {
@@ -607,7 +607,7 @@ public:
             m_source->setRolloffFactor(m_se->rolloff);
             m_source->play3d(c3(pos), 1.f, (m_se->flags&EventDescription::LOOP) || m_loop);
             if (m_source->getBuffer() && m_source->getBuffer()->getChannels() == 2) {
-                DPRINT(SOUND, ("Warning! Stereo sample %s:%d:%s does not support spacialization",
+                DPRINT(SOUND, ("Warning! Stereo sample %s:%d:%s does not support spatialization",
                                m_se->name.c_str(), m_se->m_index, getSample().c_str()));
             }
             DPRINT(SOUND_EVENTS, ("Play3D %s:%d:\n%s", m_se->name.c_str(), m_se->m_index,

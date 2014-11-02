@@ -57,7 +57,7 @@
       uniform float TimeU;
       void main(void) {
           gl_Position = Transform * Position;
-          float val = 0.5 + 0.5 * sin(TimeU + TimeA);
+          float val = 0.5 + 0.5 * sin(0.5 * (TimeU + TimeA));
           DestinationColor = mix(SourceColor0, SourceColor1, val);
       }"
       ,

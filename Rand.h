@@ -120,6 +120,10 @@ inline float2 randpolar(float radius)
 {
     return radius * angleToVector(randangle());
 }
+inline float2 randpolar()
+{
+    return angleToVector(randangle());
+}
 
 // randomized vector with length (minradius, maxradius], uniformly distributed throughout area
 inline float2 randpolar_uniform(float minradius, float maxradius) 

@@ -159,6 +159,12 @@ void GLRenderTexture::clear()
     m_zrbname = 0;
 }
 
+#if __APPLE__
+#define HAS_BLIT_FRAMEBUFFER 1
+#else
+#define HAS_BLIT_FRAMEBUFFER glBlitFramebuffer
+#endif
+
 void GLRenderTexture::BindFramebuffer(float2 size, bool keepz)
 {
     ASSERT(!isZero(size));
@@ -170,7 +176,7 @@ void GLRenderTexture::BindFramebuffer(float2 size, bool keepz)
     RebindFramebuffer();
 
 #if !OPENGL_ES
-    if (keepz)
+    if (keepz && HAS_BLIT_FRAMEBUFFER)
     {
         const GLint def = s_bound.size() ? s_bound.back()->m_fbname : s_defaultFramebuffer;
         ASSERT(def != m_fbname);

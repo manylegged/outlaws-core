@@ -45,6 +45,8 @@ class GLText {
     int            font = kDefaultFont;
     float          fontSize = kDefaultFontSize;
 
+    mutable vector<float2> advancements;
+
     GLText()
     {
         memset(&texture, 0, sizeof(texture));

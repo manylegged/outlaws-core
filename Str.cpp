@@ -163,6 +163,22 @@ std::string str_urlencode(const std::string &value)
     return ret;
 }
 
+std::string str_time_format(float seconds)
+{
+    seconds = max(epsilon, seconds);
+    std::string ret;
+    const int minutes = floor(seconds / 60.f);
+    const int hours   = floor(seconds / 3600.f);
+    if (!minutes)
+        return str_format("%02.1f", seconds);
+    else if (!hours)
+        return str_format("%3d:%02d", minutes, modulo((int)floor(seconds), 60));
+    else
+        return str_format("%3d:%02d:%.02d", hours, modulo(minutes, 60),
+                          modulo((int)floor(seconds), 60));
+}
+
+
 std::string str_path_standardize(const std::string &str)
 {
     string path(str.size(), ' ');
@@ -220,6 +236,27 @@ std::string str_basename(const std::string &str)
         return str.substr(pt+1);
 }
 
+string str_tohex(const unsigned char* digest, int size)
+{
+    const char hexchars[] = "0123456789abcdef";
+
+    string result;
+
+    for (int i = 0; i < 16; i++)
+    {
+        unsigned char b = digest[i];
+        char hex[3];
+
+        hex[0] = hexchars[b >> 4];
+        hex[1] = hexchars[b & 0xF];
+        hex[2] = 0;
+
+        result.append(hex);
+    }
+    return result;
+}
+
+
 
 #if DEBUG
 
@@ -272,5 +309,7 @@ std::string str_demangle(const char *str)
     name = str_replace(name, "std::__1::", "std::");
     return name;
 }
+
+
 
 #endif

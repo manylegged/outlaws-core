@@ -53,6 +53,7 @@
 // lambda((int* a), *a + 3)
 #define lambda(X, Y) [&] X { return (Y); }
 
+// lisp style multi-argument or_ and and_
 template <typename T> T or_(const T& a, const T& b) { return a ? a : b; }
 template <typename T> T or_(const T& a, const T& b, const T& c) { return a ? a : b ? b : c; }
 template <typename T> T or_(const T& a, const T& b, const T& c, const T& d) { return a ? a : b ? b : c ? c : d; }
@@ -62,6 +63,19 @@ T and_(const S& a, const T& b) { return a ? b : T(a); }
 
 template <typename S, typename T> 
 T and_(const S& a, const T& b, const T& c) { return a ? (b ? c : b) : T(a); }
+
+// multi-argument min, max
+template <typename T>
+T min(const T& a, const T& b, const T& c) { return min(min(a, b), c); }
+
+template <typename T>
+T min(const T& a, const T& b, const T& c, const T& d) { return min(min(a, b), min(c, d)); }
+
+template <typename T>
+T max(const T& a, const T& b, const T& c) { return max(max(a, b), c); }
+
+template <typename T>
+T max(const T& a, const T& b, const T& c, const T& d) { return max(max(a, b), max(c, d)); }
 
 // return bit index of leading 1 (0x80000000 == 0x80030100 == 31, 0x1 == 0, 0x0 == -1)
 inline int findLeadingOne(uint v, int i=0)
@@ -406,14 +420,14 @@ watch_ptr<T> make_watch(T* v)
 // vector ///////////////////////////////////////////////////////////////////////////////
 
 template <typename V, typename T>
-inline bool vector_contains(const V &v, const T& t)
+inline bool vec_contains(const V &v, const T& t)
 {
     auto end = std::end(v);
     return std::find(std::begin(v), end, t) != end;
 }
 
 template <typename V, typename Fun>
-inline void vector_foreach(V& vec, Fun& fun)
+inline void vec_foreach(V& vec, Fun& fun)
 {
     foreach (auto &v, vec) {
         fun(v);
@@ -421,7 +435,7 @@ inline void vector_foreach(V& vec, Fun& fun)
 }
 
 template <typename V, typename T>
-inline int vector_count(const V &v, const T& t)
+inline int vec_count(const V &v, const T& t)
 {
     int count = 0;
     foreach (const auto &x, v) {
@@ -432,7 +446,7 @@ inline int vector_count(const V &v, const T& t)
 }
 
 template <typename V, typename T>
-inline size_t vector_find_index(const V &v, const T& t)
+inline size_t vec_find_index(const V &v, const T& t)
 {
     auto begin = std::begin(v);
     auto end = std::end(v);
@@ -444,7 +458,7 @@ inline size_t vector_find_index(const V &v, const T& t)
 }
 
 template <typename V, typename Fun>
-const typename V::value_type &vector_find(
+const typename V::value_type &vec_find(
     const V &vec, const Fun& fun, const typename V::value_type &def=typename V::value_type())
 {
     foreach (auto& x, vec) {
@@ -454,18 +468,18 @@ const typename V::value_type &vector_find(
     return def;
 }
 
-// return true if we added (!vector_contains(v, t))
+// return true if we added (!vec_contains(v, t))
 template <typename V, typename T>
-inline bool vector_add(V &v, const T& t)
+inline bool vec_add(V &v, const T& t)
 {
-    bool adding = !vector_contains(v, t);
+    bool adding = !vec_contains(v, t);
     if (adding)
         v.push_back(t);
     return adding;
 }
 
 template <typename V, typename V1>
-inline bool vector_extend(V &v, const V1& t)
+inline bool vec_extend(V &v, const V1& t)
 {
     foreach (auto &x, t) {
         v.push_back(x);
@@ -474,12 +488,12 @@ inline bool vector_extend(V &v, const V1& t)
 }
 
 template <typename V, typename V1>
-inline V vector_intersection(const V &v, const V1& t)
+inline V vec_intersection(const V &v, const V1& t)
 {
     V ret;
     foreach (auto &x, v) {
-        if (vector_contains(t, x))
-            vector_add(ret, x);
+        if (vec_contains(t, x))
+            vec_add(ret, x);
     }
     return ret;
 }
@@ -487,21 +501,21 @@ inline V vector_intersection(const V &v, const V1& t)
 inline int myrandom_(int mx) { return randrange(mx); }
 
 template <typename V>
-inline void vector_shuffle(V& vec)
+inline void vec_shuffle(V& vec)
 {
     std::random_shuffle(std::begin(vec), std::end(vec), myrandom_);
 }
     
 
 template <typename Vec>
-const typename Vec::value_type &vector_at(const Vec &v, size_t i,
+const typename Vec::value_type &vec_at(const Vec &v, size_t i,
                                           const typename Vec::value_type &def=typename Vec::value_type())
 {
     return (i < v.size()) ? v[i] : def;
 }
 
 template <typename Vec>
-typename Vec::value_type &vector_index(Vec &v, size_t i)
+typename Vec::value_type &vec_index(Vec &v, size_t i)
 {
     if (v.size() <= i) {
         v.resize(i + 1);
@@ -510,7 +524,7 @@ typename Vec::value_type &vector_index(Vec &v, size_t i)
 }
 
 template <typename Vec>
-void vector_set_index(Vec &v, size_t i, const typename Vec::value_type &val)
+void vec_set_index(Vec &v, size_t i, const typename Vec::value_type &val)
 {
     if (v.size() <= i) {
         v.resize(i + 1);
@@ -519,14 +533,14 @@ void vector_set_index(Vec &v, size_t i, const typename Vec::value_type &val)
 }
 
 template <typename T>
-inline T *vector_get_ptr(std::vector<T*> &v, uint i)
+inline T *vec_get_ptr(std::vector<T*> &v, uint i)
 {
     return (i < v.size()) ? v[i] : NULL;
 }
 
 // set v[i] = t, appending if i > v.size() and erasing if t == NULL
 template <typename T>
-inline void vector_set_index_deep(std::vector<T*> &v, uint i, T* t)
+inline void vec_set_index_deep(std::vector<T*> &v, uint i, T* t)
 {
     if (i < v.size()) {
         if (v[i] == t)
@@ -542,7 +556,7 @@ inline void vector_set_index_deep(std::vector<T*> &v, uint i, T* t)
 // remove first occurrence of t in v, return true if found
 // swap from end to fill - does not maintain order!
 template <typename V, typename T>
-inline bool vector_remove_one(V &v, const T& t)
+inline bool vec_remove_one(V &v, const T& t)
 {
     typename V::iterator it = std::find(std::begin(v), std::end(v), t);
     if (it != std::end(v)) {
@@ -556,7 +570,7 @@ inline bool vector_remove_one(V &v, const T& t)
 // remove and delete first occurrence of t in v, return true if found
 // swap from end to fill - does not maintain order!
 template <typename V, typename T>
-inline bool vector_remove_one_deep(V &v, const T& t)
+inline bool vec_remove_one_deep(V &v, const T& t)
 {
     typename V::iterator it = std::find(std::begin(v), std::end(v), t);
     if (it != std::end(v)) {
@@ -571,7 +585,7 @@ inline bool vector_remove_one_deep(V &v, const T& t)
 // remove v[i], return true if i < v.size()
 // swap from end to fill - does not maintain order!
 template <typename V>
-inline bool vector_remove_index(V &v, typename V::size_type i)
+inline bool vec_pop(V &v, typename V::size_type i)
 {
     if (i < v.size()) {
         std::swap(v[i], v.back());
@@ -584,7 +598,7 @@ inline bool vector_remove_index(V &v, typename V::size_type i)
 // remove v[i], return true if i < v.size()
 // fill down - maintains order (but O(N))
 template <typename V>
-inline bool vector_erase(V &v, typename V::size_type i)
+inline bool vec_erase(V &v, typename V::size_type i)
 {
     if (i < v.size()) {
         v.erase(v.begin() + i);
@@ -595,10 +609,10 @@ inline bool vector_erase(V &v, typename V::size_type i)
 
 // remove v[i] if test, otherwise increment i. return test
 template <typename V, typename I>
-inline bool vector_remove_increment(V& v, I &idx, bool test)
+inline bool vec_pop_increment(V& v, I &idx, bool test)
 {
     if (test) {
-        return vector_remove_index(v, idx);
+        return vec_pop(v, idx);
     } else {
         idx++;
         return false;
@@ -607,10 +621,10 @@ inline bool vector_remove_increment(V& v, I &idx, bool test)
 
 // remove v[i] if test, otherwise increment i. return test
 template <typename V, typename I>
-inline bool vector_remove_increment_deep(V& v, I &idx, bool test)
+inline bool vec_pop_increment_deep(V& v, I &idx, bool test)
 {
     if (test) {
-        return vector_remove_index_deep(v, idx);
+        return vec_pop_deep(v, idx);
     } else {
         idx++;
         return false;
@@ -620,7 +634,7 @@ inline bool vector_remove_increment_deep(V& v, I &idx, bool test)
 // remove and delete v[i], return true if i < v.size()
 // swap from end to fill - does not maintain order!
 template <typename V>
-inline bool vector_remove_index_deep(V &v, typename V::size_type i)
+inline bool vec_pop_deep(V &v, typename V::size_type i)
 {
     ASSERT(i < v.size());
     if (i < v.size()) {
@@ -635,20 +649,20 @@ inline bool vector_remove_index_deep(V &v, typename V::size_type i)
 
 // clear and deallocate storage for t
 template <typename T>
-inline void vector_deallocate(T &t)
+inline void vec_deallocate(T &t)
 {
     T().swap(t);
 }
 
 template <typename V>
-inline void vector_swap(V& vec, size_t i, size_t j)
+inline void vec_swap(V& vec, size_t i, size_t j)
 {
     std::swap(vec[i], vec[j]);
 }
 
 // delete all elements and clear v
 template <typename V>
-inline void vector_clear_deep(V &v)
+inline void vec_clear_deep(V &v)
 {
     for (size_t i=0; i<v.size(); i++) {
         delete v[i];
@@ -658,7 +672,7 @@ inline void vector_clear_deep(V &v)
 
 // resize v to size, deleting removed elements
 template <typename T>
-inline void vector_resize_deep(std::vector<T*> &v, typename std::vector<T*>::size_type size)
+inline void vec_resize_deep(std::vector<T*> &v, typename std::vector<T*>::size_type size)
 {
     for (size_t i=size; i<v.size(); i++) {
         delete v[i];
@@ -668,13 +682,13 @@ inline void vector_resize_deep(std::vector<T*> &v, typename std::vector<T*>::siz
 
 // copy all elements from o to v, invoking assignment operator for existing elements and copy constructor for new elements
 template <typename T, typename U>
-inline void vector_copy_deep(std::vector<T*> &v, const std::vector<U*> &o)
+inline void vec_copy_deep(std::vector<T*> &v, const std::vector<U*> &o)
 {
     const size_t copy_sz = std::min(v.size(), o.size());
     for (size_t i=0; i<copy_sz; i++) {
         *v[i] = *o[i];
     }
-    vector_resize_deep(v, o.size());
+    vec_resize_deep(v, o.size());
     for (size_t i=copy_sz; i<o.size(); i++) {
         v[i] = new T(*o[i]);
     }
@@ -682,9 +696,9 @@ inline void vector_copy_deep(std::vector<T*> &v, const std::vector<U*> &o)
 
 // const version: clear v and fill using copy constructed elements from o
 template <typename T, typename U>
-inline void vector_copy_deep(std::vector<const T*> &v, const std::vector<U*> &o)
+inline void vec_copy_deep(std::vector<const T*> &v, const std::vector<U*> &o)
 {
-    vector_clear_deep(v);
+    vec_clear_deep(v);
     v.resize(o.size(), NULL);
     for (size_t i=0; i<o.size(); i++) {
         v[i] = new T(*o[i]);
@@ -704,17 +718,17 @@ key_comparator<K> make_key_comparator(K k) { return key_comparator<K>(k); }
 
 // sort entire vector using supplied comparator
 template <typename T, typename F>
-inline void vector_sort(T& col, const F& comp) { std::sort(col.begin(), col.end(), comp); }
+inline void vec_sort(T& col, const F& comp) { std::sort(col.begin(), col.end(), comp); }
 
 template <typename T>
-inline void vector_sort(T& col) { std::sort(col.begin(), col.end()); }
+inline void vec_sort(T& col) { std::sort(col.begin(), col.end()); }
 
 // sort entire vector, using supplied function to get comparison key
 template <typename T, typename F>
-inline void vector_sort_key(T& col, const F& gkey) { std::sort(col.begin(), col.end(), make_key_comparator(gkey)); }
+inline void vec_sort_key(T& col, const F& gkey) { std::sort(col.begin(), col.end(), make_key_comparator(gkey)); }
 
 template <typename T, typename F>
-inline T vector_sorted(const T& col, const F& comp)
+inline T vec_sorted(const T& col, const F& comp)
 {
     T vec = col;
     std::sort(vec.begin(), vec.end(), comp);
@@ -722,7 +736,7 @@ inline T vector_sorted(const T& col, const F& comp)
 }
 
 template <typename T>
-inline T vector_sorted(const T& col)
+inline T vec_sorted(const T& col)
 {
     T vec = col;
     std::sort(vec.begin(), vec.end());
@@ -730,7 +744,7 @@ inline T vector_sorted(const T& col)
 }
 
 template <typename T>
-void vector_unique(T& vec)
+void vec_unique(T& vec)
 {
     typename T::iterator it = std::unique(vec.begin(), vec.end());
     vec.resize(std::distance(vec.begin(), it));
@@ -738,7 +752,7 @@ void vector_unique(T& vec)
 
 // selection sort the first COUNT elements of VEC, using FUN as a key for comparison
 template <typename T, typename F>
-inline void vector_selection_sort_key(T& vec, size_t count, const F& fun)
+inline void vec_selection_sort_key(T& vec, size_t count, const F& fun)
 {
     const size_t vecSize = std::distance(std::begin(vec), std::end(vec));
     count = min(count, vecSize);
@@ -759,12 +773,12 @@ inline void vector_selection_sort_key(T& vec, size_t count, const F& fun)
 
 // selection sort the first COUNT elements of VEC, using FUN as a comparator
 template <typename T, typename F>
-inline void vector_selection_sort(T& vec, size_t count, const F& comp)
+inline void vec_selection_sort(T& vec, size_t count, const F& comp)
 {
     const size_t vecSize = std::distance(std::begin(vec), std::end(vec));
     count = min(count, vecSize);
     if (count > 50)
-        return vector_sort(vec, comp);
+        return vec_sort(vec, comp);
     for (uint i=0; i<count; i++) {
         for (uint j=i; j<vecSize; j++) {
             if (comp(vec[j], vec[i]))
@@ -775,7 +789,7 @@ inline void vector_selection_sort(T& vec, size_t count, const F& comp)
 
 // return minimum element of vector, with comparison by fkey
 template <typename T, typename F>
-inline size_t vector_min_idx_by_key(T& col, const F& fkey)
+inline size_t vec_min_idx_by_key(T& col, const F& fkey)
 {
     float minV   = std::numeric_limits<float>::max();
     size_t  minIdx = 0;
@@ -790,14 +804,14 @@ inline size_t vector_min_idx_by_key(T& col, const F& fkey)
 }
 
 template <typename T, typename F>
-inline typename T::value_type &vector_min_element_by_key(T& col, const F& fkey)
+inline typename T::value_type &vec_min_element_by_key(T& col, const F& fkey)
 {
-    size_t minIdx = vector_min_element_key_idx(col, fkey);
+    size_t minIdx = vec_min_element_key_idx(col, fkey);
     return col[minIdx];
 }
 
 template <typename T, typename F>
-inline size_t vector_max_idx_by_key(T& col, const F& fkey)
+inline size_t vec_max_idx_by_key(T& col, const F& fkey)
 {
     float maxV   = std::numeric_limits<float>::min();
     size_t  maxIdx = 0;
@@ -812,14 +826,14 @@ inline size_t vector_max_idx_by_key(T& col, const F& fkey)
 }
 
 template <typename T, typename F>
-inline typename T::value_type &vector_max_element_by_key(T& col, const F& fkey)
+inline typename T::value_type &vec_max_element_by_key(T& col, const F& fkey)
 {
-    size_t maxIdx = vector_max_idx_by_key(col, fkey);
+    size_t maxIdx = vec_max_idx_by_key(col, fkey);
     return col[maxIdx];
 }
 
 template <typename Vec, typename F>
-inline typename Vec::value_type vector_min(const Vec& vec, const F& fun,
+inline typename Vec::value_type vec_min(const Vec& vec, const F& fun,
                                            const typename Vec::value_type& init=Vec::value_type(),
                                            float start=std::numeric_limits<float>::max())
 {
@@ -838,7 +852,7 @@ inline typename Vec::value_type vector_min(const Vec& vec, const F& fun,
 }
 
 template <typename T, typename F>
-inline bool vector_any(const T& v, const F& f)
+inline bool vec_any(const T& v, const F& f)
 {
     foreach (auto &x, v) {
         if (f(x))
@@ -848,7 +862,7 @@ inline bool vector_any(const T& v, const F& f)
 }
 
 template <typename T, typename F>
-inline bool vector_all(const T& v, const F& f)
+inline bool vec_all(const T& v, const F& f)
 {
     foreach (auto &x, v) {
         if (!f(x))
@@ -859,7 +873,7 @@ inline bool vector_all(const T& v, const F& f)
 
 
 template <typename T, typename Fun>
-inline auto vector_map(const T &inv, const Fun &fun) -> std::vector<decltype(fun(*std::begin(inv)))>
+inline auto vec_map(const T &inv, const Fun &fun) -> std::vector<decltype(fun(*std::begin(inv)))>
 {
     std::vector<decltype(fun(*std::begin(inv)))> outs;
     foreach (const auto &x, inv)
@@ -869,8 +883,19 @@ inline auto vector_map(const T &inv, const Fun &fun) -> std::vector<decltype(fun
     return outs;
 }
 
+template <typename R, typename T>
+inline std::vector<R> vec_map(const T &inv)
+{
+    std::vector<R> outs;
+    foreach (const auto &x, inv)
+    {
+        outs.push_back(R(x));
+    }
+    return outs;
+}
+
 template <typename R, typename Vec, typename Fun>
-inline R vector_foldl(const Vec &vec, const Fun & fun)
+inline R vec_foldl(const Vec &vec, const Fun & fun)
 {
     R ret{};
     foreach (auto &x, vec)
@@ -881,7 +906,7 @@ inline R vector_foldl(const Vec &vec, const Fun & fun)
 }
 
 template <typename R, typename V, typename Fun>
-inline R vector_average(const V& vec, Fun fun)
+inline R vec_average(const V& vec, Fun fun)
 {
     R r;
     foreach (const auto& x, vec)
@@ -891,12 +916,12 @@ inline R vector_average(const V& vec, Fun fun)
 }
 
 template <typename T, typename F>
-inline int vector_remove_if(T &vec, F pred)
+inline int vec_pop_if(T &vec, F pred)
 {
     int count = 0;
     for (uint i=0; i<vec.size();)
     {
-        if (vector_remove_increment(vec, i, pred(vec[i])))
+        if (vec_pop_increment(vec, i, pred(vec[i])))
             count++;
     }
     return count;
@@ -904,12 +929,12 @@ inline int vector_remove_if(T &vec, F pred)
 
 
 template <typename T>
-inline int vector_remove_if_not(T &vec)
+inline int vec_pop_if_not(T &vec)
 {
     int count = 0;
     for (uint i=0; i<vec.size();)
     {
-        if (vector_remove_increment(vec, i, !vec[i]))
+        if (vec_pop_increment(vec, i, !vec[i]))
             count++;
     }
     return count;
@@ -918,19 +943,19 @@ inline int vector_remove_if_not(T &vec)
 
 // swap from end to fill - does not maintain order!
 template <typename Vec>
-inline int vector_remove(Vec &v, const typename Vec::value_type& t)
+inline int vec_remove(Vec &v, const typename Vec::value_type& t)
 {
-    return vector_remove_if(v, lambda((const typename Vec::value_type &e), e == t));
+    return vec_pop_if(v, lambda((const typename Vec::value_type &e), e == t));
 }
 
 template <typename T, typename F>
-inline int vector_remove_if_deep(T &vec, F pred)
+inline int vec_pop_if_deep(T &vec, F pred)
 {
     int count = 0;
     for (uint i=0; i<vec.size();)
     {
         if (pred(vec[i])) {
-            vector_remove_index_deep(vec, i);
+            vec_pop_deep(vec, i);
             count++;
         } else
             i++;
@@ -939,25 +964,25 @@ inline int vector_remove_if_deep(T &vec, F pred)
 }
 
 template <typename T, typename F>
-inline int vector_remove_unless(T &vec, F pred)
+inline int vec_pop_unless(T &vec, F pred)
 {
     int count = 0;
     for (uint i=0; i<vec.size();)
     {
-        if (vector_remove_increment(vec, i, !pred(vec[i])))
+        if (vec_pop_increment(vec, i, !pred(vec[i])))
             count++;
     }
     return count;
 }
 
 template <typename T, typename F>
-inline int vector_remove_unless_deep(T &vec, F pred)
+inline int vec_pop_unless_deep(T &vec, F pred)
 {
     int count = 0;
     for (uint i=0; i<vec.size();)
     {
         if (!pred(vec[i])) {
-            vector_remove_index_deep(vec, i);
+            vec_pop_deep(vec, i);
             count++;
         } else
             i++;

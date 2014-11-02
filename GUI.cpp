@@ -51,10 +51,8 @@ bool ButtonBase::HandleEvent(const Event* event, bool* isActivate, bool* isPress
     {
         hovered = intersectPointRectangle(event->pos, position, sz);
 
-        handled = visible && hovered &&
-                  ((event->type == Event::MOUSE_DOWN) ||
-                   (event->type == Event::MOUSE_UP) ||
-                   (event->type == Event::MOUSE_DRAGGED));
+        handled = visible && hovered && ((event->type == Event::MOUSE_DOWN) ||
+                                         (event->type == Event::MOUSE_UP));
         // && (event->key == 0);
 
         const bool wasPressed = pressed;
@@ -541,11 +539,7 @@ void TextInputBase::render(const ShaderState &s_)
 
 void TextInputCommandLine::saveHistory(const char *fname)
 {
-    string str;
-    foreach (string& line, commandHistory) {
-        str += line;
-        str += "\n";
-    }
+    string str = str_join("\n", commandHistory);
     int status = OL_SaveFile(fname, str.c_str(), str.size());
     ReportMessagef("Wrote %d lines of console history to '%s': %s",
                    (int) commandHistory.size(), fname, status ? "OK" : "FAILED");
@@ -781,7 +775,7 @@ bool TextInputCommandLine::HandleEvent(const Event* event, bool *textChanged)
                         const string largs = str_tolower(argstr);
                         options = cmd->comp(cmd->data, cmd->name.c_str(), argstr.c_str());
                         for (int i=0; i<options.size(); ) {
-                            vector_remove_increment(
+                            vec_pop_increment(
                                 options, i, str_tolower(options[i].substr(0, largs.size())) != largs);
                         }
                         line = cmd->name + " " + argstr;

@@ -129,18 +129,25 @@ struct SerialEnum : public T {
 // DEFINE_SERIAL_STRUCT(SerialBlock, SERIAL_BLOCK_FIELDS);
 //
 
-#define SERIAL_TO_STRUCT_FIELD(TYPE, NAME, DEFAULT) TYPE NAME = DEFAULT;
-#define SERIAL_VISIT_FIELD_AND(TYPE, NAME, DEFAULT) vis.visit(#NAME, (NAME), TYPE(DEFAULT)) &&
-#define SERIAL_INITIALIZE_FIELD(_TYPE, NAME, DEFAULT) NAME = (DEFAULT);
-#define SERIAL_COPY_FIELD(TYPE, NAME, ...) NAME = sb.NAME;
-#define SERIAL_MOVE_FIELD(TYPE, NAME, ...) NAME = std::move(sb.NAME);
-#define SERIAL_ELSE_FIELD_NEQUAL(_TYPE, NAME, ...) else if ((this->NAME) != (sb.NAME)) return 0;
+// for use in accept definitions
 #define VISIT(FIELD) visit(#FIELD, (FIELD))
 #define VISIT_DEF(FIELD, DEF) visit(#FIELD, (FIELD), (DEF))
 #define VISIT_SKIP(TYPE, NAME) template visitSkip< TYPE >(NAME)
 
+// internal serial use
+#define SERIAL_TO_STRUCT_FIELD(TYPE, NAME, DEFAULT) TYPE NAME = DEFAULT;
+#define SERIAL_INITIALIZE_FIELD(_TYPE, NAME, DEFAULT) NAME = (DEFAULT);
+#define SERIAL_COPY_FIELD(TYPE, NAME, ...) NAME = sb.NAME;
+#define SERIAL_MOVE_FIELD(TYPE, NAME, ...) NAME = std::move(sb.NAME);
+#define SERIAL_ELSE_FIELD_NEQUAL(_TYPE, NAME, ...) else if ((this->NAME) != (sb.NAME)) return 0;
+
+#define SERIAL_VISIT_FIELD_AND(TYPE, NAME, DEFAULT) vis.VISIT_DEF(NAME, TYPE(DEFAULT)) &&
+#define SERIAL_SKIP_FIELD_AND(TYPE, NAME, DEFAULT) vis.VISIT_SKIP(TYPE, #NAME) &&
+
 #define SERIAL_TO_STRUCT_FIELD2(TYPE, NAME) TYPE NAME = TYPE();
 #define SERIAL_VISIT_FIELD_AND2(TYPE, NAME) vis.visit(#NAME, (NAME)) &&
+
+#define SERIAL_PLACEHOLDER(_F)
 
 template <typename T>
 struct GetFieldVisitor {
@@ -195,32 +202,34 @@ bool hasField(const T& obj, const char* field)
     return vs.value;
 }
 
-#define DECLARE_SERIAL_STRUCT_OPS(STRUCT_NAME)  \
-    static const STRUCT_NAME &getDefault();                         \
-    bool operator==(const STRUCT_NAME& sb) const;                   \
-    STRUCT_NAME& operator=(const STRUCT_NAME& sb);                  \
-    STRUCT_NAME& operator=(STRUCT_NAME&& sb);                       \
+#define DECLARE_SERIAL_STRUCT_OPS(STRUCT_NAME)                          \
+    STRUCT_NAME(const STRUCT_NAME& o) { *this = o; }                    \
+    STRUCT_NAME(STRUCT_NAME&& o) NOEXCEPT { *this = std::move(o); }     \
+    static const STRUCT_NAME &getDefault();                             \
+    bool operator==(const STRUCT_NAME& sb) const;                       \
+    STRUCT_NAME& operator=(const STRUCT_NAME& sb);                      \
+    STRUCT_NAME& operator=(STRUCT_NAME&& sb) NOEXCEPT;                  \
     
 
-#define DECLARE_SERIAL_STRUCT_CONTENTS(STRUCT_NAME, FIELDS_MACRO)   \
-    FIELDS_MACRO(SERIAL_TO_STRUCT_FIELD);                           \
-    STRUCT_NAME() {}                                                \
-    STRUCT_NAME(const STRUCT_NAME& o) { *this = o; }                \
-    STRUCT_NAME(STRUCT_NAME&& o) { *this = o; }                     \
-    template <typename V>                                           \
-    bool accept(V& vis)                                             \
-    {                                                               \
-        return FIELDS_MACRO(SERIAL_VISIT_FIELD_AND) true;           \
-    }                                                               \
-    typedef int VisitEnabled;                                       \
-    DECLARE_SERIAL_STRUCT_OPS(STRUCT_NAME)                          \
+#define DECLARE_SERIAL_STRUCT_CONTENTS(STRUCT_NAME, FIELDS_MACRO, IGNORE_MACRO) \
+    FIELDS_MACRO(SERIAL_TO_STRUCT_FIELD);                               \
+    STRUCT_NAME() {}                                                    \
+    template <typename V>                                               \
+    bool accept(V& vis)                                                 \
+    {                                                                   \
+        return FIELDS_MACRO(SERIAL_VISIT_FIELD_AND)                     \
+            IGNORE_MACRO(SERIAL_SKIP_FIELD_AND)                         \
+            true;                                                       \
+    }                                                                   \
+    typedef int VisitEnabled;                                           \
+    DECLARE_SERIAL_STRUCT_OPS(STRUCT_NAME)                              \
     
 
-#define DECLARE_SERIAL_STRUCT(STRUCT_NAME, FIELDS_MACRO)            \
-    struct STRUCT_NAME {                                            \
-        DECLARE_SERIAL_STRUCT_CONTENTS(STRUCT_NAME, FIELDS_MACRO);  \
-    }                                                               \
-
+#define DECLARE_SERIAL_STRUCT(STRUCT_NAME, FIELDS_MACRO)                \
+    struct STRUCT_NAME {                                                \
+        DECLARE_SERIAL_STRUCT_CONTENTS(STRUCT_NAME, FIELDS_MACRO, SERIAL_PLACEHOLDER); \
+    }                                                                   \
+        
 
 
 #define DEFINE_SERIAL_STRUCT(STRUCT_NAME, FIELDS_MACRO)         \
@@ -233,7 +242,7 @@ bool hasField(const T& obj, const char* field)
         FIELDS_MACRO(SERIAL_COPY_FIELD);                        \
         return *this;                                           \
     }                                                           \
-    STRUCT_NAME& STRUCT_NAME::operator=(STRUCT_NAME&& sb)       \
+    STRUCT_NAME& STRUCT_NAME::operator=(STRUCT_NAME&& sb) NOEXCEPT  \
     {                                                           \
         FIELDS_MACRO(SERIAL_MOVE_FIELD);                        \
         return *this;                                           \

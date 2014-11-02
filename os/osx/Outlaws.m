@@ -364,7 +364,7 @@ void OL_SetFont(int index, const char* file, const char* name)
 {
     g_fontNames[index] = [[NSString alloc] initWithUTF8String:name];
     getFont(index, 12);         // preload
-}
+}\
 
 
 void OL_FontAdvancements(int fontName, float size, struct OLSize* advancements)
@@ -379,10 +379,13 @@ void OL_FontAdvancements(int fontName, float size, struct OLSize* advancements)
     }
     NSSize adv[128];
     [font getAdvancements:adv forGlyphs:glyphs count:128];
-
+    // NSRect adv[128];
+    // [font getBoundingRects:adv forGlyphs:glyphs count:128];
     for (uint i=0; i<128; i++) {
-        advancements[i].x = adv[i].width;
+        advancements[i].x = adv[i].width + 0.7; // WTF why is this off
         advancements[i].y = adv[i].height;
+        // advancements[i].x = adv[i].size.width;
+        // advancements[i].y = adv[i].size.height;
     }
 }
 
@@ -399,10 +402,6 @@ float OL_FontHeight(int fontName, float size)
 
 int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int fontName, float maxw, float maxh)
 {
-    CGLContextObj cgl_ctx;
-    GLuint texName = tex->texnum;
-    int status = 1;
-
     NSString* aString = [NSString stringWithUTF8String:str];
     if (!aString || [aString length] == 0) 
     {
@@ -418,11 +417,11 @@ int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int fontNa
     const float scale = OL_GetCurrentBackingScaleFactor() / OL_GetBackingScaleFactor();
     size *= scale;
         
-    NSMutableDictionary *attribs = [NSMutableDictionary dictionary];
     NSFont* font = getFont(fontName, size);
     if (!font)
         return 0;
-        
+
+    NSMutableDictionary *attribs = [NSMutableDictionary dictionary];
     [attribs setObject:font forKey: NSFontAttributeName];
     [attribs setObject:[NSColor whiteColor] forKey: NSForegroundColorAttributeName];
 
@@ -468,36 +467,34 @@ int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int fontNa
     NSSize texSize;
 	texSize.width = [bitmap pixelsWide];
 	texSize.height = [bitmap pixelsHigh];
-	
-	if ((cgl_ctx = CGLGetCurrentContext ())) { // if we successfully retrieve a current context (required)
-		//glPushAttrib(GL_TEXTURE_BIT);
-		if (0 == texName)
-            glGenTextures (1, &texName);
-		glBindTexture (GL_TEXTURE_2D, texName);
-        GLenum format = ([bitmap samplesPerPixel] == 4 ? GL_RGBA :
-                         [bitmap samplesPerPixel] == 3 ? GL_RGB :
-                         [bitmap samplesPerPixel] == 2 ? GL_LUMINANCE_ALPHA : GL_LUMINANCE);
-		if (NSEqualSizes(previousSize, texSize)) {
-			glTexSubImage2D(GL_TEXTURE_2D,0,0,0,(GLsizei)texSize.width,(GLsizei)texSize.height, format, GL_UNSIGNED_BYTE, [bitmap bitmapData]);
-		} else {
-			//glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-			//glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);             // it's already antialiased
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-			glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE_ALPHA, (GLsizei)texSize.width, (GLsizei)texSize.height, 0, format, GL_UNSIGNED_BYTE, [bitmap bitmapData]);
-		}
-		//glPopAttrib();
-	} else { 
+
+    if (!CGLGetCurrentContext())
+    {
 		NSLog (@"StringTexture -genTexture: Failure to get current OpenGL context\n");
-        status = 0;
+        return 0;        
+    }
+    
+    if (tex->texnum == 0)
+        glGenTextures (1, &tex->texnum);
+    glBindTexture (GL_TEXTURE_2D, tex->texnum);
+    GLenum format = ([bitmap samplesPerPixel] == 4 ? GL_RGBA :
+                     [bitmap samplesPerPixel] == 3 ? GL_RGB :
+                     [bitmap samplesPerPixel] == 2 ? GL_LUMINANCE_ALPHA : GL_LUMINANCE);
+    if (NSEqualSizes(previousSize, texSize)) {
+        glTexSubImage2D(GL_TEXTURE_2D,0,0,0,(GLsizei)texSize.width,(GLsizei)texSize.height, format, GL_UNSIGNED_BYTE, [bitmap bitmapData]);
+    } else {
+        //glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        //glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);             // it's already antialiased
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE_ALPHA, (GLsizei)texSize.width, (GLsizei)texSize.height, 0, format, GL_UNSIGNED_BYTE, [bitmap bitmapData]);
     }
 
     glReportError();
 	
-    tex->texnum = texName;
     tex->width = texSize.width;
     tex->height = texSize.height;
-    return status;
+    return 1;
 }
 
 
@@ -553,7 +550,7 @@ void OL_ReportMessage(const char *str)
                 LogMessage([NSString stringWithFormat:@"Opened log at %@", tildeFname]);
                 const char* latestpath = [pathForFileName("data/log_latest.txt", "w") UTF8String];
                 int status = unlink(latestpath);
-                if (status && status != ENOENT)
+                if (status && errno != ENOENT)
                     LogMessage([NSString stringWithFormat:@"Error unlink('%s'): %s", latestpath, strerror(errno)]);
                 if (symlink(logpath, latestpath))
                     LogMessage([NSString stringWithFormat:@"Error symlink('%s', '%s'): %s",

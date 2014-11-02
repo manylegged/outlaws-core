@@ -50,7 +50,7 @@
 //#include "../glm/packing.hpp"
 #include "../glm/geometric.hpp"
 //#include "../glm/matrix.hpp"
-//#include "../glm/vector_relational.hpp"
+//#include "../glm/vec_relational.hpp"
 //#include "../glm/integer.hpp"
 #include "../glm/gtc/matrix_transform.hpp"
 #include "../glm/gtx/color_space.hpp"
@@ -199,6 +199,12 @@ inline float dotAngles(float a, float b)
 #define M_PI_4f float(M_PI_4)
 #define M_TAOf float(2 * M_PI)
 #define M_SQRT2f float(M_SQRT2)
+
+template <typename T>
+inline T squared(const T& val)
+{
+    return val * val;
+}
 
 template <typename T>
 inline T sign(T val)
@@ -592,6 +598,7 @@ inline float bellcurve(float x)
     return 0.5f * (-cos(M_TAOf * x) + 1);
 }
 
+// perlin/simplex noise, range is [-1 to 1]
 float snoise(float2 v);
 
 

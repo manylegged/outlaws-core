@@ -42,6 +42,7 @@ void GLText::load(const string& str, int font_, float size, float pointSize)
         if (texture.width > 0)
             glDeleteTextures(1, &texture.texnum);
         memset(&texture, 0, sizeof(texture));
+        advancements.clear();
 
         if (chars.size())
         {
@@ -107,16 +108,13 @@ float2 GLText::Draw(const ShaderState &s_, float2 p, Align align, int font, uint
 
 float2 GLText::getAdvancement(char c) const
 {
-    static float2 *advancements[50];
-    ASSERT(fontSize > 0);
-    ASSERT(fontSize < 50);
-    int isize = round(fontSize);
-    if (!advancements[isize]) {
-        advancements[isize] = new float2[128];
-        OL_FontAdvancements(font, fontSize, (OLSize*) advancements[isize]);
+    if (advancements.empty())
+    {
+        advancements.resize(128);
+        OL_FontAdvancements(font, fontSize, (OLSize*) &advancements[0]);
     }
     ASSERT(c >= 0);
-    return advancements[isize][(int)c];
+    return advancements[(int)c];
 }
 
 float GLText::getCharStart(uint chr) const

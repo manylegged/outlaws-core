@@ -952,17 +952,17 @@ static void setupInitialResolution()
     ReportSDL("Initial window size is %dx%d", g_screenSize.x, g_screenSize.y);
 }
 
-#define COPY_GL_EXT_IMPL(X) if (!(X) && (X ## EXT)) { ReportSDL("Using " #X "EXT"); (X) = (X ## EXT); } else if (!(X)) { ReportSDL(#X " Not found! Aborting"); return 0; }
+#define COPY_GL_EXT_IMPL(X) if (!(X) && (X ## EXT)) { ReportSDL("Using " #X "EXT"); (X) = (X ## EXT); } else if (!(X)) { ReportSDL(#X " Not found!"); }
 #define ASSERT_EXT_EQL(X) static_assert(X == X ## _EXT, #X "EXT mismatch")
 
-static int initGlew()
+static bool initGlew()
 {
     glewExperimental = GL_TRUE;
-    GLenum err = glewInit();
+    const GLenum err = glewInit();
     if (GLEW_OK != err)
     {
         sdl_os_oncrash(str_format("Glew Error! %s", glewGetErrorString(err)).c_str());
-        return 1;
+        return 0;
     }
     // GL_EXT_framebuffer_blit
     COPY_GL_EXT_IMPL(glBlitFramebuffer);
@@ -988,13 +988,14 @@ static int initGlew()
     COPY_GL_EXT_IMPL(glIsRenderbuffer);
     COPY_GL_EXT_IMPL(glRenderbufferStorage);
 
+    // make sure we print the gl version no matter what!
     int success = OLG_InitGL();
     if (!success)
     {
         sdl_os_oncrash("Opengl Init failed");
-        return 1;
+        return 0;
     }
-    return 0;
+    return 1;
 }
 
 
@@ -1057,7 +1058,7 @@ int sdl_os_main(int argc, const char **argv)
 
     SDL_GLContext _glcontext = SDL_GL_CreateContext(g_displayWindow);
     
-    if (initGlew() != 0)
+    if (!initGlew())
         return 1;
  
     SDL_ShowCursor(0);

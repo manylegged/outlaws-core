@@ -311,19 +311,20 @@ float2 clamp_rect(float2 v, float2 rad)
 }
 
 
-float2 circle_in_rect(float2 pos, float rad, float2 rcenter, float2 rrad)
+float2 circle_in_rect(float2 pos, float rad, float2 rcenter, float2 rrad_)
 {
     float2 npos = pos;
+    const float2 rrad = rrad_ - float2(rad);
     for (uint i=0; i<2; i++) {
-        if (rad > rrad[i])
+        if (rrad[i] <= 0)
             npos[i] = rcenter[i];
-        else if (npos[i] - rad < rcenter[i] - rrad[i])
-            npos[i] = rcenter[i] - rrad[i] + rad;
-        else if (npos[i] + rad > rcenter[i] + rrad[i])
-            npos[i] = rcenter[i] + rrad[i] - rad;
+        else if (npos[i] < rcenter[i] - rrad[i])
+            npos[i] = rcenter[i] - rrad[i];
+        else if (npos[i] > rcenter[i] + rrad[i])
+            npos[i] = rcenter[i] + rrad[i];
     }
 
-    ASSERT(containedCircleInRectangle(npos, rad-epsilon, rcenter, rrad));
+    ASSERT(containedCircleInRectangle(npos, rad-epsilon, rcenter, rrad_));
     return npos;
 }
 
@@ -389,7 +390,7 @@ float snoise(vec2 v)
     vec3 p = permute( permute( i.y + vec3(0.f, i1.y, 1.f ))
                       + i.x + vec3(0.f, i1.x, 1.f ));
 
-    vec3 m = max(0.5f - vec3(dot(x0,x0), dot(vec2(x12.x, x12.y),vec2(x12.x, x12.y)), dot(vec2(x12.z, x12.w),vec2(x12.z, x12.w))), 0.f);
+    vec3 m = max(0.5f - vec3(dot(x0,x0), dot(vec2(x12.x, x12.y),vec2(x12.x, x12.y)), dot(vec2(x12.z, x12.w),vec2(x12.z, x12.w))), vec3(0.f));
     m = m*m ;
     m = m*m ;
 
@@ -413,3 +414,5 @@ float snoise(vec2 v)
     g.z = g_yz.y;
     return 130.f * dot(m, g);
 }
+
+

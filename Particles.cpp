@@ -202,7 +202,7 @@ void ParticleSystem::update(uint step, float time)
     {
         ParticleTrail& tr = m_trails[i];
 
-        if (vector_remove_increment(m_trails, i, tr.endTime < m_simTime))
+        if (vec_pop_increment(m_trails, i, tr.endTime < m_simTime))
             continue;
 
         if ((float) m_simTime - tr.lastParticleTime > 1.f / tr.rate)

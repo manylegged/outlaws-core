@@ -1,7 +1,11 @@
 
 //
 // Str.h - string utilities
+//
+// API style is largely copied from python
+// most functions work on cstrings or std::string
 // 
+// lstring is intended to be used as a "symbol" rather than a byte array
 
 // Copyright (c) 2013 Arthur Danskin
 //
@@ -450,5 +454,9 @@ inline std::string str_interpolate_variables(const std::string &str_, const Fun&
 
 
 std::string str_urlencode(const std::string &value);
+
+std::string str_time_format(float seconds);
+
+std::string str_tohex(const unsigned char* digest, int size);
 
 #endif

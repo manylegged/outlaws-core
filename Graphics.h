@@ -789,6 +789,7 @@ public:
 
     void clear()
     {
+        // do not clear vbo / ibo!
         m_vl.clear();
         m_il.clear();
         transform = glm::mat3();
@@ -1002,7 +1003,7 @@ struct PrimMesh : public Mesh<Vtx1> {
         static const float kUnifyDist = 0.1f;
         std::set<uint> replacedIndices;
         int maxIndex = 0;
-        spacial_hash<int> verthash(10.f, this->m_vl.size() * 5);
+        spatial_hash<int> verthash(10.f, this->m_vl.size() * 5);
         for (int i=0; i<this->m_il.size(); i++)
         {
             const typename Mesh<Vtx1>::IndexType index = this->m_il[i];
@@ -1337,7 +1338,7 @@ struct LineMesh : public PrimMesh<Vtx, 2> {
     }
 
     template <typename Vec>
-    void PushLine(Vec a, Vec b)
+    void PushLine(const Vec &a, const Vec &b)
     {
         const Vec x[] = {a, b};
         const LineIndex i[] = {0, 1};

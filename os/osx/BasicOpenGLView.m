@@ -423,6 +423,7 @@ void OL_SetSwapInterval(int interval)
 - (void) prepareOpenGL
 {
     [self setWantsBestResolutionOpenGLSurface:YES];
+
     OLG_InitGL();
 }
 // ---------------------------------
