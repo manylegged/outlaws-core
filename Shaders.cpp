@@ -84,16 +84,7 @@ void ShaderTextureBase::DrawButton(const ShaderState &ss, const OutlawTexture& t
     UnuseProgram();
 }
 
-ShaderIridescent::ShaderIridescent()
-{
-    LoadProgram("ShaderIridescent");
-    GET_ATTR_LOC(SourceColor0);
-    GET_ATTR_LOC(SourceColor1);
-    GET_ATTR_LOC(TimeA);
-    GET_UNIF_LOC(TimeU);
-}
-
-ShaderTonemap::ShaderTonemap()
+void ShaderTonemap::LoadTheProgram()
 {
     m_header = "#define DITHER 0\n";
     LoadProgram("ShaderTonemap");
@@ -105,12 +96,12 @@ void ShaderTonemap::UseProgram(const ShaderState &ss, const VertexPosTex *ptr, c
 {
     UseProgramBase(ss, &ptr->pos, (const VertexPosTex*) NULL);
 
-    vertexAttribPointer(SourceTexCoord, &ptr->texCoord, (const VertexPosTex*) NULL);
+    vertexAttribPointer(SourceTexCoord, &ptr->tex, (const VertexPosTex*) NULL);
     glUniform1i(texture1, 0);
 }
 
 
-ShaderTonemapDither::ShaderTonemapDither()
+void ShaderTonemapDither::LoadTheProgram()
 {
     m_header = "#define DITHER 1\n";
     LoadProgram("ShaderTonemap");
@@ -123,14 +114,14 @@ void ShaderTonemapDither::UseProgram(const ShaderState &ss, const VertexPosTex *
 {
     UseProgramBase(ss, &ptr->pos, (const VertexPosTex*) NULL);
 
-    vertexAttribPointer(SourceTexCoord, &ptr->texCoord, (const VertexPosTex*) NULL);
+    vertexAttribPointer(SourceTexCoord, &ptr->tex, (const VertexPosTex*) NULL);
     getDitherTex().BindTexture(1);
     glUniform1i(texture1, 0);
     glUniform1i(dithertex, 1);
 }
 
 
-ShaderColorLuma::ShaderColorLuma()
+void ShaderColorLuma::LoadTheProgram()
 {
     LoadProgram("ShaderColorLuma",
                 //"#extension GL_EXT_gpu_shader4 : require\n"
@@ -152,23 +143,60 @@ ShaderColorLuma::ShaderColorLuma()
     GET_ATTR_LOC(Luma);
 }
 
+static DEFINE_CVAR(float, kBlurFactor, 0.5f);
 
-ShaderBlur::ShaderBlur()
+float ShaderBlur::getBlurOffset(int sample) const
 {
-    // TODO calculate offset in vertex shader
+    // interp uses linear filtering between each pair of pixels
+    const float offset = sample - floor(samples / 2.f);
+    return (2.f * offset + 0.5f);
+}
+
+const ShaderBlur &ShaderBlur::instance(int radius)
+{
+    static vector<ShaderBlur*> shaders;
+    ShaderBlur* &sdr = vec_index(shaders, radius);
+    if (!sdr) {
+        sdr = new ShaderBlur();
+        sdr->samples = max(1, int(floor(radius * OL_GetBackingScaleFactor() / 2.f)));
+        sdr->LoadTheProgram();
+    }
+    return *sdr;
+}
+
+void ShaderBlur::LoadTheProgram()
+{
+    // reference:
+    // http://www.realtimerendering.com/blog/quick-gaussian-filtering/
+    // http://prideout.net/archive/bloom/
+
+    // stddev indicates how much of the gaussian is cut off
+    // higher is more blury, but less smooth blur
+    const float stddev = samples * kBlurFactor;
+
+    // avoid loosing light due to clamping - make sure the total equals one
+    float total = 0.f;
+    for (int i=0; i<samples; i++) {
+        total += gaussian(getBlurOffset(i), stddev);
+    }
+
+    m_argstr = str_format("%d", samples);
+    m_header = str_format("#define BLUR_SIZE %d\n", samples);
+    m_header += "#define BLUR(SRC, TC, OFF) (";
+    for (int i=0; i<samples; i++) {
+        if (i != 0)
+            m_header += " + ";
+        const float offset = getBlurOffset(i);
+        const float weight = gaussian(offset, stddev) / total;
+        // DPRINT(SHADER, ("%d. %.1f = %.4f", i, offset, weight));
+        m_header += str_format("%f * texture2D(SRC, TC + OFF[%d])", weight, i);
+    }
+    m_header += ")\n";
     LoadProgram("ShaderBlur");
     usourceTex      = getUniformLocation("source");
     asourceTexCoord = getAttribLocation("SourceTexCoord");
-    ucoefficients   = getUniformLocation("coefficients");
     uoffsets        = getUniformLocation("offsets");
     glReportError();
-
-
-    coefficients[0] = 0.0539909665;
-    coefficients[1] = 0.2419707245;
-    coefficients[2] = 0.3989422804;
-    coefficients[3] = 0.2419707245;
-    coefficients[4] = 0.0539909665;
 }
 
 
@@ -176,19 +204,24 @@ void ShaderBlur::UseProgram(const ShaderState &ss, const VertexPosTex *ptr, cons
 {
     UseProgramBase(ss, &ptr->pos, (const VertexPosTex*) NULL);
 
-    vertexAttribPointer(asourceTexCoord, &ptr->texCoord, (const VertexPosTex*) NULL);
+    vertexAttribPointer(asourceTexCoord, &ptr->tex, (const VertexPosTex*) NULL);
     glUniform1i(usourceTex, 0);
 
+    glBindTexture(GL_TEXTURE_2D, ot.texnum);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        
-    memset(offsets, 0, sizeof(offsets));
-    const float of = 1.5f / float((dimension == 0) ? ot.width : ot.height);
-    for (int i=0; i<5; i++)
-        offsets[i][dimension] = of * (2 - i);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    offsets.resize(samples);
+    const float of = 1.f / float((dimension == 0) ? ot.width : ot.height);
+    for (int i=0; i<samples; i++)
+    {
+        offsets[i] = float2();
+        offsets[i][dimension] = of * getBlurOffset(i);
+    }
 
     glUniform1i(usourceTex, 0);
-    glUniform2fv(uoffsets, 5, &offsets[0][0]);
-    glUniform1fv(ucoefficients, 5, &coefficients[0]);
+    glUniform2fv(uoffsets, offsets.size(), &offsets[0][0]);
     glReportError();
 }

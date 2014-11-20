@@ -11,13 +11,13 @@ struct ShaderParticles;
 
 struct IParticleShader : public ShaderProgramBase {
 
-    virtual void UseProgram(const ShaderState& ss, float time)=0;
+    virtual void UseProgram(const ShaderState& ss, const View& view, float depth, float time) const=0;
 };
+
+void ShaderParticlesInstance();
 
 struct ParticleSystem : public IDeletable {
 
-public:
-    
     struct Particle {
         float  startTime = 0.f;
         float  endTime = 0.f;
@@ -64,7 +64,7 @@ private:
     std::mutex              m_mutex;
     View                    m_view;
     vector<ParticleTrail>   m_trails;
-    IParticleShader        *m_program = NULL;
+    const IParticleShader  *m_program = NULL;
     
     void updateRange(uint first, uint size);
 
@@ -94,7 +94,7 @@ public:
     bool forceVisible = false;
 
     size_t count() const;
-    void setProgram(IParticleShader *prog) { m_program = prog; }
+    void setProgram(const IParticleShader *prog) { m_program = prog; }
 
     ParticleSystem();
     ~ParticleSystem();

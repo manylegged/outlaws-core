@@ -28,10 +28,10 @@
 
 #include "Graphics.h"
 
-
-struct ShaderPosBase: public ShaderProgramBase {
+struct ShaderPosBase : public ShaderProgramBase {
 
     virtual void UseProgram(const ShaderState& ss, const float2* ptr) const = 0;
+    virtual ~ShaderPosBase() {}
 
 
     // a b
@@ -162,12 +162,11 @@ struct ShaderPosBase: public ShaderProgramBase {
     void DrawCircle(const ShaderState& ss, float radius, int numVerts=32) const;
 };
 
-struct ShaderUColor : public ShaderPosBase {
+struct ShaderUColor : public ShaderPosBase, public ShaderBase<ShaderUColor> {
 
-private:
     uint m_colorSlot;
         
-    ShaderUColor()
+    void LoadTheProgram()
     {
         LoadProgram("ShaderUColor",
                     "varying vec4 DestinationColor;\n"
@@ -184,8 +183,6 @@ private:
             );
         m_colorSlot = getUniformLocation("SourceColor");
     }
-public:
-
     void UseProgram(const ShaderState& ss, const float2* ptr) const
     {
         UseProgramBase(ss, ptr, (float2*)NULL);
@@ -201,26 +198,23 @@ public:
         glUniform4fv(m_colorSlot, 1, &c[0]);
         glReportError();
     }
-
-    static const ShaderUColor& instance()   
-    {
-        static ShaderUColor* p = new ShaderUColor();
-        return *p;
-    }
-    
 };
 
-struct ShaderIridescent : public ShaderProgramBase {
+struct ShaderIridescent : public ShaderProgramBase, public ShaderBase<ShaderIridescent> {
 
-private:
     int SourceColor0;
     int SourceColor1;
     int TimeU;
     int TimeA;
-    
-    ShaderIridescent();
 
-public:
+    void LoadTheProgram()
+    {
+        LoadProgram("ShaderIridescent");
+        GET_ATTR_LOC(SourceColor0);
+        GET_ATTR_LOC(SourceColor1);
+        GET_ATTR_LOC(TimeA);
+        GET_UNIF_LOC(TimeU);
+    }
 
     void UseProgram(const ShaderState& input, const VertexPos2ColorTime* ptr, const VertexPos2ColorTime* base) const
     {
@@ -230,72 +224,62 @@ public:
         vertexAttribPointer(TimeA, &ptr->time, base);
         glUniform1f(TimeU, globals.renderTime);
     }
-
-    static const ShaderIridescent& instance()   
-    {
-        static ShaderIridescent* p = new ShaderIridescent();
-        return *p;
-    }
-
 };
 
-struct ShaderUIridescent : public ShaderProgramBase {
+struct ShaderResource : public ShaderProgramBase, public ShaderBase<ShaderResource> {
 
-private:
-    int SourceColor0;
-    int SourceColor1;
-    int TimeU;
-    int TimeA;
+    int SourceColor0, SourceColor1, Radius;
+    int ToPixels, Time;
     
-    ShaderUIridescent()
+    void LoadTheProgram()
     {
-        LoadProgram("ShaderUIridescent",
-                    "varying vec4 DestinationColor;\n"
-                    ,
-                    "uniform vec4 SourceColor0;\n"
-                    "uniform vec4 SourceColor1;\n"
-                    "uniform float TimeU;\n"
-                    "attribute float TimeA;\n"
-                    "void main(void) {\n"
-                    "    gl_Position = Transform * Position;\n"
-                    "    float val = 0.5 + 0.5 * sin(TimeU + TimeA);\n"
-                    "    DestinationColor = mix(SourceColor0, SourceColor1, val);\n"
-                    "}\n"
-                    ,
-                    "void main(void) {\n"
-                    "    gl_FragColor = DestinationColor;\n"
-                    "}\n"
-            );
-        GET_UNIF_LOC(SourceColor0);
-        GET_UNIF_LOC(SourceColor1);
-        GET_UNIF_LOC(TimeU);
-        GET_ATTR_LOC(TimeA);
+        LoadProgram("ShaderResource");
+        GET_ATTR_LOC(SourceColor0);
+        GET_ATTR_LOC(SourceColor1);
+        GET_ATTR_LOC(Radius);
+        GET_UNIF_LOC(ToPixels);
+        GET_UNIF_LOC(Time);
     }
 
-public:
+    mutable float pointsToPixels = 1.f;
 
-    void UseProgram(const ShaderState& ss, const VertexPosTime* ptr, const VertexPosTime* base) const
+    void UseProgram(const ShaderState& input, const VertexPos2ColorTime* ptr, const VertexPos2ColorTime* base) const
     {
-        UseProgramBase(ss, &ptr->pos, base);
-        float4 c0 = abgr2rgbaf(ss.uColor);
-        float4 c1 = abgr2rgbaf(ss.uColor1);
-        glUniform4fv(SourceColor0, 1, &c0[0]);
-        glUniform4fv(SourceColor1, 1, &c1[0]);
-        glUniform1f(TimeU, globals.renderTime);
-        vertexAttribPointer(TimeA, &ptr->time, base);
+        UseProgramBase(input, &ptr->pos, base);
+        vertexAttribPointer(SourceColor0, &ptr->color, base);
+        vertexAttribPointer(SourceColor1, &ptr->color1, base);
+        vertexAttribPointer(Radius, &ptr->time, base);
+        glUniform1f(ToPixels, pointsToPixels);
+        glUniform1f(Time, globals.renderTime);
+    }
+};
+
+struct ShaderWormhole : public ShaderProgramBase, public ShaderBase<ShaderWormhole> {
+
+    int SourceColor0, SourceColor1, TexCoord;
+    int Time;
+    
+    void LoadTheProgram()
+    {
+        LoadProgram("ShaderWormhole");
+        GET_ATTR_LOC(SourceColor0);
+        GET_ATTR_LOC(SourceColor1);
+        GET_ATTR_LOC(TexCoord);
+        GET_UNIF_LOC(Time);
     }
 
-    static const ShaderUIridescent& instance()   
+    void UseProgram(const ShaderState& input, const VertexPos2ColorTex* ptr, const VertexPos2ColorTex* base) const
     {
-        static ShaderUIridescent* p = new ShaderUIridescent();
-        return *p;
+        UseProgramBase(input, &ptr->pos, base);
+        vertexAttribPointer(SourceColor0, &ptr->color, base);
+        vertexAttribPointer(SourceColor1, &ptr->color1, base);
+        vertexAttribPointer(TexCoord, &ptr->tex, base);
+        glUniform1f(Time, globals.renderTime);
     }
-
 };
 
 
-
-struct ShaderTextureBase: public ShaderProgramBase {
+struct ShaderTextureBase : public ShaderProgramBase {
 
     virtual void UseProgram(const ShaderState &ss, const VertexPosTex *ptr, const OutlawTexture& ot) const = 0;
 
@@ -353,15 +337,13 @@ struct ShaderTextureBase: public ShaderProgramBase {
     void DrawButton(const ShaderState &ss, const OutlawTexture& texture, float2 pos, float2 r) const;
 };
 
-struct ShaderTexture : public ShaderTextureBase {
+struct ShaderTexture : public ShaderTextureBase, public ShaderBase<ShaderTexture> {
 
-private:
     uint m_uTexture;
     uint m_uColorSlot;
     uint m_aTexCoords;
 
-public:
-    ShaderTexture()
+    void LoadTheProgram()
     {
         LoadProgram("ShaderTexture");
         m_uTexture = getUniformLocation("texture1");
@@ -379,34 +361,24 @@ public:
     {
         UseProgramBase(ss, &ptr->pos, base);
 
-        vertexAttribPointer(m_aTexCoords, &ptr->texCoord, base);
+        vertexAttribPointer(m_aTexCoords, &ptr->tex, base);
         glUniform1i(m_uTexture, 0);
 
         float4 c = abgr2rgbaf(ss.uColor);
         glUniform4fv(m_uColorSlot, 1, &c[0]); 
     }
-
-    static const ShaderTexture& instance()   
-    {
-        static ShaderTexture* p = new ShaderTexture();
-        return *p;
-    }
-
 };
 
-struct ShaderTextureWarp : public ShaderTextureBase {
+struct ShaderTextureWarp : public ShaderTextureBase, public ShaderBase<ShaderTextureWarp> {
 
-private:
     GLuint texture1, warpTex, SourceColor, SourceTexCoord, camWorldPos, camWorldSize, time;
 
-public:
-    
     mutable float2 camPos;
     mutable float2 camSize;
-
-    ShaderTextureWarp()
+    
+    void LoadTheProgram()
     { 
-       LoadProgram("ShaderTextureWarp");
+        LoadProgram("ShaderTextureWarp");
         GET_UNIF_LOC(texture1);
         GET_UNIF_LOC(warpTex);
         GET_UNIF_LOC(SourceColor);
@@ -426,7 +398,7 @@ public:
     {
         UseProgramBase(ss, &ptr->pos, base);
 
-        vertexAttribPointer(SourceTexCoord, &ptr->texCoord, base);
+        vertexAttribPointer(SourceTexCoord, &ptr->tex, base);
         glUniform1i(texture1, 0);
         glUniform1i(warpTex, 1);
         glUniform2fv(camWorldPos, 1, &camPos[0]);
@@ -436,24 +408,15 @@ public:
         float4 c = abgr2rgbaf(ss.uColor);
         glUniform4fv(SourceColor, 1, &c[0]); 
     }
-
-    static const ShaderTextureWarp& instance()   
-    {
-        static ShaderTextureWarp* p = new ShaderTextureWarp();
-        return *p;
-    }
-
 };
 
-struct ShaderTextureHSV : public ShaderTextureBase {
+struct ShaderTextureHSV : public ShaderTextureBase, public ShaderBase<ShaderTextureHSV> {
 
-private:
     uint m_uTexture;
     uint m_uColorSlot;
     uint m_aTexCoords;
 
-public:
-    ShaderTextureHSV()
+    void LoadTheProgram()
     {
         LoadProgram("ShaderTextureHSV");
         m_uTexture = getUniformLocation("texture1");
@@ -471,58 +434,32 @@ public:
     {
         UseProgramBase(ss, &ptr->pos, base);
 
-        vertexAttribPointer(m_aTexCoords, &ptr->texCoord, base);
+        vertexAttribPointer(m_aTexCoords, &ptr->tex, base);
         glUniform1i(m_uTexture, 0);
 
         float4 c = abgr2rgbaf(ss.uColor);
         glUniform4fv(m_uColorSlot, 1, &c[0]); 
     }
-
-    static const ShaderTextureHSV& instance()   
-    {
-        static ShaderTextureHSV* p = new ShaderTextureHSV();
-        return *p;
-    }
-
 };
 
-struct ShaderTonemapDither : public ShaderTextureBase {
+struct ShaderTonemapDither : public ShaderTextureBase, public ShaderBase<ShaderTonemapDither> {
 
-private:
     uint texture1;
     uint dithertex;
     uint SourceTexCoord;
 
-public:
-    ShaderTonemapDither();
+    void LoadTheProgram();
 
     void UseProgram(const ShaderState &ss, const VertexPosTex *ptr, const OutlawTexture &ot) const;
-
-    static const ShaderTonemapDither& instance()
-    {
-        static ShaderTonemapDither* p = new ShaderTonemapDither();
-        return *p;
-    }
-
 };
 
-struct ShaderTonemap : public ShaderTextureBase {
+struct ShaderTonemap : public ShaderTextureBase, public ShaderBase<ShaderTonemap> {
 
-private:
     uint texture1;
     uint SourceTexCoord;
 
-public:
-    ShaderTonemap();
-
+    void LoadTheProgram();
     void UseProgram(const ShaderState &ss, const VertexPosTex *ptr, const OutlawTexture &ot) const;
-
-    static const ShaderTonemap& instance()   
-    {
-        static ShaderTonemap* p = new ShaderTonemap();
-        return *p;
-    }
-
 };
 
 // seperable gaussian blur
@@ -531,15 +468,18 @@ struct ShaderBlur : public ShaderTextureBase {
 private:
     uint usourceTex;
     uint asourceTexCoord;
-    uint ucoefficients;
     uint uoffsets;
     
-    float  coefficients[5];
-    mutable float2 offsets[5];
-    mutable uint dimension = 0;
+    mutable int            dimension = 0;
+    mutable vector<float2> offsets;
 
-    ShaderBlur();
+    int samples = 0;
+
+    float getBlurOffset(int sample) const;
+
 public:
+
+    void LoadTheProgram();
 
     void UseProgram(const ShaderState &ss, const VertexPosTex *ptr, const OutlawTexture &ot) const;
 
@@ -548,19 +488,15 @@ public:
         dimension = dim; 
     }
 
-    static const ShaderBlur& instance()   
-    {
-        static ShaderBlur* p = new ShaderBlur();
-        return *p;
-    }
+    // radius is points of blur radius (not pixels)
+    static const ShaderBlur &instance(int radius);
 };
 
-struct ShaderColor : public ShaderProgramBase {
+struct ShaderColor : public ShaderProgramBase, public ShaderBase<ShaderColor> {
 
-private:
     int m_colorSlot;
 
-    ShaderColor()
+    void LoadTheProgram()
     {
         LoadProgram("ShaderColor",
                     //"#extension GL_EXT_gpu_shader4 : require\n"
@@ -580,21 +516,12 @@ private:
         m_colorSlot = getAttribLocation("SourceColor");
     }
 
-public:
-
     template <typename Vtx>
     void UseProgram(const ShaderState&ss, const Vtx* ptr, const Vtx* base) const
     {
         UseProgramBase(ss, &ptr->pos, base);
         vertexAttribPointer(m_colorSlot, &ptr->color, base);
     }
-
-    static const ShaderColor& instance()   
-    {
-        static ShaderColor* p = new ShaderColor();
-        return *p;
-    }
-
 };
 
 template <typename T, typename L>
@@ -603,19 +530,16 @@ void MeshPair<T, L>::Handle::Draw(const ShaderState& ss)
     mp.Draw(ss, ShaderColor::instance(), ShaderColor::instance());
 }
 
-struct ShaderColorDither : public ShaderProgramBase {
+struct ShaderColorDither : public ShaderProgramBase, public ShaderBase<ShaderColorDither> {
 
-private:
     int SourceColor, dithertex;
 
-    ShaderColorDither()
+    void LoadTheProgram()
     {
         LoadProgram("ShaderColorDither");
         GET_ATTR_LOC(SourceColor);
         GET_UNIF_LOC(dithertex);
     }
-
-public:
 
     template <typename Vtx>
     void UseProgram(const ShaderState&ss, const Vtx* ptr, const Vtx* base) const
@@ -625,27 +549,17 @@ public:
         getDitherTex().BindTexture(0);
         glUniform1i(dithertex, 0);
     }
-
-    static const ShaderColorDither& instance()   
-    {
-        static ShaderColorDither* p = new ShaderColorDither();
-        return *p;
-    }
-
 };
 
-struct ShaderHsv : public ShaderProgramBase {
+struct ShaderHsv : public ShaderProgramBase, public ShaderBase<ShaderHsv> {
 
-private:
     int m_colorSlot;
 
-    ShaderHsv()
+    void LoadTheProgram()
     {
         LoadProgram("ShaderHsv");
         m_colorSlot = getAttribLocation("ColorHSVA");
     }
-
-public:
 
     template <typename Vtx>
     void UseProgram(const ShaderState&ss, const Vtx* ptr, const Vtx* base) const
@@ -653,23 +567,13 @@ public:
         UseProgramBase(ss, &ptr->pos, base);
         vertexAttribPointer(m_colorSlot, &ptr->color, base);
     }
-
-    static const ShaderHsv& instance()
-    {
-        static ShaderHsv* p = new ShaderHsv();
-        return *p;
-    }
-
 };
 
-struct ShaderColorLuma : public ShaderProgramBase {
+struct ShaderColorLuma : public ShaderProgramBase, public ShaderBase<ShaderColorLuma> {
 
-private:
     int SourceColor, Luma;
 
-    ShaderColorLuma();
-
-public:
+    void LoadTheProgram();
 
     template <typename Vtx>
     void UseProgram(const ShaderState&ss, const Vtx* ptr, const Vtx* base) const
@@ -678,21 +582,13 @@ public:
         vertexAttribPointer(SourceColor, &ptr->color, base);
         vertexAttribPointer(Luma, &ptr->luma, base);
     }
-
-    static const ShaderColorLuma& instance()   
-    {
-        static ShaderColorLuma* p = new ShaderColorLuma();
-        return *p;
-    }
-
 };
 
-struct ShaderSmoothColor : public ShaderProgramBase {
+struct ShaderSmoothColor : public ShaderProgramBase, public ShaderBase<ShaderSmoothColor> {
 
-private:
     int m_colorSlot;
 
-    ShaderSmoothColor()
+    void LoadTheProgram()
     {
         LoadProgram("ShaderSmoothColor",
                     "varying vec4 DestinationColor;\n"
@@ -710,28 +606,20 @@ private:
         m_colorSlot = getAttribLocation("SourceColor");
     }
 
-public:
-
     template <typename Vtx>
     void UseProgram(const ShaderState&ss, const Vtx* ptr, const Vtx* base) const
     {
         UseProgramBase(ss, &ptr->pos, base);
         vertexAttribPointer(m_colorSlot, &ptr->color, base);
     }
-
-    static const ShaderSmoothColor& instance()   
-    {
-        static ShaderSmoothColor* p = new ShaderSmoothColor();
-        return *p;
-    }
 };
 
-struct ShaderNoise : public ShaderProgramBase {
+struct ShaderNoise : public ShaderProgramBase, public ShaderBase<ShaderNoise> {
     
     uint m_colorSlot;
     uint m_uRandomSeed;
-        
-    ShaderNoise()
+
+    void LoadTheProgram()
     {
         LoadProgram("ShaderNoise",
                     "varying vec4 DestinationColor;\n"

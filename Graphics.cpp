@@ -69,7 +69,7 @@ static const char* textureFormatToString(GLint fmt)
 
 static GLint s_defaultFramebuffer = -1;
 
-void GLRenderTexture::Generate()
+void GLRenderTexture::Generate(ZFlags zflags)
 {
     ASSERT_MAIN_THREAD();
 
@@ -90,8 +90,8 @@ void GLRenderTexture::Generate()
     }
 
     m_texsize = float2(width, height);
-    DPRINT(SHADER, ("Generating render texture, %dx%d %s", width, height,
-                    textureFormatToString(m_format)));
+    DPRINT(SHADER, ("Generating render texture, %dx%d %s %s", width, height,
+                    textureFormatToString(m_format), (zflags&HASZ) ? "Z16" : "No_Z"));
 
     glReportError();
     glGenFramebuffers(1, &m_fbname);
@@ -103,23 +103,35 @@ void GLRenderTexture::Generate()
     glReportError();
  
 #if OPENGL_ES
-    if (m_format == GL_RGB16F_EXT)
+    if (m_format == GL_RGBA16F_ARB)
+    {
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_HALF_FLOAT_OES, 0);
+    }
     else
 #endif
-    glTexImage2D(GL_TEXTURE_2D, 0, m_format, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, 0);
+    {
+        glTexImage2D(GL_TEXTURE_2D, 0, m_format, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, 0);
+    }
     glReportError();
 
-    // The depth buffer
-    glGenRenderbuffers(1, &m_zrbname);
-    glBindRenderbuffer(GL_RENDERBUFFER, m_zrbname);
-    glReportError();
-        
-    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT16, width, height);
-    glReportError();
     glBindFramebuffer(GL_FRAMEBUFFER, m_fbname);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, m_zrbname);
-    glReportError();
+
+    // The depth buffer
+    if (zflags&HASZ)
+    {
+        glGenRenderbuffers(1, &m_zrbname);
+        glBindRenderbuffer(GL_RENDERBUFFER, m_zrbname);
+        glReportError();
+        
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT16, width, height);
+        glReportError();
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, m_zrbname);
+        glReportError();
+    }
+    else
+    {
+        m_zrbname = 0;
+    }
 
     // Set "renderedTexture" as our colour attachement #0
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_texname, 0);
@@ -165,34 +177,36 @@ void GLRenderTexture::clear()
 #define HAS_BLIT_FRAMEBUFFER glBlitFramebuffer
 #endif
 
-void GLRenderTexture::BindFramebuffer(float2 size, bool keepz)
+void GLRenderTexture::BindFramebuffer(float2 size, ZFlags zflags)
 {
     ASSERT(!isZero(size));
-    if (size != m_size)
+    if (size != m_size || ((zflags&HASZ) && !(m_zflags&HASZ)))
         clear();
     m_size = size;
+    m_zflags = zflags;
     if (!m_fbname)
-        Generate();
+        Generate(zflags);
     RebindFramebuffer();
 
 #if !OPENGL_ES
-    if (keepz && HAS_BLIT_FRAMEBUFFER)
+    const GLint def = s_bound.size() ? s_bound.back()->m_fbname : s_defaultFramebuffer;
+    if ((zflags == KEEPZ) && HAS_BLIT_FRAMEBUFFER && def >= 0)
     {
-        const GLint def = s_bound.size() ? s_bound.back()->m_fbname : s_defaultFramebuffer;
         ASSERT(def != m_fbname);
-        if (def >= 0)
-        {
-            glBindFramebuffer(GL_READ_FRAMEBUFFER, def);
-            glReportError();
-            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_fbname);
-            glReportError();
-            glBlitFramebuffer(0, 0, m_size.x, m_size.y, 0, 0, m_size.x, m_size.y,
-                              GL_DEPTH_BUFFER_BIT, GL_NEAREST);
-            glReportError();
-        }
+        const float2 lastSize = s_bound.size() ? s_bound.back()->m_size : globals.windowSizePixels;
+        ASSERT(lastSize.x > 0.f && lastSize.y > 0.f);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, def);
+        glReportError();
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_fbname);
+        glReportError();
+        // only GL_NEAREST is supported for depth buffers
+        glBlitFramebuffer(0, 0, lastSize.x, lastSize.y, 0, 0, m_size.x, m_size.y,
+                          GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+        glReportError();
     }
     else
 #endif
+    if (zflags&HASZ)
     {
         glClear(GL_DEPTH_BUFFER_BIT);
         glReportError();
@@ -205,8 +219,9 @@ void GLRenderTexture::BindFramebuffer(float2 size, bool keepz)
 void GLRenderTexture::RebindFramebuffer()
 {
     ASSERT(m_size.x >= 1 && m_size.y >= 1);
+    ASSERT(m_fbname && m_texname);
 
-    glActiveTexture(GL_TEXTURE0);
+    glActiveTexture(GL_TEXTURE0 + 0);
     glBindTexture(GL_TEXTURE_2D, m_texname);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
@@ -348,43 +363,42 @@ static bool ignoreShaderLog(const char* buf)
             str_contains(buf, "Fragment shader(s) linked, vertex shader(s) linked. "));
 }
 
-static bool checkShaderInfoLog(const char* txt, GLuint prog)
-{
-    const uint bufsize = 2048;
-    char buf[bufsize];
-    GLsizei length = 0;
-    glGetShaderInfoLog(prog, bufsize, &length, buf);
-    if (length && !ignoreShaderLog(buf)) {
-        string st = str_add_line_numbers(txt);
-        ReportMessagef("GL Shader Info Log:\n%s\n%s", st.c_str(), buf);
-        ASSERT(length < bufsize);
-        return 1;
-    }
-    return 0;
-}
-
-static bool checkProgramInfoLog(GLuint prog, const char* name)
+static void checkProgramInfoLog(GLuint prog, const char* name)
 {
     const uint bufsize = 2048;
     char buf[bufsize];
     GLsizei length = 0;
     glGetProgramInfoLog(prog, bufsize, &length, buf);
-    if (length && !ignoreShaderLog(buf)) {
-        ReportMessagef("GL Program Info log for '%s': %s", name, buf);
+    if (length && !ignoreShaderLog(buf))
+    {
         ASSERT(length < bufsize);
-        return 1;
+        OLG_OnAssertFailed(name, -1, "", "", "GL Program Info log for '%s': %s", name, buf);
     }
-    return 0;
 }
 
 
-static GLuint createShader(const char *txt, GLenum type)
+ShaderProgramBase::ShaderProgramBase()
+{
+}
+
+GLuint ShaderProgramBase::createShader(const char* txt, GLenum type) const
 {
     GLuint idx = glCreateShader(type);
     glShaderSource(idx, 1, &txt, NULL);
     glCompileShader(idx);
-    checkShaderInfoLog(txt, idx);
 
+    {
+        const uint bufsize = 2048;
+        char buf[bufsize];
+        GLsizei length = 0;
+        glGetShaderInfoLog(idx, bufsize, &length, buf);
+        if (length && !ignoreShaderLog(buf)) {
+            ASSERT(length < bufsize);
+            OLG_OnAssertFailed(m_name.c_str(), -1, "", "glCompileShader", "GL Shader Info Log:\n%s\n%s",
+                               str_add_line_numbers(txt).c_str(), buf);
+        }
+    }
+    
     GLint val = 0;
     glGetShaderiv(idx, GL_COMPILE_STATUS, &val);
     if (val == GL_FALSE) {
@@ -503,7 +517,7 @@ bool ShaderProgramBase::LoadProgram(const char* name, const char* shared, const 
     ASSERT_MAIN_THREAD();
 
     m_name = name;
-    DPRINT(SHADER, ("Compiling %s", name));
+    DPRINT(SHADER, ("Compiling %s(%s)", name, m_argstr.c_str()));
     
     string header =
 #if OPENGL_ES
@@ -514,8 +528,9 @@ bool ShaderProgramBase::LoadProgram(const char* name, const char* shared, const 
 #endif
          "#define M_PI 3.1415926535897932384626433832795\n";
 
-    header += m_header;
+    header += m_header + "\n";
     header += shared;
+    header += "\n";
     static const char* vertheader =
         "attribute vec4 Position;\n"
         "uniform mat4 Transform;\n";
@@ -780,31 +795,30 @@ void PostProc::UnbindWriteFramebuffer()
 void PostProc::Draw(bool bindFB)
 {
     // assume write was just written
+    const ShaderBlur *blurShader = m_blur ? &ShaderBlur::instance(m_blur) : NULL;
 
-    if (m_blurLevel > 1)
+    if (m_blur)
     {
+        glDisable(GL_BLEND);
+        
         swapRW(); 
         BindWriteFramebuffer();
-        ShaderBlur::instance().setDimension(1);
-        getRead().DrawFullscreen<ShaderBlur>();
-        ShaderBlur::instance().setDimension(0);
+        blurShader->setDimension(1);
+        getRead().DrawFullscreen(*blurShader);
         UnbindWriteFramebuffer();
-    }
-
-    if (bindFB && m_blurLevel > 1)
-    {
+        
         swapRW();
         BindWriteFramebuffer();
-        getRead().DrawFullscreen<ShaderBlur>();
+        blurShader->setDimension(0);
+        getRead().DrawFullscreen(*blurShader);
         UnbindWriteFramebuffer();
+
+        glEnable(GL_BLEND);
     }
-    else if (!bindFB)
+
+    if (!bindFB)
     {
-        if (m_blurLevel > 1) {
-            getWrite().DrawFullscreen<ShaderBlur>();
-        } else {
-            getWrite().DrawFullscreen<ShaderTexture>();
-        }
+        getWrite().DrawFullscreen<ShaderTexture>();
     }
     // nothing to do if bindFB and no blur
 }

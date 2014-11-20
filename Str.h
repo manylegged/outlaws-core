@@ -113,11 +113,11 @@ namespace std {
     };
 }
 
-inline size_t str_len(std::nullptr_t null) { return 0; }
-inline size_t str_len(long null) { return 0; }
-inline size_t str_len(const char* str) { return str ? strlen(str) : 0; }
+inline size_t str_len(std::nullptr_t null)    { return 0; }
+inline size_t str_len(long null)              { return 0; }
+inline size_t str_len(const char* str)        { return str ? strlen(str) : 0; }
 inline size_t str_len(const std::string& str) { return str.size(); }
-inline size_t str_len(char chr) { return 1; }
+inline size_t str_len(char chr)               { return 1; }
 
 template <typename T>
 inline size_t str_find(const std::string &s, const T& v, size_t pos=0) { return s.find(v, pos); }
@@ -274,10 +274,11 @@ inline std::vector<std::string> str_split(const T &s, const U &delim)
 inline std::string str_tostr(float a) { return str_format("%f", a); }
 inline std::string str_tostr(int a)   { return str_format("%d", a); }
 inline std::string str_tostr(uint a)  { return a < 0xfffff ? str_format("%d", a) : str_format("%#x", a); }
+inline std::string str_tostr(char a)  { return str_format((a >= 0 && std::isprint(a)) ? "%c" : "\\%x", a); }
 inline std::string str_tostr(const char *a) { return a ? a : ""; }
 inline std::string str_tostr(lstring a) { return a.str(); }
 inline const std::string &str_tostr(const std::string &a) { return a; }
-inline std::string str_tostr(std::string &&a) { return a; }
+inline std::string str_tostr(std::string &&a) { return std::move(a); }
 
 template <class A>
 std::string str_join( const std::string &sep, const A &cont)
@@ -331,7 +332,15 @@ std::string str_join_keys(const std::string &sep, const A &begin, const A &end)
     return result;
 }
 
-std::string str_word_wrap(std::string str, size_t width = 70, const char* newline="\n", const char* wrap=" ");
+std::string str_word_wrap(std::string str,
+                          size_t width = 70,
+                          const char* newline="\n",
+                          const char* wrap=" ");
+
+inline std::string str_word_rewrap(const std::string &str, size_t width)
+{
+    return str_word_wrap(str_replace(str, "\n", " "), width);
+}
 
 
 inline std::string str_capitalize(const char* str)
@@ -457,6 +466,6 @@ std::string str_urlencode(const std::string &value);
 
 std::string str_time_format(float seconds);
 
-std::string str_tohex(const unsigned char* digest, int size);
+std::string str_tohex(const char* digest, int size);
 
 #endif

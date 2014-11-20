@@ -74,7 +74,7 @@ typedef unsigned short uint16;
 typedef unsigned int uint32;
 typedef unsigned long long uint64;
 typedef uint32 uint;
-typedef char int8;
+typedef signed char int8;
 typedef short int16;
 typedef int int32;
 typedef long long int64;
@@ -467,24 +467,24 @@ inline T clamp_lerp(const T &from, const T &to, float v)
 template <typename T>
 inline T lerp(T *array, float v) 
 {
-    const uint f = floor(v);
-    const uint n = ceil(v);
-    if (f == n)
-        return array[f];
-    else
-        return lerp(array[f], array[n], v-f);
+    const float f = floor(v);
+    const float n = ceil(v);
+    return (f == n) ? array[(int)f] : lerp(array[(int)f], array[(int)n], v-f);
+}
+
+template <typename T, typename Fun>
+inline T lerp(T *array, float v, const Fun& lrp)
+{
+    const float f = floor(v);
+    const float n = ceil(v);
+    return (f == n) ? array[(int)f] : lrp(array[(int)f], array[(int)n], v-f);
 }
 
 template <typename T>
 inline T lerp(const vector<T> &vec, float v) 
 {
-    const uint f = floor(v);
-    const uint n = ceil(v);
-    ASSERT(n < vec.size());
-    if (f == n)
-        return vec[f];
-    else
-        return lerp(vec[f], vec[n], v-f);
+    ASSERT(v + 1 < vec.size());
+    return lerp(&vec[0], v);
 }
 
 inline float lerpAngles(float a, float b, float v)
@@ -527,9 +527,9 @@ inline float smooth_clamp(float start, float end, float val, float fadestart, fl
     ASSERT(end - start > fadeend);
     val = clamp(start, end, val);
     float ret = 1.f;
-    if (val < start + fadestart)
+    if (val < start + fadestart && fadestart > epsilon)
         ret = min(ret, (val - start) / fadestart);
-    if (val > end - fadeend)
+    if (val > end - fadeend && fadeend > epsilon)
         ret = min(ret, (end - val) / fadeend);
     return ret;
 }
@@ -600,6 +600,13 @@ inline float bellcurve(float x)
 
 // perlin/simplex noise, range is [-1 to 1]
 float snoise(float2 v);
+
+// 
+inline float gaussian(float x, float stdev=1.f)
+{
+    const double sqrt_2pi = 2.5066282746310002;
+    return exp(-(x * x) / (2.0 * stdev * stdev)) / (stdev * sqrt_2pi);
+}
 
 
 // x is -2.5 to 1

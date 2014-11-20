@@ -280,7 +280,10 @@ public:
     void GenerateMipmap();
 
     template <typename Shader>
-    void DrawFullscreen() const;
+    void DrawFullscreen() const { DrawFullscreen(Shader::instance()); }
+
+    template <typename Shader>
+    void DrawFullscreen(const Shader& shader) const;
 };
 
 const GLTexture &getDitherTex();
@@ -333,37 +336,41 @@ struct ShaderState {
     void DrawArrays(uint dt, size_t count) const;
 };
 
-
 template <typename Shader>
-void GLTexture::DrawFullscreen() const
+void GLTexture::DrawFullscreen(const Shader& shader) const
 {
     ShaderState ss;
     DrawFSBegin(ss);
-    Shader::instance().DrawRectCorners(ss, getTexture(), float2(0.f), float2(1.f));
+    shader.DrawRectCorners(ss, getTexture(), float2(0.f), float2(1.f));
     DrawFSEnd();
 }
 
 // RAII for a render target
 class GLRenderTexture : public GLTexture {
-    
-    GLuint m_fbname = 0;
+
+public:
+    enum ZFlags { HASZ=1, KEEPZ=3, NOZ=4 };
+
+private:
+    GLuint m_fbname  = 0;
     GLuint m_zrbname = 0;
+    uint   m_zflags  = 0;
     
     static vector<GLRenderTexture*> s_bound;
     
-    void Generate();
+    void Generate(ZFlags zflags);
     
 public:
+    
     ~GLRenderTexture() { clear(); }
     
     void clear();
     
     bool empty() const { return !(m_fbname && m_texname && m_zrbname); }
     
-    void BindFramebuffer(float2 sizePixels, bool keepz=false);
+    void BindFramebuffer(float2 sizePixels, ZFlags zflags=HASZ);
     void RebindFramebuffer();
     void UnbindFramebuffer() const;
-    
 };
 
 // camera/view data
@@ -588,13 +595,17 @@ private:
 protected:
 
     string m_header;
-    
-    ShaderProgramBase() {}
+    string m_argstr;
+
+    ShaderProgramBase();
     virtual ~ShaderProgramBase() { reset(); }
+    virtual void LoadTheProgram() = 0;
 
     void reset();
     
     GLuint getProgram() const { return m_programHandle; }
+    
+    GLuint createShader(const char* txt, GLenum type) const;
     
     bool LoadProgram(const char* name, const char* shared, const char *vert, const char *frag);
 
@@ -607,6 +618,8 @@ protected:
     template <typename V, typename T>
     void vertexAttribPointer(GLuint slot, const V *ptr, const T* base) const
     {
+        if (slot == -1)
+            return;
         glEnableVertexAttribArray(slot);
         glReportError();
         m_enabledAttribs.push_back(slot);
@@ -627,11 +640,26 @@ protected:
 
 public:
 
-    bool ReloadProgram() { return LoadProgram(m_name.c_str()); }
+    bool ReloadProgram() { LoadTheProgram(); return isLoaded(); }
     void UnuseProgram() const;
 
     bool isLoaded() const { return m_programHandle != 0; }
     string getName() const { return m_name; }
+};
+
+template <typename T>
+struct ShaderBase {
+
+    static const T& instance()
+    {
+        static T* p = new T();
+        if (!p->isLoaded()) {
+            p->LoadTheProgram();
+            glReportError();
+        }
+        return *p;
+    }
+    
 };
 
 struct Transform2D {
@@ -708,6 +736,17 @@ struct Transform2D {
         float3 result;
         apply(result, vec);
         return result;
+    }
+
+    template <typename T>
+    void apply(T* arr, int count) const
+    {
+        for (int i=0; i<count; i++)
+        {
+            T res;
+            apply(res, arr[i]);
+            arr[i] = res;
+        }
     }
 
 };
@@ -798,7 +837,7 @@ public:
     }
 
     uint indexCount() const { return m_il.size(); }
-    bool empty() const { return m_il.empty(); }
+    bool empty() const { return m_vl.empty(); }
 
     Vtx& cur() { return m_curVert; }
     void color(uint c, float a=1)   { m_curVert.color = argb2abgr(c|0xff000000, a); }
@@ -829,13 +868,18 @@ public:
         return start;
     }
 
-    static bool checkOverflow(size_t val)
+    static bool checkOverflow(size_t val, ushort t)
     {
         if (val > std::numeric_limits<IndexType>::max()) {
             ASSERT(false && "vertex overflow!");
             return true;
         }
         return false;
+    }
+
+    static bool checkOverflow(size_t val, uint t)
+    {
+        return false;           // never happens for ints
     }
 
     Vtx& getVertex(uint idx) { return m_vl[idx]; }
@@ -845,7 +889,7 @@ public:
     IndexType PushV(const T *pv, size_t vc)
     {
         const IndexType start = (IndexType) m_vl.size();
-        if (checkOverflow(m_vl.size() + vc))
+        if (checkOverflow(m_vl.size() + vc, (IndexType) 0))
             return start;
 
         Vtx v = m_curVert;
@@ -861,7 +905,7 @@ public:
     IndexType PushV(const Vtx *pv, size_t vc)
     {
         const IndexType start = (IndexType) m_vl.size();
-        if (checkOverflow(m_vl.size() + vc))
+        if (checkOverflow(m_vl.size() + vc, (IndexType) 0))
             return start;
 
         Vtx v;
@@ -875,10 +919,27 @@ public:
         return start;
     }
 
+    // pre-transformed vertices
+    template <typename T>
+    IndexType PushVTrans(const T *pv, size_t vc)
+    {
+        const IndexType start = (IndexType) m_vl.size();
+        if (checkOverflow(m_vl.size() + vc, (IndexType) 0))
+            return start;
+
+        Vtx v = m_curVert;
+        for (uint i=0; i<vc; i++)
+        {
+            v.pos = float3(pv[i]);
+            m_vl.push_back(v);
+        }
+        return start;
+    }
+
     IndexType Push(const Mesh<Vtx> &pusher)
     {
         const IndexType start = m_vl.size();
-        if (checkOverflow(start + pusher.m_vl.size()))
+        if (checkOverflow(start + pusher.m_vl.size(), (IndexType)0))
             return start;
 
         m_vl.reserve(m_vl.size() + pusher.m_vl.size());
@@ -900,15 +961,19 @@ public:
         return start;
     }
 
+    IndexType PushArrayIndexes(IndexType start, size_t vc)
+    {
+        for (uint i=0; i<vc; i++) {
+            m_il.push_back(start + i);
+        }
+        return start;
+    }
 
     template <typename Vec>
     IndexType PushArray(const Vec *pv, size_t vc)
     {
         IndexType start = PushV(pv, vc);
-        for (uint i=0; i<vc; i++) {
-            m_il.push_back(start + i);
-        }
-        return start;
+        return PushArrayIndexes(start, vc);
     }
 
     void UpdateBuffers(bool use)
@@ -922,7 +987,7 @@ public:
         }
     }
 
-    bool BuffersEmpty() const { return m_vbo.empty() || m_ibo.empty(); }
+    bool BuffersEmpty() const { return m_vbo.empty(); }
 
     template <typename Prog>
     void Draw(const ShaderState &s, uint type, const Prog &program) const
@@ -936,8 +1001,8 @@ public:
             m_vbo.Bind();
             program.UseProgram(s, &m_vl[0], &m_vl[0]);
             s.DrawElements(type, m_ibo);
-            m_vbo.Unbind();
             program.UnuseProgram();
+            m_vbo.Unbind();
         }
         else if (!m_vl.empty())
         {
@@ -1061,15 +1126,55 @@ enum SpiralType {
     SPIRAL_LOG
 };
 
+
+
+template <typename Vtx>
+struct PointMesh : public Mesh<Vtx> {
+
+    typedef typename Mesh<Vtx>::IndexType Index;
+
+    void PushPoint(float2 pos)
+    {
+        this->PushV(&pos, 1);
+    }
+
+    void PushPoint(const Vtx &pos)
+    {
+        this->PushV(&pos, 1);
+    }
+
+    template <typename Prog>
+    void Draw(const ShaderState &s, const Prog &program) const
+    {
+        if (!program.isLoaded())
+            return;
+
+        if (!this->m_vbo.empty())
+        {
+            this->m_vbo.Bind();
+            program.UseProgram(s, &this->m_vl[0], &this->m_vl[0]);
+            s.DrawArrays(GL_POINTS, this->m_vl.size());
+            program.UnuseProgram();
+            this->m_vbo.Unbind();
+        }
+        else if (!this->m_vl.empty())
+        {
+            program.UseProgram(s, &this->m_vl[0], (Vtx*)NULL);
+            s.DrawArrays(GL_POINTS, this->m_vl.size());
+            program.UnuseProgram();
+        }
+    }
+};
+    
 template <typename Vtx>
 struct LineMesh : public PrimMesh<Vtx, 2> {
 
-    typedef typename Mesh<Vtx>::IndexType LineIndex;
+    typedef typename Mesh<Vtx>::IndexType Index;
 
     template <typename Vec>
-    LineIndex PushLoop(const Vec *pv, uint c)
+    Index PushLoop(const Vec *pv, uint c)
     {
-        LineIndex start = this->PushV(pv, c);
+        Index start = this->PushV(pv, c);
         for (uint i=0; i<c; i++)
         {
             this->m_il.push_back(start + i);
@@ -1080,7 +1185,7 @@ struct LineMesh : public PrimMesh<Vtx, 2> {
 
     void PushStrip(const float2 *pv, uint c)
     {
-        LineIndex start = this->PushV(pv, c);
+        Index start = this->PushV(pv, c);
         for (uint i=1; i<c; i++)
         {
             this->m_il.push_back(start + i - 1);
@@ -1088,7 +1193,16 @@ struct LineMesh : public PrimMesh<Vtx, 2> {
         }
     }
 
-    void PushLoopIndexes(LineIndex start, const LineIndex *il, uint ic, uint ls)
+    void PushLoopIndexes(Index start, uint vc, uint ls)
+    {
+        ASSERT(vc % ls == 0);
+        for (int i=0; i<vc; i++) {
+            this->m_il.push_back(start + i);
+            this->m_il.push_back(start + i + (((i+1) % ls == 0) ? 1 - ls : 1));
+        }
+    }
+
+    void PushLoopIndexes(Index start, const Index *il, uint ic, uint ls)
     {
         ASSERT(ic % ls == 0);
         for (int i=1; i<=ic; i++) {
@@ -1098,16 +1212,17 @@ struct LineMesh : public PrimMesh<Vtx, 2> {
     }
 
     template <typename Vec>
-    void PushLoops(const Vec *pv, uint vc, const LineIndex *il, uint ic, uint ls)
+    void PushLoops(const Vec *pv, uint vc, const Index *il, uint ic, uint ls)
     {
-        const LineIndex start = this->PushV(pv, vc);
+        const Index start = this->PushV(pv, vc);
         PushLoopIndexes(start, il, ic, ls);
     }
+
 
     template <typename Vec>
     void PushLines(const Vec *pv, uint c)
     {
-        const LineIndex start = this->PushV(pv, c);
+        const Index start = this->PushV(pv, c);
         for (uint i=1; i<c; i+=2)
         {
             this->m_il.push_back(start + i - 1);
@@ -1165,7 +1280,7 @@ struct LineMesh : public PrimMesh<Vtx, 2> {
     {
         ASSERT(numVerts >= 3);
 
-        LineIndex start = this->m_vl.size();
+        Index start = this->m_vl.size();
 
         for (int i=0; i < numVerts; ++i)
         {
@@ -1290,7 +1405,7 @@ struct LineMesh : public PrimMesh<Vtx, 2> {
                                  pos3 + float3(rad.x, rad.y, -rad.z), 
                                  pos3 + float3(rad.x, -rad.y, -rad.z),
                                  pos3 + float3(-rad.x, -rad.y, -rad.z) };
-        const LineIndex idxs[] = { 0,1, 1,2, 2,3, 3,0,
+        const Index idxs[] = { 0,1, 1,2, 2,3, 3,0,
                                                        0,4, 1,5, 2,6, 3,7,
                                                        4,5, 5,6, 6,7, 7,4 };
         this->Push(verts, arraySize(verts), idxs, arraySize(idxs));
@@ -1317,13 +1432,13 @@ struct LineMesh : public PrimMesh<Vtx, 2> {
         PushLoop(v, arraySize(v));
     }
 
-    LineIndex PushRect(float2 r)
+    Index PushRect(float2 r)
     {
         const float2 verts[4] = { -r, float2(-r.x, r.y), r, float2(r.x, -r.y) };
         return PushLoop(verts, arraySize(verts));
     }
 
-    LineIndex PushRect(float2 p, float2 r)
+    Index PushRect(float2 p, float2 r)
     {
         const float2 verts[4] = { p-r, p + float2(-r.x, r.y), p + r, p + float2(r.x, -r.y) };
         return PushLoop(verts, arraySize(verts));
@@ -1341,7 +1456,7 @@ struct LineMesh : public PrimMesh<Vtx, 2> {
     void PushLine(const Vec &a, const Vec &b)
     {
         const Vec x[] = {a, b};
-        const LineIndex i[] = {0, 1};
+        const Index i[] = {0, 1};
         this->Push(x, 2, i, 2);
     }
     
@@ -1355,9 +1470,9 @@ struct LineMesh : public PrimMesh<Vtx, 2> {
     {
         const float3 x[] = { float3(a, d), float3(b, d), float3(c, d),
                              float3(a, -d), float3(b, -d), float3(c, -d) };
-        const LineIndex il0[] = { 0,1,2, 3,4,5 };
-        const LineIndex il1[] = { 0,3, 1,4, 2,5 };
-        const LineIndex start = this->PushV(x, arraySize(x));
+        const Index il0[] = { 0,1,2, 3,4,5 };
+        const Index il1[] = { 0,3, 1,4, 2,5 };
+        const Index start = this->PushV(x, arraySize(x));
         PushLoopIndexes(start, il0, 6, 3);
         PushLoopIndexes(start, il1, 6, 2);
     }
@@ -1373,7 +1488,7 @@ struct LineMesh : public PrimMesh<Vtx, 2> {
 template <typename Vtx>
 struct TriMesh : public PrimMesh<Vtx, 3> {
 
-    typedef typename Mesh<Vtx>::IndexType TriIndex;
+    typedef typename Mesh<Vtx>::IndexType Index;
 
     void PushPoly(const float2* verts, uint vc)
     {
@@ -1388,26 +1503,26 @@ struct TriMesh : public PrimMesh<Vtx, 3> {
 
     // a b
     // c d
-    TriIndex PushQuad(float2 a, float2 b, float2 c, float2 d)
+    Index PushQuad(float2 a, float2 b, float2 c, float2 d)
     {
         const float2 v[] = { a, b, c, d };
         return this->PushQuadV(v);
     }
 
     template <typename Vec>
-    TriIndex PushQuadV(const Vec *v)
+    Index PushQuadV(const Vec *v)
     {
-        static const TriIndex i[] = {0, 1, 2, 1, 3, 2};
+        static const Index i[] = {0, 1, 2, 1, 3, 2};
         return this->Push(v, 4, i, arraySize(i));
     }
 
-    TriIndex PushRect(float2 p, float2 r)
+    Index PushRect(float2 p, float2 r)
     {
         return PushQuad(p + float2(-r.x, r.y), p + r, 
                         p-r, p + float2(r.x, -r.y));
     }
 
-    TriIndex PushRect(float3 p, float2 r)
+    Index PushRect(float3 p, float2 r)
     {
         const float3 v[] = { p + float3(-r.x,  r.y, 0),
                              p + float3( r.x,  r.y, 0),
@@ -1427,25 +1542,25 @@ struct TriMesh : public PrimMesh<Vtx, 3> {
     void PushTri(float2 a, float2 b, float2 c)
     {
         float2 x[] = {a, b, c};
-        TriIndex i[] = {0, 1, 2};
+        Index i[] = {0, 1, 2};
         this->Push(x, 3, i, 3);
     }
 
-    TriIndex PushCircle(float radius, int numVerts=32) 
+    Index PushCircle(float radius, int numVerts=32) 
     {
         return PushCircle(float2(0), radius, numVerts); 
     }
 
-    TriIndex PushCircle(float2 pos, float radius, const View& view) 
+    Index PushCircle(float2 pos, float radius, const View& view) 
     {
         return PushCircle(pos, radius, view.getCircleVerts(radius));
     }
 
-    TriIndex PushCircle(float2 pos, float radius, int numVerts=32)
+    Index PushCircle(float2 pos, float radius, int numVerts=32)
     {
         ASSERT(numVerts >= 3);
 
-        TriIndex start = this->m_vl.size();
+        Index start = this->m_vl.size();
 
         for (int i=0; i < numVerts; ++i)
         {
@@ -1470,7 +1585,7 @@ struct TriMesh : public PrimMesh<Vtx, 3> {
     {
         ASSERT(numVerts >= 3);
 
-        TriIndex start = this->m_vl.size();
+        Index start = this->m_vl.size();
         this->PushV(&pos, 1);
 
         for (int i=0; i < numVerts; ++i)
@@ -1490,11 +1605,11 @@ struct TriMesh : public PrimMesh<Vtx, 3> {
         }
     }
 
-    TriIndex PushCircleCenterVert(float2 pos, float radius, int numVerts=32)
+    Index PushCircleCenterVert(float2 pos, float radius, int numVerts=32)
     {
         ASSERT(numVerts >= 3);
 
-        TriIndex start = this->m_vl.size();
+        Index start = this->m_vl.size();
         this->PushV(&pos, 1);
 
         for (int i=0; i < numVerts; ++i)
@@ -1519,7 +1634,7 @@ struct TriMesh : public PrimMesh<Vtx, 3> {
         return start;
     }
     
-    TriIndex PushCircleCenterVert(float radius, int numVerts=32)
+    Index PushCircleCenterVert(float radius, int numVerts=32)
     {
         return PushCircleCenterVert(float2(0.f), radius, numVerts);
     }
@@ -1656,7 +1771,7 @@ struct PostProc {
 private:
     GLRenderTexture m_tex[2];
     uint            m_rtIdx = 0;
-    uint            m_blurLevel = 0;
+    int             m_blur  = 0;
     float2          m_res;
 
     GLRenderTexture &getRead() { return m_tex[m_rtIdx]; }
@@ -1664,7 +1779,7 @@ private:
 public:
 
     void setRes(float2 res) { m_res = res; }
-    void setBlur(uint blur) { m_blurLevel = blur; }
+    void setBlur(uint blur) { m_blur = blur; }
     
     void swapRW() { m_rtIdx = !m_rtIdx; }
 

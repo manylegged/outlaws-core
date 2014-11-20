@@ -63,8 +63,8 @@ void sdl_os_oncrash(const char* message)
         "Please email\n"
         "%s\nto arthur@anisopteragames.com",
         message, dest.c_str()).c_str());
-    exit(1);
 }
+
 
 void anonymizeUsername(string &str)
 {
@@ -73,15 +73,17 @@ void anonymizeUsername(string &str)
 #else
     const char *name = "Users";
 #endif
-    size_t start = str.find(name);
-    if (start == string::npos)
-        return;
-    start += strlen(name) + 1;
-    if (str.size() > start && strchr("/\\", str[start-1]))
+    for (size_t start = str.find(name);
+         start != string::npos && start < str.size();
+         start = str.find(name, start))
     {
-        int end=start+1;
-        for (; end<str.size() && !strchr("/\\", str[end]); end++);
-        str.replace(start, end-start, "<User>");
+        start += strlen(name) + 1;
+        if (start < str.size() && strchr("/\\", str[start-1]))
+        {
+            int end=start+1;
+            for (; end<str.size() && !strchr("/\\", str[end]); end++);
+            str.replace(start, end-start, "<User>");
+        }
     }
 }
 
@@ -291,6 +293,7 @@ struct OutlawImage OL_LoadImage(const char* fname)
 {
     // FIXME implement me
     OutlawImage img;
+    memset(&img, 0, sizeof(img));
     return img;
 }
 
@@ -885,17 +888,8 @@ const char* sdl_os_autorelease(std::string &val)
     return AutoreleasePool::instance().autorelease(val);
 }
 
-const char *OL_LoadFile(const char *name)
+static const string loadFile(SDL_RWops *io, const char* name)
 {
-    const char *fname = OL_PathForFile(name, "r");
-
-    SDL_RWops *io = SDL_RWFromFile(fname, "r");
-    if (!io)
-    {
-        return NULL;
-    }
-
-    
     string buf;
     Sint64 size = SDL_RWsize(io);
     buf.resize(size);
@@ -906,7 +900,28 @@ const char *OL_LoadFile(const char *name)
         ReportSDL("error closing file %s: %s", name, SDL_GetError());
     }
 
+    return buf;
+}
+
+const char *OL_LoadFile(const char *name)
+{
+    const char *fname = OL_PathForFile(name, "r");
+
+    SDL_RWops *io = SDL_RWFromFile(fname, "r");
+    if (!io)
+        return NULL;
+    string buf = loadFile(io, fname);
     return sdl_os_autorelease(buf);
+}
+
+string sdl_get_logdata()
+{
+    if (g_logfile)
+        return NULL;
+    SDL_RWops *io = SDL_RWFromFile(g_logpath, "r");
+    if (!io)
+        return "";
+    return loadFile(io, g_logpath);
 }
 
 void OL_ThreadEndIteration(int i)

@@ -2,7 +2,7 @@
 -- #version 120
 
 {
-   ShaderWormhole = {
+   ShaderWormholeParticles = {
       "varying vec4 DestinationColor;"
       ,
       "
@@ -63,6 +63,87 @@
       ,
       "void main(void) {
             gl_FragColor = DestinationColor;
+      }"
+   },
+
+   ShaderWormhole = {
+      "varying vec4 DestColor0;
+       varying vec4 DestColor1;
+       varying vec2 DestTex;
+       float length2(vec2 x) { return dot(x, x); }"
+
+      ,
+      "attribute vec4 SourceColor0;
+      attribute vec4 SourceColor1;
+      attribute vec2 TexCoord;
+      
+      void main(void) {
+          DestColor0 = vec4(0.2, 0.3, 0.8, 0);
+          DestColor1 = mix(vec4(0, 0.9, 0.7, 1.1), vec4(DestColor0.xyz, 1.0), length2(TexCoord));
+          DestTex = TexCoord;
+          gl_Position = Transform * Position;
+      }"
+      ,
+      "
+      #include 'noise3D.glsl'
+      uniform float Time;
+
+      vec2 rotate(vec2 v, float a) {
+          vec2 r = vec2(cos(a), sin(a));
+          return vec2(r.x * v.x - r.y * v.y, r.y * v.x + r.x * v.y);
+      }
+
+      void main(void) {
+          float r = length2(DestTex);
+          float val = snoise(vec3(rotate(DestTex, Time + 5 * r), Time/3 + 2*r) * 2);
+          float aval = snoise(vec3(rotate(DestTex, Time + 3 * r), Time/10) * 1);
+          float alpha = 1. + 1. * aval;           
+          alpha *= max(0, 1 - r) * 3 * r;
+          vec4 color = mix(DestColor0, DestColor1, 0.8 + 0.5 * val);
+          gl_FragColor = vec4(alpha * color.a * color.xyz, 0.0);
+      }"
+   }
+      
+   ShaderResource = {
+      "varying vec4 DestColor0;
+       varying vec4 DestColor1;
+       varying vec2 DestPos;
+       varying float DestRad;"
+      ,
+      "attribute vec4 SourceColor0;
+      attribute vec4 SourceColor1;
+      attribute float Radius;
+      uniform float ToPixels;
+      void main(void) {
+          DestColor0 = SourceColor0;
+          DestColor1 = SourceColor1;
+          DestPos = Position.xy / 100;
+          DestRad = sqrt(Radius);
+          gl_Position = Transform * Position;
+          gl_PointSize = 2 * ToPixels * Radius;
+      }"
+      ,
+      "
+      #include 'noise2D.glsl'
+      uniform float Time;
+
+      float length2(vec2 x) { return dot(x, x); }
+      vec2 rotate(vec2 v, float a) {
+          vec2 r = vec2(cos(a), sin(a));
+          return vec2(r.x * v.x - r.y * v.y, r.y * v.x + r.x * v.y);
+      }
+
+      void main(void) {
+            vec2 coord = gl_PointCoord.xy - 0.5;
+            float len2c = length2(coord);
+            float post = DestPos.x + DestPos.y + Time;
+            float thresh = 1.0 - (4.0 * len2c);
+            if (thresh <= 0)
+                discard;
+            vec2 pos = 0.1 * (DestPos + vec2(0, -Time/2) + DestRad * rotate(coord, len2c * 7 + (DestRad * DestRad / 10) + mod(Time/5, 2 * M_PI)));
+            float val = 0.5 * snoise(pos * 1.5) + 0.25 * snoise(pos * 3);
+            gl_FragColor.a = (1.0 + 0.5 * sin(5 * val)) * thresh;
+            gl_FragColor.xyz = gl_FragColor.a * mix(DestColor0.xyz, DestColor1.xyz, 0.5 + 0.5 * sin(10 * val));
       }"
    },
 
@@ -295,6 +376,53 @@
        }"
    }
 
+   ShaderParticlePoints = {
+      "varying vec4 DestinationColor;
+       varying float Sides;"
+      ,
+      "attribute vec2  Offset;
+       attribute float StartTime;
+       attribute float EndTime;
+       attribute vec3  Velocity;
+       attribute vec4  Color;
+       uniform   float CurrentTime;
+       uniform   float ToPixels;
+       void main(void) {
+           if (CurrentTime >= EndTime) {
+               gl_Position = vec4(0.0, 0.0, -99999999.0, 1);
+               return;
+           }
+           float deltaT = CurrentTime - StartTime;
+           vec3  velocity = pow(0.8, deltaT) * Velocity;
+           vec3  position = Position.xyz + deltaT * velocity;
+           float v = deltaT / (EndTime - StartTime);
+           DestinationColor = (1.0 - v) * Color;
+           Sides = Offset.y;
+           gl_PointSize = 1.5 * ToPixels * Offset.x;
+           gl_Position = Transform * vec4(position, 1);
+       }"
+      ,
+      "
+       float length2(vec2 x) { return dot(x, x); }
+       float mlength(vec2 x) { return abs(x.x) + abs(x.y); }
+       float squared(float x) { return x * x; }
+
+       void main(void) {
+           //float val = 1.0 - squared(2.0 * length(gl_PointCoord - 0.5));
+           float val = 1.0 - 4.0 * length2(gl_PointCoord - 0.5);
+           //float val = 1.0 - 2.0 * mlength(gl_PointCoord - 0.5);
+           //float val = 1.0 - 2.0 * length(gl_PointCoord - 0.5);
+           if (val <= 0.0)
+               discard;
+           //val = max(0.0, val);
+           if (Sides > 0.0) {
+               gl_FragColor = DestinationColor;
+           } else {
+               gl_FragColor = DestinationColor * val;
+           }
+       }"
+   }
+
    ShaderBlur = {
       "varying vec2 DestTexCoord;"
       ,
@@ -305,18 +433,9 @@
        }"
       ,
       "uniform sampler2D source;
-       uniform float coefficients[5];
-       uniform vec2 offsets[5];
+       uniform vec2 offsets[BLUR_SIZE];
        void main() {
-           float d = 0.1;
-           vec4 c = vec4(0, 0, 0, 0);
-           vec2 tc = DestTexCoord;
-           c += coefficients[0] * texture2D(source, tc + offsets[0]);
-           c += coefficients[1] * texture2D(source, tc + offsets[1]);
-           c += coefficients[2] * texture2D(source, tc + offsets[2]);
-           c += coefficients[3] * texture2D(source, tc + offsets[3]);
-           c += coefficients[4] * texture2D(source, tc + offsets[4]);
-           gl_FragColor = c;
+           gl_FragColor = BLUR(source, DestTexCoord, offsets);
        }"
    }
 }

@@ -31,6 +31,35 @@
 
 static DEFINE_CVAR(float, kTextScaleHeight, IS_TABLET ? 320.f : 720.f);
 
+FontStats::FontStats(int ft, float sz) : font(ft), fontSize(sz)
+{
+    OLSize adv[128] = {};
+    static_assert(arraySize(adv) == arraySize(advancements), "size mismatch");
+    OL_FontAdvancements(font, fontSize, adv);
+    charMaxSize.y = OL_FontHeight(font, fontSize);
+    charAvgSize.y = charMaxSize.y;
+    int printable = 0;
+    for (int i=0; i<vec_size(advancements); i++) {
+        advancements[i] = adv[i].x;
+        if (isprint(i)) {
+            charMaxSize.x = max(charMaxSize.x, advancements[i]);
+            charAvgSize.x += advancements[i];
+            // ReportMessagef("%s = %f", str_tostr((char)i).c_str(), advancements[i]);
+            printable++;
+        }
+    }
+    charAvgSize.x /= printable;
+}
+
+const FontStats & FontStats::get(int font, float size)
+{
+    static std::map<pair<int, int>, FontStats> map;
+    FontStats &fs = map[make_pair(font, (int)ceil(size))];
+    if (fs.fontSize <= 0.f)
+        fs = FontStats(font, ceil(size));
+    return fs;
+}
+
 void GLText::load(const string& str, int font_, float size, float pointSize)
 {
     chars    = str;
@@ -42,7 +71,6 @@ void GLText::load(const string& str, int font_, float size, float pointSize)
         if (texture.width > 0)
             glDeleteTextures(1, &texture.texnum);
         memset(&texture, 0, sizeof(texture));
-        advancements.clear();
 
         if (chars.size())
         {
@@ -57,7 +85,7 @@ void GLText::load(const string& str, int font_, float size, float pointSize)
         }
     }
 
-    DPRINT(GUI, ("Rendered string texture %3d chars, %d/%.1f: %03dx%03d@%.fx", 
+    DPRINT(GUI, ("Rendered string texture %3d chars, %d/%.1f: %3dx%03d@%.fx", 
                  (int)str.size(), font, size, texture.width, texture.height, texPointSize));
 }
 
@@ -106,41 +134,21 @@ float2 GLText::Draw(const ShaderState &s_, float2 p, Align align, int font, uint
     return st->getSize();
 }
 
-float2 GLText::getAdvancement(char c) const
-{
-    if (advancements.empty())
-    {
-        advancements.resize(128);
-        OL_FontAdvancements(font, fontSize, (OLSize*) &advancements[0]);
-    }
-    ASSERT(c >= 0);
-    return advancements[(int)c];
-}
-
 float GLText::getCharStart(uint chr) const
 {
     chr = min(chr, (uint)chars.size());
     float pos = 0;
+    const FontStats &stat = FontStats::get(font, fontSize);
     for (uint i=0; i<chr; i++)
-        pos += getAdvancement(chars[i]).x;
+        pos += vec_at(stat.advancements, (size_t)chars[i]);
     return pos;
 }
     
-
 float2 GLText::getCharSize(uint chr) const
 {
-    char c = chr < chars.size() ? chars[chr] : ' ';
-    return float2(getAdvancement(c).x, getFontHeight(font, fontSize));
-}
-
-static std::unordered_map< pair<int, int>, float > s_fontHeights;
-
-float GLText::getFontHeight(int font, float size)
-{
-    float& height = s_fontHeights[make_pair(font, (int) ceil(size))];
-    if (height == 0)
-        height = OL_FontHeight(font, size);
-    return height;
+    const char c = vec_at(chars, chr, ' ');
+    const FontStats &stat = FontStats::get(font, fontSize);
+    return float2(stat.advancements[c], stat.charMaxSize.y);
 }
 
 float GLText::getScaledSize(float sizeUnscaled)

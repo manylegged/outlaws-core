@@ -79,5 +79,9 @@ typedef unsigned short ushort;
 #undef MOD_SHIFT
 #endif
 
+#include <string>
+
+std::string ws2s(const std::wstring& wstr);
+std::wstring s2ws(const std::string& s);
 
 #endif

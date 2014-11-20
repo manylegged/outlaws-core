@@ -509,10 +509,19 @@ inline void vec_shuffle(V& vec)
 
 template <typename Vec>
 const typename Vec::value_type &vec_at(const Vec &v, size_t i,
-                                          const typename Vec::value_type &def=typename Vec::value_type())
+                                       const typename Vec::value_type &def=typename Vec::value_type())
 {
     return (i < v.size()) ? v[i] : def;
 }
+
+template <typename T, size_t S>
+const T &vec_at(const T (&v)[S], size_t i, const T &def=T())
+{
+    return (i < S) ? v[i] : def;
+}
+
+template <typename V> size_t vec_size(const V &v) { return v.size(); }
+template <typename T, size_t S> size_t vec_size(const T (&v)[S]) { return S; }
 
 template <typename Vec>
 typename Vec::value_type &vec_index(Vec &v, size_t i)

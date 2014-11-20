@@ -487,7 +487,7 @@ void TextInputBase::render(const ShaderState &s_)
             longestChars     = lines[i].size();
         }
     }
-    const float charHeight = GLText::getFontHeight(kMonoFont, GLText::getScaledSize(textSize));
+    const float charHeight = FontStats::get(kMonoFont, GLText::getScaledSize(textSize)).charMaxSize.y;
     sizeChars.x = max(sizeChars.x, (int)longestChars + 1);
         
     //sizePoints.x = max(sizePoints.x, 2.f * kPadDist + longestPointSize.x);

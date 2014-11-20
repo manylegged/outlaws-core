@@ -31,6 +31,7 @@ using std::swap;
 
 // last chance to catch log string before it hits the OS layer
 void ReportMessage(string &&str);
+void ReportMessage(const string &str);
 void ReportMessage(const char* str);
 
 inline void vReportMessagef(const char *format, va_list vl)  __printflike(1, 0);
@@ -74,7 +75,7 @@ inline void ReportMessagef(const char *format, ...)
 #define UNUSED(x) (void)(x)
 
 // assertions are enabled even in release builds
-#define ASSERT(X) (__builtin_expect(!(X), 0) ? OLG_OnAssertFailed(__FILE__, __LINE__, __func__, #X, "failed") : 0)
+#define ASSERT(X) (__builtin_expect(!(X), 0) ? OLG_OnAssertFailed(__FILE__, __LINE__, __func__, #X, "") : 0)
 #define ASSERTF(X, Y, ...) (__builtin_expect(!(X), 0) ? OLG_OnAssertFailed(__FILE__, __LINE__, __func__, #X, (Y), __VA_ARGS__) : 0)
 
 #if defined(DEBUG) || defined(DEVELOP)
@@ -83,9 +84,11 @@ template <int Y, typename T>
 void DPRINTVAR1(const char* name, const T& X)
 {
     static T _x{};
-    if (X != _x) {
+    static std::string _nm;
+    if (X != _x && name != _nm) {
         ReportMessagef("%s = %s", name, str_tostr(X).c_str());
         _x = X;
+        _nm = name;
     }
 }
 #  define DPRINTVAR(X) DPRINTVAR1<__LINE__>(#X, X)

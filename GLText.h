@@ -34,6 +34,18 @@ static const int kDefaultFont = 0;
 static const int kMonoFont    = 1;
 static const int kTitleFont   = 2;
 
+struct FontStats {
+    int    font     = kDefaultFont;
+    float  fontSize = -1.f;
+    float  advancements[128];
+    float2 charMaxSize;
+    float2 charAvgSize;
+
+    FontStats() {}
+    FontStats(int ft, float sz);
+    static const FontStats &get(int font, float size);
+};
+
 class GLText {
 
     OutlawTexture  texture;
@@ -45,16 +57,12 @@ class GLText {
     int            font = kDefaultFont;
     float          fontSize = kDefaultFontSize;
 
-    mutable vector<float2> advancements;
-
     GLText()
     {
         memset(&texture, 0, sizeof(texture));
     }
 
     void load(const string& str, int font, float size, float pointSize);
-
-    float2 getAdvancement(char c) const;
 
 public:
 
@@ -73,7 +81,6 @@ public:
     static const GLText* get(int font, float size, const string& str);
 
     static float getScaledSize(float sizeUnscaled);
-    static float getFontHeight(int font, float size);
 
     enum Align {
         LEFT,

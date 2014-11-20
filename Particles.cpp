@@ -8,7 +8,8 @@
 #endif
 
 static const uint kParticleEdges = 6;
-static const uint kParticleVerts = kParticleEdges + kBluryParticles;
+static const uint kParticleVerts = 1;
+ // static const uint kParticleVerts = kParticleEdges + kBluryParticles;
 static const uint kMinParticles = 1<<15;
 
 size_t ParticleSystem::count() const
@@ -62,16 +63,19 @@ void ParticleSystem::add(const Particle &p, float angle, bool gradient)
         {
             if (m_vertices[m_addPos].endTime <= m_simTime)
             {
-                Particle p1 = p;
-                const float2 rot = angleToVector(angle + M_TAOf / (2.f * kParticleEdges));
-
-                if (kBluryParticles)
+                if (kParticleVerts == 1)
+                {
+                    m_vertices[m_addPos] = p;
+                    m_vertices[m_addPos].offset.y = gradient ? 0 : kParticleEdges;
+                }
+                else if (kBluryParticles)
                 {
                     // center
-                    m_vertices[m_addPos] = p1;
+                    const float2 rot = angleToVector(angle + M_TAOf / (2.f * kParticleEdges));
+                    m_vertices[m_addPos] = p;
                     m_vertices[m_addPos].offset = float2(0.f);
                     for (uint j=1; j<kParticleVerts; j++) {
-                        m_vertices[m_addPos + j] = p1;
+                        m_vertices[m_addPos + j] = p;
                         m_vertices[m_addPos + j].offset = rotate(p.offset.x * getCircleVertOffset<kParticleEdges>(j-1), rot);
                         if (gradient)
                             m_vertices[m_addPos + j].color  = 0x0;
@@ -79,6 +83,7 @@ void ParticleSystem::add(const Particle &p, float angle, bool gradient)
                 }
                 else
                 {
+                    const float2 rot = angleToVector(angle + M_TAOf / (2.f * kParticleEdges));
                     for (uint j=0; j<kParticleVerts; j++) {
                         m_vertices[m_addPos + j] = p;
                         m_vertices[m_addPos + j].offset = rotate(p.offset.x * getCircleVertOffset<kParticleVerts>(j), rot);
@@ -133,7 +138,7 @@ ParticleSystem::~ParticleSystem()
 {
 }
 
-struct ShaderParticles : public IParticleShader {
+struct ShaderParticles : public IParticleShader, public ShaderBase<ShaderParticles> {
 
     GLint offset;
     GLint startTime;
@@ -142,22 +147,26 @@ struct ShaderParticles : public IParticleShader {
     GLint angle;
     GLint color;
     GLint currentTime;
-    
-    ShaderParticles()
+    GLint ToPixels;
+
+    void LoadTheProgram()
     {
-        LoadProgram("ShaderParticles");
+        if (kParticleVerts == 1)
+            LoadProgram("ShaderParticlePoints");
+        else
+            LoadProgram("ShaderParticles");
         offset      = getAttribLocation("Offset");
         startTime   = getAttribLocation("StartTime");
         endTime     = getAttribLocation("EndTime");
         velocity    = getAttribLocation("Velocity");
         color       = getAttribLocation("Color");
         currentTime = getUniformLocation("CurrentTime");
-        glReportError();
+        GET_UNIF_LOC(ToPixels);
     }
 
     typedef ParticleSystem::Particle Particle;
 
-    void UseProgram(const ShaderState& ss, float time)
+    void UseProgram(const ShaderState& ss, const View& view, float depth, float time) const
     {
         const Particle* ptr = NULL;
         UseProgramBase(ss, &ptr->position, ptr);
@@ -169,15 +178,18 @@ struct ShaderParticles : public IParticleShader {
         vertexAttribPointer(color, &ptr->color, ptr);
 
         glUniform1f(currentTime, time);
+        if (kParticleVerts == 1)
+            glUniform1f(ToPixels, view.getWorldPointSizeInPixels(depth));
         glReportError();
     }
 
-    static ShaderParticles& instance()
-    {
-        static ShaderParticles *p = new ShaderParticles;
-        return *p;
-    }
 };
+
+void ShaderParticlesInstance()
+{
+    ShaderParticles::instance();
+}
+
 
 void ParticleSystem::updateRange(uint first, uint size)
 {
@@ -266,46 +278,55 @@ void ParticleSystem::render(float3 origin, float time, const ShaderState &ss, co
         }
         else
         {
-            const uint polys       = m_vertices.size() / kParticleVerts;
-            const uint vertPerPoly = 3 * (kParticleVerts-1);
-
-            vector<uint> indices(vertPerPoly * polys);
-
-            for (uint i=0; i<polys; i++)
+            if (kParticleVerts != 1)
             {
-                uint* idxptr = &indices[i * vertPerPoly];
-                const uint start = i * kParticleVerts;
+                const uint polys       = m_vertices.size() / kParticleVerts;
+                const uint vertPerPoly = 3 * (kParticleVerts-1);
 
-                if (kBluryParticles)
+                vector<uint> indices(vertPerPoly * polys);
+
+                for (uint i=0; i<polys; i++)
                 {
-                    for (uint j=1; j<kParticleVerts; j++) {
-                        *idxptr++ = start;
-                        *idxptr++ = start + j;
-                        *idxptr++ = start + (j % (kParticleVerts-1)) + 1;
+                    uint* idxptr = &indices[i * vertPerPoly];
+                    const uint start = i * kParticleVerts;
+
+                    if (kBluryParticles)
+                    {
+                        for (uint j=1; j<kParticleVerts; j++) {
+                            *idxptr++ = start;
+                            *idxptr++ = start + j;
+                            *idxptr++ = start + (j % (kParticleVerts-1)) + 1;
+                        }
+                    }
+                    else
+                    {
+                        for (uint j=2; j<kParticleVerts; j++) {
+                            *idxptr++ = start;
+                            *idxptr++ = start + j - 1;
+                            *idxptr++ = start + j;                    
+                        }
                     }
                 }
-                else
-                {
-                    for (uint j=2; j<kParticleVerts; j++) {
-                        *idxptr++ = start;
-                        *idxptr++ = start + j - 1;
-                        *idxptr++ = start + j;                    
-                    }
-                }
-            }
             
-            m_ibo.BufferData(indices, GL_STATIC_DRAW);
+                m_ibo.BufferData(indices, GL_STATIC_DRAW);
+            }
             m_vbo.BufferData(m_vertices, GL_DYNAMIC_DRAW);
         }
         m_addFirst = m_addPos;
     }
 
     if (!m_program)
-        m_program = &ShaderParticles::instance(); 
+    {
+        m_program = &ShaderParticles::instance();
+    }
 
+    // make sure to glEnable(GL_PROGRAM_POINT_SIZE); or glEnable(GL_VERTEX_PROGRAM_POINT_SIZE);
     m_vbo.Bind();
-    m_program->UseProgram(ss, time);
-    ss.DrawElements(GL_TRIANGLES, m_ibo);
+    m_program->UseProgram(ss, view, m_planeZ, time);
+    if (kParticleVerts == 1)
+        ss.DrawArrays(GL_POINTS, m_vbo.size());
+    else
+        ss.DrawElements(GL_TRIANGLES, m_ibo);
     m_program->UnuseProgram();
     m_vbo.Unbind();
 }

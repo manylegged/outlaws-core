@@ -225,6 +225,19 @@ inline uint randlerpXXX(uint color, uint color1)
     return lerpXXX(color, color1, randrange(0.f, 1.f));
 }
 
+inline uint randlerpXXX(const std::initializer_list<uint>& lst)
+{
+    float3 color;
+    float total = 0.f;
+    foreach (uint cl, lst)
+    {
+        const float val = randrange(epsilon, 1.f);
+        color += val * rgb2rgbf(cl);
+        total += val;
+    }
+    return rgbf2rgb(color / total);
+}
+
 inline void flushNanToZero(float &val)
 {
     if (fpu_error(val))
@@ -278,10 +291,17 @@ inline uint colorIntensify(uint color)
 }
 
 
-inline uint clampColorValue(uint color)
+inline uint colorClampValue(uint color)
 {
     float3 hsv = rgb2hsvf(color);
     hsv.z = clamp(hsv.z, 0.6f, 0.8f);
+    return hsvf2rgb(hsv);
+}
+
+inline uint colorClampValue(uint color, float mn, float mx)
+{
+    float3 hsv = rgb2hsvf(color);
+    hsv.z = clamp(hsv.z, mn, mx);
     return hsvf2rgb(hsv);
 }
 

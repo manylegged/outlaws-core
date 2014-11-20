@@ -282,6 +282,11 @@ const char* OL_GetUserName(void)
     return name;
 }
 
+int OL_OpenWebBrowser(const char* url)
+{
+    return system(str_format("xdg-open %s", url).c_str()) == 0;
+}
+
 struct SoCallbackData {
     string binname;
     int    idx;

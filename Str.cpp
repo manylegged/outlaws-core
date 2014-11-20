@@ -236,13 +236,13 @@ std::string str_basename(const std::string &str)
         return str.substr(pt+1);
 }
 
-string str_tohex(const unsigned char* digest, int size)
+string str_tohex(const char* digest, int size)
 {
     const char hexchars[] = "0123456789abcdef";
 
     string result;
 
-    for (int i = 0; i < 16; i++)
+    for (int i = 0; i < size; i++)
     {
         unsigned char b = digest[i];
         char hex[3];
@@ -264,6 +264,8 @@ string str_tohex(const unsigned char* digest, int size)
 
 static int strtests()
 {
+    if (!IS_DEVEL)
+        return 1;
     assert_eql(str_path_standardize("~/Foo//Bar.lua"), "~/Foo/Bar.lua");
     assert_eql(str_path_standardize("../../bar.lua"), "../../bar.lua");
     assert_eql(str_path_standardize("foo/baz/../../bar.lua////"), "bar.lua");

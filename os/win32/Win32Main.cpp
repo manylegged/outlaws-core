@@ -39,7 +39,7 @@
 // iswow64process
 // #include <Wow64apiset.h>
 
-static string ws2s(const std::wstring& wstr)
+string ws2s(const std::wstring& wstr)
 {
     typedef std::codecvt_utf8<wchar_t> convert_typeX;
     std::wstring_convert<convert_typeX, wchar_t> converterX;
@@ -47,7 +47,7 @@ static string ws2s(const std::wstring& wstr)
     return converterX.to_bytes(wstr);
 }
 
-static std::wstring s2ws(const std::string& s)
+std::wstring s2ws(const std::string& s)
 {
     int slength = (int)s.length();
     int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), slength, 0, 0);
@@ -434,6 +434,13 @@ int OL_RemoveFileOrDirectory(const char* dirname)
 	return val == 0 ? 1 : 0;
 }
 
+int OL_OpenWebBrowser(const char* url)
+{
+    int stat = (int)ShellExecute(NULL, L"open", s2ws(url).c_str(), NULL, NULL, SW_SHOWNORMAL);
+    return stat > 32 ? 1 : 0;
+}
+
+
 // enable optimus!
 extern "C" {
     _declspec(dllexport) DWORD NvOptimusEnablement = 0x00000001;
@@ -627,6 +634,14 @@ static LONG WINAPI myExceptionHandler(EXCEPTION_POINTERS *info)
     }
 
     sdl_os_oncrash(str_format("Oops! %s crashed.\n", OLG_GetName()).c_str());
+
+    const string data = sdl_get_logdata();
+    if (data.c_str())
+        SteamAPI_SetMiniDumpComment(data.c_str());
+
+	// The 0 here is a build ID, we don't set it
+	SteamAPI_WriteMiniDump(rec->ExceptionCode, info, 0 );
+
     return EXCEPTION_CONTINUE_SEARCH;
 }
 

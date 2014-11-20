@@ -68,6 +68,18 @@ static NSString *getBaseSavePath()
     return path;
 }
 
+static NSString *getDevSavePath()
+{
+    static NSString *base = nil;
+    if (base == nil)
+    {
+        base = [[[[NSString stringWithUTF8String:__FILE__]
+                              stringByAppendingPathComponent: @"../../../"]
+                    stringByStandardizingPath] retain];
+    }
+    return base;
+}
+
 static NSString* pathForFileName(const char* fname, const char* flags)
 {
     NSString* fullFileName = [NSString stringWithUTF8String:fname];
@@ -82,13 +94,10 @@ static NSString* pathForFileName(const char* fname, const char* flags)
     NSString *path = nil;
     if (OLG_UseDevSavePath())
     {
-        getBaseSavePath();
+        getBaseSavePath();      // detect bugs
         
         // read and write output files directly from source code repository
-        NSString *base = [[[NSString stringWithCString:__FILE__ encoding:NSUTF8StringEncoding]
-                              stringByAppendingPathComponent: @"../../../"]
-                             stringByStandardizingPath];
-        path = [base stringByAppendingPathComponent:fullFileName];
+        path = [getDevSavePath() stringByAppendingPathComponent:fullFileName];
     }
     else
     {
@@ -99,9 +108,13 @@ static NSString* pathForFileName(const char* fname, const char* flags)
         {
             return savepath;
         }
-        
+
+#if NORES
+        path = [getDevSavePath() stringByAppendingPathComponent:fullFileName];
+#else
         NSString *resourcePath = [[NSBundle mainBundle] resourcePath];
         path = [resourcePath stringByAppendingPathComponent:fullFileName];
+#endif
     }
     ASSERT(path);
     return path;
@@ -157,6 +170,7 @@ const char *OL_LoadFile(const char *fname)
         return NULL;
     }
 
+    // LogMessage([NSString stringWithFormat:@"load %@", path]);
     return [contents UTF8String];
 }
 
@@ -639,3 +653,8 @@ int OL_CopyFile(const char* source, const char* dest)
     return 0;
 }
 
+int OL_OpenWebBrowser(const char* url)
+{
+    [[NSWorkspace sharedWorkspace] openURL: [NSURL URLWithString:[NSString stringWithUTF8String: url]]];
+    return 1;
+}

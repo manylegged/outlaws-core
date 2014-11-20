@@ -17,6 +17,9 @@ void sdl_os_oncrash(const char* message);
 
 void sdl_set_scaling_factor(float factor);
 
+// return log file as a string
+string sdl_get_logdata();
+
 
 /////////////// implemented in per-os file
 

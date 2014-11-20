@@ -183,7 +183,6 @@ struct TextInputBase : public WidgetBase {
     uint  defaultLineColor = kGUIFg;
     uint  activeLineColor  = kGUIFgActive;
     uint  textColor        = kGUIText;
-    float alpha            = 1.f;
 
     TextInputBase()
     {

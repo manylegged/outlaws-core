@@ -108,6 +108,9 @@ const char* OL_GetUserName(void);
 // return string describing runtime platform and current time, for log
 const char* OL_GetPlatformDateInfo(void);
 
+// open default web browser to selected url
+int OL_OpenWebBrowser(const char* url);
+
 // quit gracefully
 void OL_DoQuit(void);
 

@@ -32,13 +32,13 @@ struct VertexPos {
 
 struct VertexPosTex {
     float3 pos;
-    float2 texCoord;
+    float2 tex;
 };
 
 struct VertexPosColorTex {
     float3 pos;
     uint   color;
-    float2 texCoord;
+    float2 tex;
 };
 
 struct VertexPosColor {
@@ -84,6 +84,12 @@ struct VertexPosTime {
     float3 pos;
     float  time;
     
+};
+
+struct VertexPos2ColorTex {
+    float3 pos;
+    uint color, color1;
+    float2 tex;
 };
 
 
