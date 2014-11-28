@@ -16,6 +16,8 @@ static CFAbsoluteTime gStartTime = 0.0;
 
 double OL_GetCurrentTime()
 {
+    if (gStartTime == 0.0)
+        gStartTime = CFAbsoluteTimeGetCurrent();
     return CFAbsoluteTimeGetCurrent () - gStartTime;
 }
 
@@ -42,6 +44,7 @@ void OL_GetWindowSize(float *pixelWidth, float *pixelHeight, float *pointWidth, 
 
 void OL_SetFullscreen(int fullscreen)
 {
+    fullscreen = fullscreen ? 1 : 0;
     if (fullscreen != gView->fullscreen)
     {
         [[gView window] toggleFullScreen: gView];
@@ -527,8 +530,6 @@ static void sigtermHandler()
 
 - (void) awakeFromNib
 {
-    gStartTime = CFAbsoluteTimeGetCurrent();
-
     // start animation timer
     timer = [NSTimer timerWithTimeInterval:(1.0f/60.0f) target:self selector:@selector(animationTimer:) userInfo:nil repeats:YES];
     [[NSRunLoop currentRunLoop] addTimer:timer forMode:NSDefaultRunLoopMode];

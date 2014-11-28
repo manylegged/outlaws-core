@@ -4,6 +4,8 @@
 #ifndef SDL_OS
 #define SDL_OS
 
+#include <string>
+
 //////////////// implemented in sdl.cpp
 
 // run the main loop
@@ -19,6 +21,10 @@ void sdl_set_scaling_factor(float factor);
 
 // return log file as a string
 string sdl_get_logdata();
+
+// utf8 <-> utf16
+std::string ws2s(const std::wstring& wstr);
+std::wstring s2ws(const std::string& s);
 
 
 /////////////// implemented in per-os file

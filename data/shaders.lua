@@ -388,7 +388,8 @@
        uniform   float CurrentTime;
        uniform   float ToPixels;
        void main(void) {
-           if (CurrentTime >= EndTime) {
+           float size = 1.5 * ToPixels * Offset.x;
+           if (CurrentTime >= EndTime || size < 0.25) {
                gl_Position = vec4(0.0, 0.0, -99999999.0, 1);
                return;
            }
@@ -398,7 +399,7 @@
            float v = deltaT / (EndTime - StartTime);
            DestinationColor = (1.0 - v) * Color;
            Sides = Offset.y;
-           gl_PointSize = 1.5 * ToPixels * Offset.x;
+           gl_PointSize = size;
            gl_Position = Transform * vec4(position, 1);
        }"
       ,

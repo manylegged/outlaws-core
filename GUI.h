@@ -456,6 +456,8 @@ struct OptionSlider : public WidgetBase {
     int         values  = 10;   // total number of states
     int         value   = 0;    // current state
 
+    int         hoveredValue = -1;
+
     uint   defaultBGColor    = kGUIBg;
     uint   pressedBGColor    = kGUIBgActive;
     uint   defaultLineColor  = kGUIFg;
@@ -464,13 +466,16 @@ struct OptionSlider : public WidgetBase {
 
     float2 getSizePoints() const { return size; }
     float  getValueFloat() const { return (float) value / (values-1); }
-    void   setValueFloat(float v) { value = clamp((int)round(v * (values-1)), 0, values-1); }
+    int    floatToValue(float v) const { return clamp((int)round(v * (values-1)), 0, values-1); }
+    void   setValueFloat(float v) { value = floatToValue(v); }
 
     bool HandleEvent(const Event* event, bool *valueChanged);
 
     uint getBGColor() const { return pressed ? pressedBGColor : defaultBGColor; }
     uint getFGColor() const { return ((!active) ? inactiveLineColor :
                                       (hovered) ? hoveredLineColor : defaultLineColor); }
+
+    bool isDiscrete() const { return values < 5; }
     
     void render(const ShaderState &s_);
 };

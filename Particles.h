@@ -99,7 +99,8 @@ public:
     ParticleSystem();
     ~ParticleSystem();
 
-    void render(float3 offset, float time, const ShaderState &ss, const View& view);
+    void setView(const View &view) { m_view = view; }
+    void render(const ShaderState &ss, const View& view, float time, float depth);
     void update(uint step, float time);
     void clear();
     

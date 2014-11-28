@@ -30,9 +30,11 @@
 
 static const int kDefaultFontSize = 12;
 
-static const int kDefaultFont = 0;
-static const int kMonoFont    = 1;
-static const int kTitleFont   = 2;
+enum { kDefaultFont=0,
+       kFallbackFont,
+       kSymbolFont,
+       kMonoFont,
+       kTitleFont };
 
 struct FontStats {
     int    font     = kDefaultFont;

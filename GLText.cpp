@@ -68,8 +68,10 @@ void GLText::load(const string& str, int font_, float size, float pointSize)
 
     if (chars != texChars || fontSize != texFontSize || pointSize != texPointSize)
     {
-        if (texture.width > 0)
+        if (texture.width > 0) {
             glDeleteTextures(1, &texture.texnum);
+            gpuMemoryUsed -= texture.width * texture.height * 4;
+        }
         memset(&texture, 0, sizeof(texture));
 
         if (chars.size())
@@ -80,6 +82,7 @@ void GLText::load(const string& str, int font_, float size, float pointSize)
                 texChars     = chars;
                 texFontSize  = fontSize;
                 texPointSize = pointSize;
+                gpuMemoryUsed += texture.width * texture.height * 4;
             }
             ASSERT(status);
         }
@@ -148,7 +151,7 @@ float2 GLText::getCharSize(uint chr) const
 {
     const char c = vec_at(chars, chr, ' ');
     const FontStats &stat = FontStats::get(font, fontSize);
-    return float2(stat.advancements[c], stat.charMaxSize.y);
+    return float2(stat.advancements[(int)c], stat.charMaxSize.y);
 }
 
 float GLText::getScaledSize(float sizeUnscaled)

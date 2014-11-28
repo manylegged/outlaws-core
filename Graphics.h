@@ -32,6 +32,7 @@
 #include "Vertex.h"
 
 extern uint graphicsDrawCount;
+extern uint gpuMemoryUsed;
 extern bool supports_ARB_Framebuffer_object;
 
 GLenum glReportError1(const char *file, uint line, const char *function);
@@ -234,12 +235,7 @@ public:
     
     ~GLTexture() { clear(); }
 
-    void clear()
-    {
-        if (m_texname)
-            glDeleteTextures(1, &m_texname);
-        m_texname = 0;
-    }
+    void clear();
     
     void setFormat(GLint format) { m_format = format; }
     GLint getFormat() const { return m_format; }
@@ -1752,6 +1748,8 @@ void DrawFilledRect(const ShaderState &data, float2 pos, float2 r, uint bgColor,
 
 void fadeFullScreen(const ShaderState &ss, const View& view, uint color, float alpha);
 void sexyFillScreen(const ShaderState &ss, const View& view, uint color, uint color1, float alpha);
+
+float2 DrawBar(const ShaderState &ss, uint fill, uint line, float alpha, float2 p, float2 s, float a);
 
 void DrawAlignedGrid(ShaderState &wss, const View& view, float size, float z); 
 

@@ -40,8 +40,15 @@ static ZipFileDir& getZipFileDir()
     return zd;
 }
 
+static std::mutex &getZipMutex()
+{
+    static std::mutex m;
+    return m;
+}
+
 void ZF_ClearCached()
 {
+    std::lock_guard<std::mutex> l(getZipMutex());
     ZipFileDir &zfd = getZipFileDir();
     foreach (const ZipFileEntry &ze, zfd)
     {
@@ -69,6 +76,8 @@ static const ZipDirectory *getZipDir(const char* path)
         return NULL;
     
     zipf = OL_PathForFile(zipf.c_str(), "r");
+
+    std::lock_guard<std::mutex> l(getZipMutex());
     ZipDirectory &zd = getZipFileDir()[zipf];
     if (zd.first)
         return &zd;              // already cached
@@ -92,9 +101,12 @@ static const ZipDirectory *getZipDir(const char* path)
 static string loadCurrentFile(unzFile uf)
 {
     string sdata;
-    
+
     unz_file_info64 info;
     if (unzGetCurrentFileInfo64(uf, &info, NULL, 0, NULL, 0, NULL, 0) != UNZ_OK)
+        return sdata;
+
+    if (info.uncompressed_size == 0)
         return sdata;
 
     if (unzOpenCurrentFile(uf) != UNZ_OK)
@@ -170,11 +182,15 @@ string ZF_LoadFile(const char* path)
 int ZF_SaveFile(const char* path, const char* data, size_t size)
 {
     gzFile gzf = openGzip(path, "w");
+    if (!gzf)
+        return false;
     int written = gzwrite(gzf, data, size);
-    if (written != size)
-        ReportMessagef("gzwrite wrote %d of %d bytes", written, (int)size);
     gzclose(gzf);
-    return (written == size) ? 1 : 0;
+    const bool success = written == size;
+    if (!success) {
+        ReportMessagef("gzwrite wrote %d of %d bytes", written, (int)size);
+    }
+    return success;
 }
 
 ZFDirMap ZF_LoadDirectory(const char* path)
@@ -198,9 +214,9 @@ ZFDirMap ZF_LoadDirectory(const char* path)
     zipf = OL_PathForFile(zipf.c_str(), "r");
 
     unzFile uf = openZip(zipf);
-    char buf[512];
     if (!uf)
-        goto done;
+        return dir;
+    char buf[512];
     if (unzGoToFirstFile2(uf, NULL, buf, arraySize(buf), NULL, 0, NULL, 0) != UNZ_OK)
         goto done;
     dir[buf] = loadCurrentFile(uf);
@@ -217,39 +233,53 @@ done:
     return dir;
 }
 
+static string closeDeflate(z_stream &stream, string&& str)
+{
+    int end_stat = deflateEnd(&stream);
+    ASSERTF(end_stat == Z_OK, "(%d): %s", end_stat, stream.msg);
+    return std::move(str);
+}
+
+#define CHECK_DEFLATE(CALL, EXPECT)                                     \
+    if ((stat = (CALL)) != (EXPECT)) {                                  \
+        ASSERT_FAILED(#CALL " == " #EXPECT, " (%d): %s", stat, stream.msg); \
+        return closeDeflate(stream, "");                                \
+    }
+
+static string closeInflate(z_stream &stream, string&& str)
+{
+    int end_stat = inflateEnd(&stream);
+    ASSERTF(end_stat == Z_OK, "(%d): %s", end_stat, stream.msg);
+    return std::move(str);
+}
+
+#define CHECK_INFLATE(CALL, EXPECT)                                     \
+    if ((stat = (CALL)) != (EXPECT)) {                                  \
+        ASSERT_FAILED(#CALL " == " #EXPECT, " (%d): %s", stat, stream.msg); \
+        return closeInflate(stream, "");                                \
+    }
 
 string ZF_Compress(const char* data, size_t size)
 {
     z_stream stream;
-    
+    int stat = 0;
     string dest;
-    dest.resize(size);
 
     stream.next_in = (Bytef *)data;
     stream.avail_in = (uInt)size;
-    stream.next_out = (Bytef*)dest.data();
-    stream.avail_out = (uInt)dest.size();
+    stream.next_out = 0;
+    stream.avail_out = 0;
     stream.zalloc = (alloc_func)0;
     stream.zfree = (free_func)0;
     stream.opaque = (voidpf)0;
     
-    if (deflateInit2(&stream, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 15 + 16, 8, Z_DEFAULT_STRATEGY) != Z_OK)
-    {
-        dest.resize(0);
-        goto done;
-    }
-    
-    if (deflate(&stream, Z_FINISH) != Z_STREAM_END)
-    {
-        dest.resize(0);
-        goto done;
-    }
-
+    CHECK_DEFLATE(deflateInit2(&stream, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 15 + 16, 8, Z_DEFAULT_STRATEGY), Z_OK);
+    dest.resize(deflateBound(&stream, size));
+    stream.next_out = (Bytef*)dest.data();
+    stream.avail_out = (uInt)dest.size();
+    CHECK_DEFLATE(deflate(&stream, Z_FINISH), Z_STREAM_END);
     dest.resize(stream.total_out);
-
-done:
-    deflateEnd(&stream);    
-    return dest;
+    return closeDeflate(stream, std::move(dest));
 }
 
 string ZF_Decompress(const char* data, size_t size)
@@ -257,8 +287,12 @@ string ZF_Decompress(const char* data, size_t size)
     z_stream stream;
     int stat = 0;
 
+    // last dword is uncompressed size, but is only occasionally correct?
+    const uint last_dword = ((uint*) data)[(size/sizeof(uint))-1];
+    const uint uncompressed_size = clamp(last_dword, 2 * (uint)size, 20 * (uint)size);
+    
     string dest;
-    dest.resize(2 * size);
+    dest.resize(uncompressed_size);
 
     stream.next_in = (Bytef *)data;
     stream.avail_in = (uInt)size;
@@ -268,29 +302,17 @@ string ZF_Decompress(const char* data, size_t size)
     stream.zfree = (free_func)0;
     stream.opaque = (voidpf)0;
     
-    if (inflateInit2(&stream, 15 + 16) != Z_OK)
-    {
-        dest.resize(0);
-        goto done;
-    }
+    CHECK_INFLATE(inflateInit2(&stream, 15 + 16), Z_OK);
 
-    while ((stat = inflate(&stream, Z_FINISH)) == Z_OK)
+    while (vec_contains({Z_OK, Z_BUF_ERROR}, (stat = inflate(&stream, Z_FINISH))))
     {
         const int written = stream.next_out - (Bytef*)dest.data();
         dest.resize(2 * dest.size());
         stream.next_out = (Bytef*)dest.data() + written;
         stream.avail_out = dest.size() - written;
     }
-    
-    if (stat != Z_STREAM_END)
-    {
-        dest.resize(0);
-        goto done;
-    }
 
+    CHECK_INFLATE(stat, Z_STREAM_END);
     dest.resize(stream.total_out);
-
-done:
-    deflateEnd(&stream);    
-    return dest;
+    return closeInflate(stream, std::move(dest));
 }

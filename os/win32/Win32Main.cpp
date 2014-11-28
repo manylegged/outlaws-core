@@ -39,23 +39,6 @@
 // iswow64process
 // #include <Wow64apiset.h>
 
-string ws2s(const std::wstring& wstr)
-{
-    typedef std::codecvt_utf8<wchar_t> convert_typeX;
-    std::wstring_convert<convert_typeX, wchar_t> converterX;
-
-    return converterX.to_bytes(wstr);
-}
-
-std::wstring s2ws(const std::string& s)
-{
-    int slength = (int)s.length();
-    int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), slength, 0, 0);
-    std::wstring r(len, L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), slength, &r[0], len);
-    return r;
-}
-
 static const wchar_t* canonicalizePath(const wchar_t* inpt)
 {
     static wchar_t buf[MAX_PATH];

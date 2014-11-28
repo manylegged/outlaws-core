@@ -123,7 +123,6 @@ void ParticleSystem::clear()
     m_addFirst      = ~0;
     m_addPos        = 0;
     m_lastMaxedStep = 0;
-    m_planeZ        = 0;
     m_trails.clear();
 }
 
@@ -246,11 +245,8 @@ void ParticleSystem::update(uint step, float time)
     }
 }
 
-void ParticleSystem::render(float3 origin, float time, const ShaderState &ss, const View& view)
+void ParticleSystem::render(const ShaderState &ss, const View& view, float time, float depth)
 {
-	m_planeZ = origin.z;
-    m_view   = view;
-
     if (m_vertices.size() == 0 || m_maxParticles == 0)
     {
         if (m_vbo.size())
@@ -322,7 +318,7 @@ void ParticleSystem::render(float3 origin, float time, const ShaderState &ss, co
 
     // make sure to glEnable(GL_PROGRAM_POINT_SIZE); or glEnable(GL_VERTEX_PROGRAM_POINT_SIZE);
     m_vbo.Bind();
-    m_program->UseProgram(ss, view, m_planeZ, time);
+    m_program->UseProgram(ss, view, depth, time);
     if (kParticleVerts == 1)
         ss.DrawArrays(GL_POINTS, m_vbo.size());
     else

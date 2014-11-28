@@ -1,6 +1,6 @@
 
 //
-// Logging.h - draw pretty profiling graph overlays
+// FrameLogger.h - draw pretty profiling graph overlays
 // 
 
 // Copyright (c) 2013 Arthur Danskin

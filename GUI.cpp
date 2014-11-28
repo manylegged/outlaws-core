@@ -685,7 +685,7 @@ const TextInputCommandLine::Command *TextInputCommandLine::getCommand(const stri
 {
     const string cmd = str_tolower(abbrev);
     if (map_contains(commands, cmd)) {
-        return map_get_addr(commands, cmd);
+        return map_addr(commands, cmd);
     } else {
         vector<string> possible;
         foreach (const auto& x, commands) {
@@ -693,7 +693,7 @@ const TextInputCommandLine::Command *TextInputCommandLine::getCommand(const stri
                 possible.push_back(x.first);
         }
         if (possible.size() == 1) {
-            return map_get_addr(commands, possible[0]);
+            return map_addr(commands, possible[0]);
         }
         return NULL;
     }
@@ -974,16 +974,16 @@ bool OptionSlider::HandleEvent(const Event* event, bool *valueChanged)
     const float2 sz = 0.5f*size;
     hovered = pressed || intersectPointRectangle(event->pos, position, sz);
     pressed = (hovered && event->type == Event::MOUSE_DOWN) ||
-              (pressed && event->type == Event::MOUSE_DRAGGED);
-
+              (!isDiscrete() && pressed && event->type == Event::MOUSE_DRAGGED);
+    
     bool handled = pressed || (hovered && event->isMouse());
 
+    hoveredValue = hovered ? floatToValue(((event->pos.x - position.x) / size.x) + 0.5f) : -1;
+
     if (pressed) {
-        const int lastv = value;
-        const float v = ((event->pos.x - position.x) / size.x) + 0.5f;
-        setValueFloat(v);
-        if (valueChanged)
-            *valueChanged = (value != lastv);
+        if (valueChanged && (value != hoveredValue))
+            *valueChanged = true;
+        value = hoveredValue;
     }
 
     return handled;
@@ -991,15 +991,33 @@ bool OptionSlider::HandleEvent(const Event* event, bool *valueChanged)
 
 void OptionSlider::render(const ShaderState &s_)
 {
-    ShaderState ss = s_;
     const float2 sz = 0.5f * size;
-
-    ss.color32(getFGColor(), alpha);
-    ShaderUColor::instance().DrawLine(ss, position - float2(sz.x, 0.f), 
-                                      position + float2(sz.x, 0.f));
-    const float w = max(sz.x / values, 5.f);
-    DrawButton(&ss, position + float2((size.x - 2.f * w) * (getValueFloat() - 0.5f), 0.f),
-               float2(w, sz.y), getBGColor(), getFGColor(), alpha);
+    const float  w  = max(sz.x / values, 5.f);
+    const uint   fg = getFGColor();
+    const uint   bg = getBGColor();
+    
+    if (isDiscrete())
+    {
+        DMesh::Handle h(theDMesh());
+        float2 pos = position - justX(sz.x - w);
+        for (int i=0; i<values; i++)
+        {
+            PushButton(&h.mp.tri, &h.mp.line, pos, float2(w, sz.y) - kButtonPad,
+                       (i == value) ? bg : 0x0,
+                       (i == hoveredValue) ? hoveredLineColor : defaultLineColor,
+                       alpha);
+            pos.x += 2.f * w;
+        }
+        h.Draw(s_);
+    }
+    else
+    {
+        ShaderState ss = s_;
+        ss.color32(fg, alpha);
+        ShaderUColor::instance().DrawLine(ss, position - justX(sz), position + justX(sz));
+        const float of = (size.x - 2.f * w) * (getValueFloat() - 0.5f);
+        DrawButton(&ss, position + float2(of, 0.f), float2(w, sz.y), bg, fg, alpha);
+    }
 }
 
 

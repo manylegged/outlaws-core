@@ -46,6 +46,7 @@ bool isGLExtensionSupported(const char *name)
 }
 
 uint graphicsDrawCount = 0;
+uint gpuMemoryUsed = 0;
 
 vector<GLRenderTexture*> GLRenderTexture::s_bound;
 
@@ -64,6 +65,16 @@ static const char* textureFormatToString(GLint fmt)
         CASE_STR(GL_RGB16F_ARB);
 #endif
         default: return "<unknown>";
+    }
+}
+
+static int textureFormatBytesPerPixel(GLint fmt)
+{
+    switch (fmt) {
+    case GL_RGB16F_ARB:
+    case GL_RGBA16F_ARB: return 2 * 4;
+    default:
+        return 4;
     }
 }
 
@@ -113,6 +124,7 @@ void GLRenderTexture::Generate(ZFlags zflags)
         glTexImage2D(GL_TEXTURE_2D, 0, m_format, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, 0);
     }
     glReportError();
+    gpuMemoryUsed += width * height * textureFormatBytesPerPixel(m_format);
 
     glBindFramebuffer(GL_FRAMEBUFFER, m_fbname);
 
@@ -127,6 +139,8 @@ void GLRenderTexture::Generate(ZFlags zflags)
         glReportError();
         glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, m_zrbname);
         glReportError();
+
+        gpuMemoryUsed += width * height * 2;
     }
     else
     {
@@ -157,10 +171,14 @@ void GLRenderTexture::clear()
 {
     if (m_fbname)
         glDeleteFramebuffers(1, &m_fbname);
-    if (m_texname)
+    if (m_texname) {
+        gpuMemoryUsed -= m_size.x * m_size.y * textureFormatBytesPerPixel(m_format);
         glDeleteTextures(1, &m_texname);
-    if (m_zrbname)
+    }
+    if (m_zrbname) {
+        gpuMemoryUsed -= m_size.x * m_size.y * 2;
         glDeleteRenderbuffers(1, &m_zrbname);
+    }
     if (m_fbname || m_texname || m_zrbname) {
         glReportError();
     }
@@ -256,6 +274,16 @@ void GLRenderTexture::UnbindFramebuffer() const
     }
 }
 
+void GLTexture::clear()
+{
+    if (m_texname)
+    {
+        gpuMemoryUsed -= m_texsize.x * m_texsize.y * textureFormatBytesPerPixel(m_format);
+        glDeleteTextures(1, &m_texname);
+    }
+    m_texname = 0;
+}
+
 void GLTexture::DrawFSBegin(ShaderState& ss) const
 {
     glDepthMask(GL_FALSE);
@@ -279,9 +307,13 @@ void GLTexture::DrawFSEnd() const
 
 void GLTexture::TexImage2D(int2 size, GLenum format, const uint *data)
 {
-    if (!m_texname)
+    if (!m_texname) {
         glGenTextures(1, &m_texname);
+    } else {
+        gpuMemoryUsed -= m_texsize.x * m_texsize.y * textureFormatBytesPerPixel(m_format);
+    }
     glBindTexture(GL_TEXTURE_2D, m_texname);
+
 #if OPENGL_ES
     m_texsize = float2(roundUpPower2(size.x), roundUpPower2(size.y));
     glTexImage2D(GL_TEXTURE_2D, 0, format,
@@ -304,6 +336,7 @@ void GLTexture::TexImage2D(int2 size, GLenum format, const uint *data)
 
     glBindTexture(GL_TEXTURE_2D, 0);
     m_size = float2(size);
+    gpuMemoryUsed += m_texsize.x * m_texsize.y * textureFormatBytesPerPixel(m_format);
 }
 
 void GLTexture::SetTexWrap(bool enable)
@@ -487,7 +520,7 @@ GLint ShaderProgramBase::getAttribLocation(const char *name) const
     if (!isLoaded())
         return -1;
     GLint v = glGetAttribLocation(m_programHandle, name);
-    ASSERT(v >= 0);
+    ASSERTF(v >= 0, "%s", name);
     glReportError();
     return v;
 }
@@ -497,7 +530,7 @@ GLint ShaderProgramBase::getUniformLocation(const char *name) const
     if (!isLoaded())
         return -1;
     GLint v = glGetUniformLocation(m_programHandle, name);
-    ASSERT(v >= 0);
+    ASSERTF(v >= 0, "%s", name);
     glReportError();
     return v;
 }
@@ -728,6 +761,20 @@ void DrawFilledRect(const ShaderState &s_, float2 pos, float2 rad, uint bgColor,
     ss.color32(fgColor,alpha);
     ShaderUColor::instance().DrawLineRect(ss, pos, rad);
 }
+
+float2 DrawBar(const ShaderState &s1, uint fill, uint line, float alpha, float2 p, float2 s, float a)
+{
+    ShaderState ss = s1;
+    a = clamp(a, 0.f, 1.f);
+    ss.color(fill, alpha);
+    const float2 wp = p + float2(1.f, -1.f);
+    const float2 ws = s - float2(2.f);
+    ShaderUColor::instance().DrawQuad(ss, wp, wp + a * justX(ws), wp - justY(ws), wp + float2(a*ws.x, -ws.y));
+    ss.color(line, alpha);
+    ShaderUColor::instance().DrawLineQuad(ss, p, p + justX(s), p - justY(s), p + flipY(s));
+    return s;
+}
+
 
 void PushRect(TriMesh<VertexPosColor>* triP, LineMesh<VertexPosColor>* lineP, float2 pos, float2 r, 
              uint bgColor, uint fgColor, float alpha)

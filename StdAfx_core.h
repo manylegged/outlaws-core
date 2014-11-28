@@ -75,8 +75,9 @@ inline void ReportMessagef(const char *format, ...)
 #define UNUSED(x) (void)(x)
 
 // assertions are enabled even in release builds
-#define ASSERT(X) (__builtin_expect(!(X), 0) ? OLG_OnAssertFailed(__FILE__, __LINE__, __func__, #X, "") : 0)
-#define ASSERTF(X, Y, ...) (__builtin_expect(!(X), 0) ? OLG_OnAssertFailed(__FILE__, __LINE__, __func__, #X, (Y), __VA_ARGS__) : 0)
+#define ASSERT_FAILED(X, Y, ...) OLG_OnAssertFailed(__FILE__, __LINE__, __func__, (X), (Y), ## __VA_ARGS__)
+#define ASSERT(X) (__builtin_expect(!(X), 0) ? ASSERT_FAILED(#X, "") : 0)
+#define ASSERTF(X, Y, ...) (__builtin_expect(!(X), 0) ? ASSERT_FAILED(#X, Y, __VA_ARGS__) : 0)
 
 #if defined(DEBUG) || defined(DEVELOP)
 #  define WARN(X) ReportMessagef X

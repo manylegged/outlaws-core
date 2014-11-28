@@ -474,12 +474,14 @@ private:
     mutable vector<float2> offsets;
 
     int samples = 0;
+    int scale = 0;
 
     float getBlurOffset(int sample) const;
+    void LoadTheProgram() { LoadShader(samples, scale); }
 
 public:
 
-    void LoadTheProgram();
+    void LoadShader(int smpls, int scl);
 
     void UseProgram(const ShaderState &ss, const VertexPosTex *ptr, const OutlawTexture &ot) const;
 

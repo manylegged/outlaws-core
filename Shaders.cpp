@@ -154,18 +154,24 @@ float ShaderBlur::getBlurOffset(int sample) const
 
 const ShaderBlur &ShaderBlur::instance(int radius)
 {
-    static vector<ShaderBlur*> shaders;
-    ShaderBlur* &sdr = vec_index(shaders, radius);
-    if (!sdr) {
-        sdr = new ShaderBlur();
-        sdr->samples = max(1, int(floor(radius * OL_GetBackingScaleFactor() / 2.f)));
-        sdr->LoadTheProgram();
+    static vector<ShaderBlur*> shaders(20, NULL);
+    // radius is in points
+    const int scale = OL_GetCurrentBackingScaleFactor();
+    const int idx = max(1, int(floor(radius * scale / 2.f)));
+    ShaderBlur* &sdr = vec_index(shaders, idx);
+    if (!sdr || sdr->scale != scale) {
+        if (!sdr)
+            sdr = new ShaderBlur();
+        sdr->LoadShader(idx, scale);
     }
     return *sdr;
 }
 
-void ShaderBlur::LoadTheProgram()
+void ShaderBlur::LoadShader(int smpls, int scl)
 {
+    samples = smpls;
+    scale = scl;
+    
     // reference:
     // http://www.realtimerendering.com/blog/quick-gaussian-filtering/
     // http://prideout.net/archive/bloom/

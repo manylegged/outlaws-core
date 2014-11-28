@@ -2,12 +2,16 @@
 // Outlaws.h platform implementation for SDL
 
 #include "StdAfx.h"
+
+#include <locale>
+#include <codecvt>
+
 #include "Graphics.h"
 #include "sdl_inc.h"
 #include "sdl_os.h"
 
-static int2         g_screenSize;
-static uint         g_sdl_flags      = 0;
+static SDL_Rect     g_savedWindowPos;
+static int2         g_windowSize; // size of current window
 static float        g_scaling_factor = 1.f;
 static SDL_Window*  g_displayWindow  = NULL;
 static bool         g_quitting       = false;
@@ -16,9 +20,56 @@ static const char*  g_logpath        = NULL;
 static string       g_logdata;
 static bool         g_openinglog = false;
 
+
+string ws2s(const std::wstring& wstr)
+{
+    typedef std::codecvt_utf8<wchar_t> convert_typeX;
+    std::wstring_convert<convert_typeX, wchar_t> converterX;
+
+    return converterX.to_bytes(wstr);
+}
+
+std::wstring s2ws(const std::string& s)
+{
+    int slength = (int)s.length();
+#if WIN32
+    int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), slength, 0, 0);
+    std::wstring r(len, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), slength, &r[0], len);
+#else
+    std::mbtowc(NULL, 0, 0); // reset the conversion state
+    const char* end = s.c_str() + s.size();
+    int ret;
+    std::wstring r
+    for (wchar_t wc; (ret = std::mbtowc(&wc, s.c_str(), end-s.c_str())) > 0; ptr+=ret) {
+        r += wc;
+    }
+#endif
+    return r;
+}
+
+void SetWindowResizable(SDL_Window *win, SDL_bool resizable)
+{
+    SDL_SysWMinfo info;
+    SDL_VERSION(&info.version);
+    if (!SDL_GetWindowWMInfo(g_displayWindow, &info))
+        return;
+
+#if WIN32
+    HWND hwnd = info.info.win.window;
+    DWORD style = GetWindowLong(hwnd, GWL_STYLE);
+    if (resizable)
+        style |= WS_THICKFRAME;
+    else
+        style &= ~WS_THICKFRAME;
+    SetWindowLong(hwnd, GWL_STYLE, style);
+#endif
+}
+
 void os_errormessage(const char* msg)
 {
     SDL_SysWMinfo info;
+    SDL_VERSION(&info.version);
     SDL_GetWindowWMInfo(g_displayWindow, &info);
     return os_errormessage1(msg, g_logdata, &info);
 }
@@ -138,19 +189,68 @@ void OL_ReportMessage(const char *str_)
     SDL_RWwrite(g_logfile, str.c_str(), str.size(), 1);
 }
 
-void OL_SetFullscreen(int fullscreen)
-{
-    const uint flags = fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0;
-    if (flags != g_sdl_flags) {
-        ReportSDL("set fullscreen = %s", fullscreen ? "true" : "false");
-        SDL_SetWindowFullscreen(g_displayWindow, flags);
-        g_sdl_flags = flags;
-    }
-}
-
 int OL_GetFullscreen(void)
 {
-    return g_sdl_flags == SDL_WINDOW_FULLSCREEN_DESKTOP;
+    const int flags = SDL_GetWindowFlags(g_displayWindow);
+    if (flags&SDL_WINDOW_BORDERLESS)
+        return 1;
+    else if (flags&(SDL_WINDOW_FULLSCREEN_DESKTOP|SDL_WINDOW_FULLSCREEN))
+        return 2;
+    else
+        return 0;
+}
+
+void OL_SetFullscreen(int fullscreen)
+{
+    const int wasfs = OL_GetFullscreen();
+    if (fullscreen != wasfs)
+    {
+        // disable / save old state
+        if (wasfs == 0)
+        {
+            SDL_GetWindowPosition(g_displayWindow, &g_savedWindowPos.x, &g_savedWindowPos.y);
+            SDL_GetWindowSize(g_displayWindow, &g_savedWindowPos.w, &g_savedWindowPos.h);
+        }
+        else if (wasfs == 1)
+        {
+            ReportSDL("Disabled Fake Fullscreen %d,%d/%dx%d",
+                      g_savedWindowPos.x, g_savedWindowPos.y, g_savedWindowPos.w, g_savedWindowPos.h);
+            SDL_SetWindowBordered(g_displayWindow, SDL_TRUE);
+            SetWindowResizable(g_displayWindow, SDL_TRUE);
+        }
+        else if (wasfs == 2)
+        {
+            ReportSDL("Disabled Fullscreen");
+            SDL_SetWindowFullscreen(g_displayWindow, 0);
+        }
+
+        // enable new state
+        if (fullscreen == 0)
+        {
+            SDL_SetWindowSize(g_displayWindow, g_savedWindowPos.w, g_savedWindowPos.h);
+            SDL_SetWindowPosition(g_displayWindow, g_savedWindowPos.x, g_savedWindowPos.y);
+        }
+        else if (fullscreen == 1)
+        {
+            int idx = SDL_GetWindowDisplayIndex(g_displayWindow);
+            SDL_Rect bounds;
+            SDL_GetDisplayBounds(idx, &bounds);
+                
+            ReportSDL("Enabled Fake Fullscreen %d,%d/%dx%d (from %d,%d/%dx%d)",
+                      bounds.x, bounds.y, bounds.w, bounds.h,
+                      g_savedWindowPos.x, g_savedWindowPos.y, g_savedWindowPos.w, g_savedWindowPos.h);
+
+            SDL_SetWindowBordered(g_displayWindow, SDL_FALSE);
+            SetWindowResizable(g_displayWindow, SDL_FALSE);
+            SDL_SetWindowPosition(g_displayWindow, bounds.x, bounds.y);
+            SDL_SetWindowSize(g_displayWindow, bounds.w, bounds.h);
+        }
+        else if (fullscreen == 2)
+        {
+            ReportSDL("Enabled Fullscreen");
+            SDL_SetWindowFullscreen(g_displayWindow, SDL_WINDOW_FULLSCREEN_DESKTOP);
+        }
+    }
 }
 
 double OL_GetCurrentTime()
@@ -260,11 +360,11 @@ void sdl_set_scaling_factor(float factor)
 
 void OL_GetWindowSize(float *pixelWidth, float *pixelHeight, float *pointWidth, float *pointHeight)
 {
-    *pixelWidth = g_screenSize.x;
-    *pixelHeight = g_screenSize.y;
+    *pixelWidth = g_windowSize.x;
+    *pixelHeight = g_windowSize.y;
 
-    *pointWidth = g_screenSize.x / g_scaling_factor;
-    *pointHeight = g_screenSize.y / g_scaling_factor;
+    *pointWidth = g_windowSize.x / g_scaling_factor;
+    *pointHeight = g_windowSize.y / g_scaling_factor;
 }
 
 void OL_SetWindowSizePoints(int w, int h)
@@ -341,7 +441,7 @@ struct OutlawTexture OL_LoadTexture(const char* fname)
                   texture_format, GL_UNSIGNED_BYTE, surface->pixels);
 
     //gluBuild2DMipmaps( GL_TEXTURE_2D, nOfColors, surface->w, surface->h,
-    //               texture_format, GL_UNSIGNED_BYTE, surface->pixels );
+    //               texture_format, GL_UNSIGNED_BYTE, surface->pixels);
  
     SDL_FreeSurface(surface);
     glReportError();
@@ -413,6 +513,9 @@ static std::mutex                g_fontMutex;
 
 TTF_Font* getFont(int fontName, float size)
 {
+    if (!g_fontNames[fontName])
+        return NULL;
+
     std::lock_guard<std::mutex> l(g_fontMutex);
 
     const int   isize = int(round(size * g_scaling_factor));
@@ -467,9 +570,9 @@ float OL_FontHeight(int fontName, float size)
 }
 
 struct Strip {
-    TTF_Font *font;
-    int       pixel_width;
-    string    text;
+    TTF_Font     *font;
+    int           pixel_width;
+    std::wstring  text;
 };
 
 
@@ -489,17 +592,19 @@ int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int _font,
     bool last_was_fallback = false;
     int line_pixel_width = 0;
 
+    std::wstring ustr = s2ws(str);
+
     // split string up by lines, fallback font
     for (int i=0; true; i++)
     {
-        const int chr = str[i];
+        const int chr = ustr[i];
 
         int pixel_width, pixel_height;
 
         if (chr == '\n' || chr == '\0')
         {
-            Strip st = { font, -1, string(&str[last_strip_start], i - last_strip_start) };
-            TTF_SizeText(font, st.text.c_str(), &pixel_width, &pixel_height);
+            Strip st = { font, -1, std::wstring(&ustr[last_strip_start], i - last_strip_start) };
+            TTF_SizeUNICODE(font, (const Uint16 *) st.text.c_str(), &pixel_width, &pixel_height);
             strips.push_back(std::move(st));
 
             text_pixel_width = max(text_pixel_width, line_pixel_width + pixel_width);
@@ -513,28 +618,44 @@ int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int _font,
         else if (!TTF_GlyphIsProvided(font, chr))
         {
             if (!last_was_fallback && i > last_strip_start) {
-                string strip(&str[last_strip_start], i - last_strip_start);
-                TTF_SizeText(font, strip.c_str(), &pixel_width, &pixel_height);
+                std::wstring strip(&ustr[last_strip_start], i - last_strip_start);
+                TTF_SizeUNICODE(font, (const Uint16 *)strip.c_str(), &pixel_width, &pixel_height);
                 line_pixel_width += pixel_width;
-                Strip st = { font, pixel_width, string(&str[last_strip_start], i - last_strip_start) };
+                Strip st = { font, pixel_width, std::wstring(&ustr[last_strip_start], i - last_strip_start) };
                 strips.push_back(std::move(st));
             }
 
-            if (!fallback_font)
-                fallback_font = getFont(0, size);
+            if (!fallback_font || !TTF_GlyphIsProvided(fallback_font, chr))
+            {
+                for (int j=0; j<arraySize(g_fontNames); j++)
+                {
+                    if (j == _font)
+                        continue;
+                    TTF_Font *fnt = getFont(j, size);
+                    if (!fnt)
+                        break;
+                    if (TTF_GlyphIsProvided(fnt, chr))
+                    {
+                        fallback_font = fnt;
+                        break;
+                    }
+                }
+                if (!fallback_font)
+                    fallback_font = font; // just use boxes, oh well...
+            }
 
-            TTF_SizeText(fallback_font, string(1, chr).c_str(), &pixel_width, &pixel_height);
+            TTF_SizeUNICODE(fallback_font, (const Uint16 *)std::wstring(1, chr).c_str(), &pixel_width, &pixel_height);
             line_pixel_width += pixel_width;
             last_strip_start = i+1;
 
-            if (last_was_fallback)
+            if (last_was_fallback && strips.back().font == fallback_font)
             {
                 strips.back().pixel_width += pixel_width;
                 strips.back().text += chr;
             }
             else
             {
-                Strip st = { fallback_font, pixel_width, string(1, chr) };
+                Strip st = { fallback_font, pixel_width, std::wstring(1, chr) };
                 strips.push_back(std::move(st));
             }
             last_was_fallback = true;
@@ -545,7 +666,7 @@ int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int _font,
         }
     }
 
-    const int font_pixel_height = TTF_FontLineSkip(font);
+    const int font_pixel_height = max(TTF_FontLineSkip(font), fallback_font ? TTF_FontLineSkip(fallback_font) : 0);
     const int text_pixel_height = newlines * font_pixel_height;
 
     SDL_Surface *intermediary = SDL_CreateRGBSurface(0, text_pixel_width, text_pixel_height, 32, 0x00ff0000, 0x0000ff00, 0x000000ff, 0xff000000);
@@ -560,7 +681,7 @@ int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int _font,
     {
         if (strips[i].text.size())
         {
-            SDL_Surface* initial = TTF_RenderText_Blended(strips[i].font, strips[i].text.c_str(), color);
+            SDL_Surface* initial = TTF_RenderUNICODE_Blended(strips[i].font, (const Uint16 *)strips[i].text.c_str(), color);
             if (initial)
             {
                 SDL_SetSurfaceBlendMode(initial, SDL_BLENDMODE_NONE);
@@ -604,7 +725,7 @@ static int keysymToKey(const SDL_Keysym &keysym)
 {
     const SDL_Keycode sym = keysym.sym;
     
-    if (keysym.mod & (KMOD_SHIFT|KMOD_CAPS) ) {
+    if (keysym.mod & (KMOD_SHIFT|KMOD_CAPS)) {
         // a -> A
         if ('a' <= sym && sym <= 'z')
             return sym - 32;
@@ -732,14 +853,14 @@ static void HandleEvents()
                 break;
             case SDL_WINDOWEVENT_SIZE_CHANGED:
                 ReportSDL("Window %d size changed", evt.window.windowID);
-                g_screenSize.x = evt.window.data1;
-                g_screenSize.y = evt.window.data2;
-                glViewport(0, 0, g_screenSize.x, g_screenSize.y);
+                g_windowSize.x = evt.window.data1;
+                g_windowSize.y = evt.window.data2;
+                glViewport(0, 0, g_windowSize.x, g_windowSize.y);
                 break;
             case SDL_WINDOWEVENT_RESIZED:
-                g_screenSize.x = evt.window.data1;
-                g_screenSize.y = evt.window.data2;
-                glViewport(0, 0, g_screenSize.x, g_screenSize.y);
+                g_windowSize.x = evt.window.data1;
+                g_windowSize.y = evt.window.data2;
+                glViewport(0, 0, g_windowSize.x, g_windowSize.y);
                 ReportSDL("Window %d resized to %dx%d",
                         evt.window.windowID, evt.window.data1,
                         evt.window.data2);
@@ -799,7 +920,7 @@ static void HandleEvents()
             e.dx = evt.motion.xrel / g_scaling_factor;
             e.dy = evt.motion.yrel / g_scaling_factor;
             e.x = evt.motion.x / g_scaling_factor;
-            e.y = (g_screenSize.y - evt.motion.y) / g_scaling_factor;
+            e.y = (g_windowSize.y - evt.motion.y) / g_scaling_factor;
             const Uint8 state = evt.motion.state;
             const int key = ((state&SDL_BUTTON_LMASK) ? 0 : 
                              (state&SDL_BUTTON_RMASK) ? 1 :
@@ -825,7 +946,7 @@ static void HandleEvents()
         case SDL_MOUSEBUTTONUP:
         {
             e.x = evt.button.x / g_scaling_factor;
-            e.y = (g_screenSize.y - evt.button.y) / g_scaling_factor;
+            e.y = (g_windowSize.y - evt.button.y) / g_scaling_factor;
             e.type = evt.type == SDL_MOUSEBUTTONDOWN ? OLEvent::MOUSE_DOWN : OLEvent::MOUSE_UP;
             switch (evt.button.button)
             {
@@ -931,7 +1052,7 @@ void OL_ThreadEndIteration(int i)
 
 void OL_WarpCursorPosition(float x, float y)
 {
-    SDL_WarpMouseInWindow(g_displayWindow, (int)x * g_scaling_factor, g_screenSize.y - (int) (y * g_scaling_factor));
+    SDL_WarpMouseInWindow(g_displayWindow, (int)x * g_scaling_factor, g_windowSize.y - (int) (y * g_scaling_factor));
 }
 
 const char* OL_ReadClipboard()
@@ -949,8 +1070,8 @@ const char* OL_ReadClipboard()
 
 static void setupInitialResolution()
 {
-    g_screenSize.x = 960;
-    g_screenSize.y = 600;
+    g_windowSize.x = 960;
+    g_windowSize.y = 600;
 
     const int displayCount = SDL_GetNumVideoDisplays();
 
@@ -961,10 +1082,10 @@ static void setupInitialResolution()
         ReportSDL("Display %d of %d is %dx%d@%dHz", i+1, displayCount, mode.w, mode.h, mode.refresh_rate);
 
         if (i == 0)
-            g_screenSize = int2(mode.w, mode.h);
-        g_screenSize = min(g_screenSize, int2(0.9f * float2(mode.w, mode.h)));
+            g_windowSize = int2(mode.w, mode.h);
+        g_windowSize = min(g_windowSize, int2(0.9f * float2(mode.w, mode.h)));
     }
-    ReportSDL("Initial window size is %dx%d", g_screenSize.x, g_screenSize.y);
+    ReportSDL("Initial window size is %dx%d", g_windowSize.x, g_windowSize.y);
 }
 
 #define COPY_GL_EXT_IMPL(X) if (!(X) && (X ## EXT)) { ReportSDL("Using " #X "EXT"); (X) = (X ## EXT); } else if (!(X)) { ReportSDL(#X " Not found!"); }
@@ -1054,8 +1175,11 @@ int sdl_os_main(int argc, const char **argv)
     setupInitialResolution();
     g_displayWindow = SDL_CreateWindow(OLG_GetName(), 
                                        SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
-                                       g_screenSize.x, g_screenSize.y,
+                                       g_windowSize.x, g_windowSize.y,
                                        SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+
+    SDL_GetWindowPosition( g_displayWindow, &g_savedWindowPos.x, &g_savedWindowPos.y );
+    SDL_GetWindowSize( g_displayWindow, &g_savedWindowPos.w, &g_savedWindowPos.h );
 
 #if OL_LINUX
     const char* spath = OL_PathForFile("linux/reassembly_icon.png", "r");
@@ -1090,7 +1214,7 @@ int sdl_os_main(int argc, const char **argv)
         const double start = OL_GetCurrentTime();
         HandleEvents();
         OLG_Draw();
-        const double frameTime = OL_GetCurrentTime() - start;
+        const double frameTime = max(0.0, OL_GetCurrentTime() - start);
         if (frameTime < kFrameTime) {
             SDL_Delay((kFrameTime - frameTime) * 1000.0);
         }

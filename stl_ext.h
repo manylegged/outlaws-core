@@ -426,6 +426,13 @@ inline bool vec_contains(const V &v, const T& t)
     return std::find(std::begin(v), end, t) != end;
 }
 
+template <typename T>
+inline bool vec_contains(const std::initializer_list<T> &v, const T& t)
+{
+    auto end = std::end(v);
+    return std::find(std::begin(v), end, t) != end;
+}
+
 template <typename V, typename Fun>
 inline void vec_foreach(V& vec, Fun& fun)
 {
@@ -1026,7 +1033,7 @@ inline const V &map_get(const std::map<std::string, V> &m, const char* key, cons
 }
 
 template <typename M>
-inline const typename M::mapped_type *map_get_addr(const M &m, const typename M::key_type& key)
+inline const typename M::mapped_type *map_addr(const M &m, const typename M::key_type& key)
 {
     const typename M::const_iterator it = m.find(key);
     return (it != m.end()) ? &it->second : NULL;

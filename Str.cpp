@@ -309,6 +309,8 @@ std::string str_demangle(const char *str)
     string name = result;
     free(result);
     name = str_replace(name, "std::__1::", "std::");
+    name = str_replace(name, "unsigned long long", "uint64");
+    name = str_replace(name, "basic_string<char, std::char_traits<char>, std::allocator<char> >", "string");
     return name;
 }
 
