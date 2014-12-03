@@ -343,38 +343,27 @@ inline std::string str_word_rewrap(const std::string &str, size_t width)
 }
 
 
-inline std::string str_capitalize(const char* str)
+std::string str_capitalize(const char* str);
+
+inline std::string str_capitalize(const std::string &s)
 {
-    std::string s = str;
-    s[0] = toupper(s[0]);
-    return s;
+    return str_capitalize(s.c_str());
 }
 
-inline std::string str_capitalize(std::string &&s)
-{
-    s[0] = toupper(s[0]);
-    return s;
-}
 
-inline std::string str_toupper(const char* str)
+template <typename T>
+std::string str_toupper(const T &str)
 {
-    std::string s = str;
+    std::string s = str_tostr(str);
     for (uint i=0; i<s.size(); i++)
         s[i] = std::toupper(s[i]);
     return s;
 }
 
-inline std::string str_tolower(const char* str)
+template <typename T>
+std::string str_tolower(const T &str)
 {
-    std::string s = str;
-    for (uint i=0; i<s.size(); i++)
-        s[i] = std::tolower(s[i]);
-    return s;
-}
-
-inline std::string str_tolower(const std::string &str)
-{
-    std::string s = str;
+    std::string s = str_tostr(str);
     for (uint i=0; i<s.size(); i++)
         s[i] = std::tolower(s[i]);
     return s;
@@ -393,6 +382,16 @@ inline bool str_contains(const std::string& str, const char *substr)
 inline bool str_contains(const char* str, const char* substr)
 {
     return strstr(str, substr) != NULL;
+}
+
+inline bool str_contains(const char* str, char chr)
+{
+    return strchr(str, chr) != NULL;
+}
+
+inline bool str_contains(const std::string &str, char chr)
+{
+    return str.find(chr) != std::string::npos;
 }
 
 long chr_unshift(long chr);
@@ -463,6 +462,7 @@ inline std::string str_interpolate_variables(const std::string &str_, const Fun&
 
 
 std::string str_urlencode(const std::string &value);
+std::string str_urldecode(const std::string &value);
 
 std::string str_time_format(float seconds);
 

@@ -33,6 +33,9 @@ static DEFINE_CVAR(float, kNavCanRotateThreshold, 0.1);
 
 static DEFINE_CVAR(bool, kNavThrustWhileTurning, true);
 
+static DEFINE_CVAR(float, kNavRotKp, 1.f);
+static DEFINE_CVAR(float, kNavRotKd, 0.3f);
+
 
 #define USE_EIGEN 0
 #if USE_EIGEN
@@ -245,22 +248,22 @@ float sNav::angAccelForTarget(float destAngle, float destAngVel, bool snap) cons
     if (snap)
         rotInt = 0.f;
 
-    const float angleError  = getAngleError(destAngle, state.angle);
+    const float angleError  = distanceAngles(destAngle, state.angle);
     const float maxAngAccel = fabsf(angleError > 0.f ? maxPosAngAccel : maxNegAngAccel);
     
     if (maxAngAccel < epsilon)
         return 0.f;
 
-    const float approxRotPeriod = 2.f * sqrt(2.f * M_PIf / maxAngAccel);
+    const float approxRotPeriod = 2.f * sqrt(M_TAOf / maxAngAccel);
 
     const bool snappy = !kNavThrustWhileTurning || snap || (dest.dims&SN_SNAPPY);
     
-    const float kp=1.5f, kd=-0.3f*approxRotPeriod, ki=snappy ? 0.f : 0.01f;
+    const float kd=-kNavRotKd*approxRotPeriod, ki=snappy ? 0.f : 0.01f;
     const float angVelError = state.angVel - destAngVel;
-    const float angAction = (kp * angleError) + (kd * angVelError) + (ki * rotInt);
+    const float angAction = (kNavRotKp * angleError) + (kd * angVelError) + (ki * rotInt);
 
     if (ki > 0.f)
-        rotInt = clamp_mag(rotInt + angleError, 0.f, angleError * (kp / ki));
+        rotInt = clamp_mag(rotInt + angleError, 0.f, angleError * (kNavRotKp / ki));
 
     return clamp(angAction, -1.f, 1.f);
 }

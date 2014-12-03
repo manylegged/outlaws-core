@@ -393,7 +393,7 @@ static bool ignoreShaderLog(const char* buf)
     return (buf == kNoErrors ||
             str_contains(buf, "Validation successful") ||
             str_contains(buf, "successfully compiled") ||
-            str_contains(buf, "Fragment shader(s) linked, vertex shader(s) linked. "));
+            str_contains(buf, "shader(s) linked."));
 }
 
 static void checkProgramInfoLog(GLuint prog, const char* name)
@@ -520,7 +520,7 @@ GLint ShaderProgramBase::getAttribLocation(const char *name) const
     if (!isLoaded())
         return -1;
     GLint v = glGetAttribLocation(m_programHandle, name);
-    ASSERTF(v >= 0, "%s", name);
+    ASSERTF(v >= 0, "%s::%s", m_name.c_str(), name);
     glReportError();
     return v;
 }
@@ -530,7 +530,7 @@ GLint ShaderProgramBase::getUniformLocation(const char *name) const
     if (!isLoaded())
         return -1;
     GLint v = glGetUniformLocation(m_programHandle, name);
-    ASSERTF(v >= 0, "%s", name);
+    ASSERTF(v >= 0, "%s::%s", m_name.c_str(), name);
     glReportError();
     return v;
 }
@@ -578,23 +578,34 @@ bool ShaderProgramBase::LoadProgram(const char* name, const char* shared, const 
         return false;
 
     if (m_programHandle) {
+        DPRINT(SHADER, ("Deleting old %s", name));
         glDeleteProgram(m_programHandle);
     }
     
     m_programHandle = glCreateProgram();
+    ASSERTF(m_programHandle, "%s", m_name.c_str());
+    if (!m_programHandle)
+        return false;
+    glGetError();
     glAttachShader(m_programHandle, vert);
+    glReportError();
     glAttachShader(m_programHandle, frag);
+    glReportError();
     
     glLinkProgram(m_programHandle);
+    glReportError();
 
     glDeleteShader(vert);
+    glReportError();
     glDeleteShader(frag);
+    glReportError();
 
     checkProgramInfoLog(m_programHandle, name);
     
     GLint linkSuccess = 0;
     glGetProgramiv(m_programHandle, GL_LINK_STATUS, &linkSuccess);
     if (linkSuccess == GL_FALSE) {
+        DPRINT(SHADER, ("Compiling %s failed", name));
         glDeleteProgram(m_programHandle);
         m_programHandle = 0;
         return false;
@@ -870,7 +881,7 @@ void PostProc::Draw(bool bindFB)
     // nothing to do if bindFB and no blur
 }
 
-ShaderState View::getWorldShaderState(float3 offset) const
+ShaderState View::getWorldShaderState() const
 {
     // +y is up in world coordinates
     const float2 s = 0.5f * sizePoints * float(scale);
@@ -894,7 +905,7 @@ ShaderState View::getWorldShaderState(float3 offset) const
     ws.uTransform = proj * view;
 #endif
 
-    ws.translate(offset);
+    ws.translateZ(z);
     return ws;
 }
 

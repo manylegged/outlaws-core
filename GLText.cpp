@@ -28,6 +28,7 @@
 #include "StdAfx.h"
 #include "GLText.h"
 #include "Shaders.h"
+#include "Unicode.h"
 
 static DEFINE_CVAR(float, kTextScaleHeight, IS_TABLET ? 320.f : 720.f);
 
@@ -139,24 +140,23 @@ float2 GLText::Draw(const ShaderState &s_, float2 p, Align align, int font, uint
 
 float GLText::getCharStart(uint chr) const
 {
-    chr = min(chr, (uint)chars.size());
-    float pos = 0;
-    const FontStats &stat = FontStats::get(font, fontSize);
-    for (uint i=0; i<chr; i++)
-        pos += vec_at(stat.advancements, (size_t)chars[i]);
-    return pos;
+    if (chr == 0)
+        return 0.f;
+    const GLText *st = get(font, fontSize, chars.substr(0, chr));
+    return st->getSize().x;
 }
     
 float2 GLText::getCharSize(uint chr) const
 {
-    const char c = vec_at(chars, chr, ' ');
-    const FontStats &stat = FontStats::get(font, fontSize);
-    return float2(stat.advancements[(int)c], stat.charMaxSize.y);
+    string cr = (chr < chars.size()) ? utf8_substr(chars, chr, 1) : "a";
+    const GLText *st = get(font, fontSize, cr);
+    return st->getSize();
 }
 
 float GLText::getScaledSize(float sizeUnscaled)
 {
-    return sizeUnscaled * globals.windowSizePoints.y / kTextScaleHeight;
+    const float2 ws = clamp_aspect(globals.windowSizePoints, kAspectMinMax.x, kAspectMinMax.y);
+    return sizeUnscaled * ws.y / kTextScaleHeight;
 }
 
 const GLText* GLText::get(int font, float size, const string& s)

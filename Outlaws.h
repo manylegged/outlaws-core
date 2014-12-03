@@ -9,6 +9,8 @@
 // specific parts.
 // Game functions are prefixed OLG_ for Outlaws Game
 // OS functions are prefixed OL_
+//
+// const char* is always UTF-8
 
 
 #ifndef __Outlaws__Outlaws__
@@ -33,9 +35,9 @@ extern "C"
 void OLG_Draw(void);
     
 enum OLModKeys {
-    OShiftKey = 0xF74B,
-    OControlKey = 0xF74C,
-    OAltKey = 0xF74D,
+    OShiftKey = 0xF610,
+    OControlKey = 0xF611,
+    OAltKey = 0xF612,
 };
 
 struct OLEvent {

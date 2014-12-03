@@ -27,6 +27,8 @@
 #include "StdAfx.h"
 #include "GUI.h"
 
+#include "Shaders.h"
+#include "Unicode.h"
 
 bool ButtonBase::HandleEvent(const Event* event, bool* isActivate, bool* isPress)
 {
@@ -216,6 +218,13 @@ void TextInputBase::setText(const char* text, bool setSize)
     }
 }
 
+static void cursor_move_utf8(const string& line, int2& cursor, int adjust)
+{
+    cursor.x += adjust;
+    while (0 <= cursor.x && cursor.x < line.size() && utf8_iscont(line[cursor.x]))
+        cursor.x += adjust;
+}
+
 static bool forward_char(int2& cursor, deque<string> &lines, int offset)
 {
     if (offset == -1)
@@ -226,8 +235,9 @@ static bool forward_char(int2& cursor, deque<string> &lines, int offset)
 
             cursor.y--;
             cursor.x = (int)lines[cursor.y].size();
-        } else
-            cursor.x--;
+        } else {
+            cursor_move_utf8(lines[cursor.y], cursor, -1);
+        }
     }
     else if (offset == 1)
     {
@@ -237,7 +247,7 @@ static bool forward_char(int2& cursor, deque<string> &lines, int offset)
             cursor.y++;
             cursor.x = 0;
         } else
-            cursor.x++; 
+            cursor_move_utf8(lines[cursor.y], cursor, +1);
     }
     return true;
 }
@@ -251,24 +261,24 @@ static void forward_when(int2& cursor, deque<string> &lines, int offset, int (*p
            forward_char(cursor, lines, offset));
 }
 
-static char delete_char(int2& cursor, deque<string> &lines)
+static bool delete_char(int2& cursor, deque<string> &lines)
 {
     if (0 > cursor.y || cursor.y >= lines.size()) {
         return '\0';
     } else if (cursor.x > 0) {
-        cursor.x--;
-        const char ret = lines[cursor.y][cursor.x];
-        lines[cursor.y].erase(cursor.x, 1);
-        return ret;
+        string &line = lines[cursor.y];
+        cursor_move_utf8(line, cursor, -1);
+        line = utf8_erase(line, cursor.x, 1);
+        return true;
     } else if (cursor.y > 0) {
         int nx = lines[cursor.y-1].size();
         lines[cursor.y - 1].append(lines[cursor.y]);
         lines.erase(lines.begin() + cursor.y);
         cursor.y--;
         cursor.x = nx;
-        return '\n';
+        return true;
     } else {
-        return '\0';
+        return false;
     }
 }
 
@@ -367,8 +377,8 @@ bool TextInputBase::HandleEvent(const Event* event, bool *textChanged)
         {
             if (fixedSize && lines.size() >= sizeChars.y)
                 return false;
-            string s = lines[cursor.y].substr(cursor.x);
-            lines[cursor.y].erase(cursor.x);
+            string s = utf8_substr(lines[cursor.y], cursor.x);
+            lines[cursor.y] = utf8_erase(lines[cursor.y], cursor.x);
             lines.insert(lines.begin() + cursor.y + 1, s);
             if (textChanged)
                 *textChanged = true;
@@ -380,19 +390,22 @@ bool TextInputBase::HandleEvent(const Event* event, bool *textChanged)
             startChars.y -= sizeChars.y;
             startChars.y = clamp(startChars.y, 0, max(0, (int)lines.size() - sizeChars.y));
             return true;
-        case NSPageDownFunctionKey: 
+        case NSPageDownFunctionKey:
             startChars.y += sizeChars.y;
             startChars.y = clamp(startChars.y, 0, max(0, (int)lines.size() - sizeChars.y));
             return true;
         default:
-            if (event->key < 256 && std::isprint(event->key)) {
-                lines[cursor.y].insert(cursor.x, 1, event->key);
-                cursor.x++;
-                if (textChanged)
-                    *textChanged = true;
-                break;
-            }
-            return false;
+        {
+            string str = event->toUTF8();
+            if (str.empty())
+                return false;
+            ASSERT(cursor.x == utf8_advance(lines[cursor.y], cursor.x));
+            lines[cursor.y].insert(cursor.x, str);
+            cursor.x += str.size();
+            if (textChanged)
+                *textChanged = true;
+            break;
+        }
         }
 
         if (lines.size() == 0)
@@ -525,11 +538,11 @@ void TextInputBase::render(const ShaderState &s_)
             const float2 size  = tx->getCharSize(cursor.x);
             s1.translate(float2(spos, 0));
             s1.color(textColor, alpha);
-            ShaderUColor::instance().DrawRectCorners(s1, float2(0), size);
+            ShaderUColor::instance().DrawRectCorners(s1, float2(0), float2(size.x, charHeight));
             if (cursor.x < lines[i].size()) {
                 GLText::DrawStr(s1, float2(0.f), GLText::LEFT, kMonoFont,
                                 ALPHA_OPAQUE|GetContrastWhiteBlack(textColor),
-                                textSize, lines[i].substr(cursor.x, 1));
+                                textSize, utf8_substr(lines[i], cursor.x, 1));
             }
         }
         
@@ -1006,6 +1019,8 @@ void OptionSlider::render(const ShaderState &s_)
                        (i == value) ? bg : 0x0,
                        (i == hoveredValue) ? hoveredLineColor : defaultLineColor,
                        alpha);
+            if (i == value)
+                GLText::DrawStr(s_, pos, GLText::MID_CENTERED, MultAlphaAXXX(kGUIText, alpha), 12, "X");
             pos.x += 2.f * w;
         }
         h.Draw(s_);
@@ -1037,6 +1052,10 @@ void TabWindow::TabButton::render(DMesh &mesh) const
     mesh.line.PushStrip(v, arraySize(v));
 }
 
+float TabWindow::getTabHeight() const
+{
+    return 2.f * kPadDist + 1.5f * GLText::getScaledSize(textSize); 
+}
 
 void TabWindow::render(const ShaderState &ss)
 {
@@ -1080,7 +1099,7 @@ void TabWindow::render(const ShaderState &ss)
         h.mp.line.color32(defaultLineColor, alpha);
         h.mp.line.PushStrip(vl, arraySize(vl));
 
-        h.mp.Draw(ss, ShaderColor::instance(), ShaderColor::instance());
+        h.Draw(ss);
 
         foreach (const TabButton& but, buttons)
         {
@@ -1355,3 +1374,30 @@ void TextBox::Draw(const ShaderState& ss1, float2 point, const string& text) con
     st->render(&ss);
 }
 
+bool OverlayMessage::isVisible() const
+{
+    return message.size() && (globals.renderTime < startTime + totalTime);
+}
+
+
+bool OverlayMessage::setMessage(const string& msg, uint clr)
+{
+    std::lock_guard<std::mutex> l(mutex);
+    bool changed = (msg != message) || (globals.renderTime > startTime + totalTime);
+    message = msg;
+    startTime = globals.renderTime;
+    if (clr)
+        color = clr;
+    return changed;
+}
+
+
+void OverlayMessage::render(const ShaderState &ss)
+{
+    std::lock_guard<std::mutex> l(mutex);
+    if (!isVisible())
+        return;
+    const float a = alpha * inv_lerp(startTime + totalTime, startTime, (float)globals.renderTime);
+    size = GLText::DrawStr(ss, position, GLText::MID_CENTERED,
+                           SetAlphaAXXX(color, a), textSize, message);
+}

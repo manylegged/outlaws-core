@@ -39,6 +39,14 @@
 // iswow64process
 // #include <Wow64apiset.h>
 
+string ws2s(const std::wstring& wstr)
+{
+    typedef std::codecvt_utf8<wchar_t> convert_typeX;
+    std::wstring_convert<convert_typeX, wchar_t> converterX;
+
+    return converterX.to_bytes(wstr);
+}
+
 static const wchar_t* canonicalizePath(const wchar_t* inpt)
 {
     static wchar_t buf[MAX_PATH];

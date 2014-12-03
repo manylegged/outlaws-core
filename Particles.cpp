@@ -165,7 +165,7 @@ struct ShaderParticles : public IParticleShader, public ShaderBase<ShaderParticl
 
     typedef ParticleSystem::Particle Particle;
 
-    void UseProgram(const ShaderState& ss, const View& view, float depth, float time) const
+    void UseProgram(const ShaderState& ss, const View& view, float time) const
     {
         const Particle* ptr = NULL;
         UseProgramBase(ss, &ptr->position, ptr);
@@ -178,7 +178,7 @@ struct ShaderParticles : public IParticleShader, public ShaderBase<ShaderParticl
 
         glUniform1f(currentTime, time);
         if (kParticleVerts == 1)
-            glUniform1f(ToPixels, view.getWorldPointSizeInPixels(depth));
+            glUniform1f(ToPixels, view.getWorldPointSizeInPixels());
         glReportError();
     }
 
@@ -245,7 +245,7 @@ void ParticleSystem::update(uint step, float time)
     }
 }
 
-void ParticleSystem::render(const ShaderState &ss, const View& view, float time, float depth)
+void ParticleSystem::render(const ShaderState &ss, const View& view, float time)
 {
     if (m_vertices.size() == 0 || m_maxParticles == 0)
     {
@@ -318,7 +318,7 @@ void ParticleSystem::render(const ShaderState &ss, const View& view, float time,
 
     // make sure to glEnable(GL_PROGRAM_POINT_SIZE); or glEnable(GL_VERTEX_PROGRAM_POINT_SIZE);
     m_vbo.Bind();
-    m_program->UseProgram(ss, view, depth, time);
+    m_program->UseProgram(ss, view, time);
     if (kParticleVerts == 1)
         ss.DrawArrays(GL_POINTS, m_vbo.size());
     else

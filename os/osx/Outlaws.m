@@ -364,9 +364,6 @@ static NSString *g_fontNames[10];
 
 static NSFont* getFont(int fontName, float size)
 {
-    // NSString *name = ((fontName == OF_Sans) ? @"DejaVu Sans" :
-    //                   (fontName == OF_Serif) ? @"DejaVu Serif" :
-    //                   @"DejaVu Sans Mono");
     NSFont* font = [NSFont fontWithName:g_fontNames[fontName] size:size];
     if (!font) {
         LogMessage([NSString stringWithFormat:@"Failed to load font %d '%@' size %g", fontName, g_fontNames[fontName], size]);
@@ -411,7 +408,7 @@ float OL_FontHeight(int fontName, float size)
         lm = [[NSLayoutManager alloc] init];
     }
     NSFont* font = getFont(fontName, size);
-    return [lm defaultLineHeightForFont: font];
+    return 0.9f * [lm defaultLineHeightForFont: font];
 }
 
 int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int fontName, float maxw, float maxh)

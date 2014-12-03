@@ -311,7 +311,7 @@ static void doMouseEvent(enum EventType type, NSEvent *theEvent)
     memset(&e, 0, sizeof(e));
     e.type = SCROLL_WHEEL;
     e.dx = [theEvent deltaX];
-    e.dy = -[theEvent deltaY];
+    e.dy = [theEvent deltaY];
 
     // actually repect this! "natural" scrolling is "inverted" here.
     // BOOL inverted = [theEvent isDirectionInvertedFromDevice];

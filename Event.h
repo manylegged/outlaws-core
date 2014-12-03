@@ -25,7 +25,10 @@
 #ifndef CORE_EVENT_H
 #define CORE_EVENT_H
 
-enum : int {
+// special character codes, borrowed from OSX
+// these are in the unicode private use area (E000—F8FF) so no worries about collisions
+// 
+enum : uint {
     NSEnterCharacter                = 0x0003,
     NSBackspaceCharacter            = 0x0008,
     NSTabCharacter                  = 0x0009,
@@ -111,14 +114,18 @@ enum : int {
     NSHelpFunctionKey = 0xF746,
     NSModeSwitchFunctionKey = 0xF747,
 
-    LeftMouseButton = 0xF748,
-    RightMouseButton = 0xF749,
-    MiddleMouseButton = 0xF74A,
+    SpecialKeyMax,
+
+    LeftMouseButton = 0xF600,
+    RightMouseButton,
+    MiddleMouseButton,
+    MouseButtonFour,
+    MouseButtonFive,
 
     // OShiftKey, OControlKey, and OAltKey from Outlaws.h go here
     
     // gamepad buttons
-    GamepadA = 0xF74E,
+    GamepadA = 0xF620,
     GamepadB,
     GamepadX,
     GamepadY,
@@ -154,7 +161,18 @@ enum : int {
     GamepadAxisTriggerLeftY,
     GamepadAxisTriggerRightY,
 
-    SpecialKeyCount
+    Keypad0,
+    Keypad1,
+    Keypad2,
+    Keypad3,
+    Keypad4,
+    Keypad5,
+    Keypad6,
+    Keypad7,
+    Keypad8,
+    Keypad9,
+
+    EventKeyMax
 };
 
 
@@ -172,6 +190,7 @@ struct Event {
     float2 vel;
 
     string toString() const;
+    string toUTF8() const;
     bool isMouse() const;
     bool isKey() const;
 
@@ -243,10 +262,11 @@ inline bool isGamepadKey(int key)
 }
 
 class KeyState {
-    bool ascii[256];
-    bool function[SpecialKeyCount - NSUpArrowFunctionKey];
-    bool misc;
-    float2 gamepadAxis[GamepadAxisCount + 1];
+    bool                          ascii[256];
+    bool                          function[SpecialKeyMax - NSUpArrowFunctionKey];
+    bool                          device[EventKeyMax - LeftMouseButton];
+    std::unordered_map<int, bool> misc;
+    float2                        gamepadAxis[GamepadAxisCount + 1];
 
 public:
 

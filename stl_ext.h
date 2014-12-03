@@ -57,6 +57,7 @@
 template <typename T> T or_(const T& a, const T& b) { return a ? a : b; }
 template <typename T> T or_(const T& a, const T& b, const T& c) { return a ? a : b ? b : c; }
 template <typename T> T or_(const T& a, const T& b, const T& c, const T& d) { return a ? a : b ? b : c ? c : d; }
+inline std::string or_(const std::string &a, const std::string &b) { return a.size() ? a : b; }
 
 template <typename S, typename T> 
 T and_(const S& a, const T& b) { return a ? b : T(a); }
@@ -78,21 +79,8 @@ template <typename T>
 T max(const T& a, const T& b, const T& c, const T& d) { return max(max(a, b), max(c, d)); }
 
 // return bit index of leading 1 (0x80000000 == 0x80030100 == 31, 0x1 == 0, 0x0 == -1)
-inline int findLeadingOne(uint v, int i=0)
-{
-    if (v&0xffff0000) { i += 16; v >>= 16; }
-    if (v&0xff00)     { i +=  8; v >>=  8; }
-    if (v&0xf0)       { i +=  4; v >>=  4; }
-    if (v&0xc)        { i +=  2; v >>=  2; }
-    if (v&0x2)        { return i + 1;      }
-    if (v&0x1)        { return i;          }
-    return -1;
-}
-
-inline int findLeadingOne(uint64 v)
-{
-    return (v&0xffffffff00000000L) ? findLeadingOne((uint) (v>>32), 32) : findLeadingOne((uint)v, 0);
-}
+int findLeadingOne(uint v, int i=0);
+int findLeadingOne(uint64 v);
 
 template <typename T>
 inline void setBits(T &bits, const T &flag, bool val)
@@ -298,27 +286,20 @@ struct Watchable;
 
 struct watch_ptr_base {
 
-    watch_ptr_base() : ptr(NULL), next(NULL), prev(NULL ) {}
-    
-    const Watchable* ptr;
-    watch_ptr_base*  next;
-    watch_ptr_base*  prev;
+    const Watchable* ptr  = NULL;
+    watch_ptr_base*  next = NULL;
+    watch_ptr_base*  prev = NULL;
+
+protected:
+    void unlink();
+    void link(const Watchable* p);
 };
 
 struct Watchable : public IDeletable {
 
     mutable watch_ptr_base watch_list;
 
-    void nullReferencesTo()
-    {
-        for (watch_ptr_base* watcher=watch_list.next; watcher != NULL; watcher = watcher->next)
-        {
-            watcher->ptr = NULL;
-            if (watcher->prev)
-                watcher->prev->next = NULL;
-            watcher->prev = NULL;
-        }
-    }
+    void nullReferencesTo();
 
     void onQueueForDelete()
     {
@@ -333,36 +314,8 @@ struct Watchable : public IDeletable {
 
 // smart pointer that automatically becomes NULL when it's pointee is deleted
 template <typename T>
-class watch_ptr : public watch_ptr_base {
+struct watch_ptr : public watch_ptr_base {
 
-    void unlink()
-    {
-        if (next)
-            next->prev = prev;
-        if (prev)
-            prev->next = next;
-        next = NULL;
-        prev = NULL;
-
-        ptr  = NULL;
-    }
-
-    void link(const Watchable* p)
-    {
-        ptr = p;
-        ASSERT(prev == NULL);
-        ASSERT(next == NULL);
-        if (p != NULL)
-        {
-            prev = &p->watch_list;
-            next = p->watch_list.next;
-            if (p->watch_list.next)
-                p->watch_list.next->prev = this;
-            p->watch_list.next = this;
-        }
-    }
-
-public:
     ~watch_ptr() 
     {
         unlink();
@@ -1148,8 +1101,8 @@ inline void copy_value(M mb, M me, O o)
 // set ///////////////////////////////////////////////////////////////////////////////
 
 
-template <typename K>
-inline bool set_contains(const std::set<K> &m, const K& key)
+template <typename S>
+inline bool set_contains(const S &m, const typename S::value_type& key)
 {
     return m.count(key) != 0;
 }
@@ -1204,40 +1157,6 @@ inline void slist_clear(T *node)
 
 ////////////////////////////////////////////////////////////////////////////////////
 
-#if _WIN32
-//
-// Usage: SetThreadName (-1, "MainThread");
-//
-const DWORD MS_VC_EXCEPTION = 0x406D1388;
-
-#pragma pack(push,8)
-typedef struct tagTHREADNAME_INFO
-{
-    DWORD dwType; // Must be 0x1000.
-    LPCSTR szName; // Pointer to name (in user addr space).
-    DWORD dwThreadID; // Thread ID (-1=caller thread).
-    DWORD dwFlags; // Reserved for future use, must be zero.
-} THREADNAME_INFO;
-#pragma pack(pop)
-
-inline void SetThreadName(DWORD dwThreadID, const char* threadName)
-{
-    THREADNAME_INFO info;
-    info.dwType = 0x1000;
-    info.szName = threadName;
-    info.dwThreadID = dwThreadID;
-    info.dwFlags = 0;
-
-    __try
-    {
-        RaiseException(MS_VC_EXCEPTION, 0, sizeof(info) / sizeof(ULONG_PTR), (ULONG_PTR*)&info);
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER)
-    {
-    }
-}
-#endif
-
 inline std::mutex& _thread_name_mutex()
 {
     static std::mutex m;
@@ -1250,46 +1169,17 @@ inline std::map<uint64, std::string> &_thread_name_map()
     return names;
 }
 
-inline void set_current_thread_name(const char* name)
-{
-    uint64 tid = 0;
-#if _WIN32
-    tid = GetCurrentThreadId();
-    SetThreadName(tid, name);
-#elif __APPLE__
-    pthread_threadid_np(pthread_self(), &tid);
-    pthread_setname_np(name);
-#else
-    tid = pthread_self();
-    pthread_setname_np(pthread_self(), name);
-#endif
-
-    {
-        std::lock_guard<std::mutex> l(_thread_name_mutex());
-        _thread_name_map()[tid] = name;
-    }
-
-    ReportMessagef("Thread 0x%llx is named '%s'", tid, name);
-}
+void set_current_thread_name(const char* name);
 
 #if OL_USE_PTHREADS
-inline pthread_t create_pthread(void *(*start_routine)(void *), void *arg)
-{
-    int            err = 0;
-    pthread_attr_t attr;
-    pthread_t      thread;
 
-    err = pthread_attr_init(&attr);
-    if (err)
-        ReportMessagef("pthread_attr_init error: %s", strerror(err));
-    err = pthread_attr_setstacksize(&attr, 8 * 1024 * 1024);
-    if (err)
-        ReportMessagef("pthread_attr_setstacksize error: %s", strerror(err));
-    err = pthread_create(&thread, &attr, start_routine, arg);
-    if (err)
-        ReportMessagef("pthread_create error: %s", strerror(err));
-    return thread;
-}
+pthread_t create_pthread(void *(*start_routine)(void *), void *arg);
+void thread_join(pthread_t &thread);
+
+#else
+
+void thread_join(std::thread& thread);
+
 #endif
 
 
@@ -1340,28 +1230,9 @@ class MemoryPool {
 public:
 
     // allocate a pool containing CNT elements of SZ bytes each
-    MemoryPool(size_t sz, size_t cnt) : element_size(sz), count(cnt)
-    {
-        do {
-            pool = (char*)malloc(count * element_size);
-            ReportMessagef("Allocating MemoryPool(%d, %d) %.1fMB: %s", 
-                           (int)element_size, (int)count, 
-                           (element_size * count) / (1024.0 * 1024.0),
-                           pool ? "OK" : "FAILED");
-            if (!pool)
-                count /= 2;
-        } while (count && !pool);
-        first = (Chunk*) pool;
-        for (int i=0; i<count-1; i++) {
-            ((Chunk*) &pool[i * element_size])->next = (Chunk*) &pool[(i+1) * element_size];
-        }
-    }
+    MemoryPool(size_t sz, size_t cnt);
     
-    ~MemoryPool()
-    {
-        free(pool);
-        delete next;
-    }
+    ~MemoryPool();
 
     size_t getCount() const { return count; }
     size_t getUsed() const { return used; }
@@ -1381,52 +1252,11 @@ public:
         return (T*)(pool + count * element_size);
     }
 
-    bool isInPool(const void *pt) const
-    {
-        const char *ptr = (char*) pt;
-        const size_t index = (ptr - pool) / element_size;
-        if (index >= count)
-            return next ? next->isInPool(pt) : false;
-        ASSERT(pool + (index  * element_size) == ptr);
-        return true;
-    }
+    bool isInPool(const void *pt) const;
 
-    // return a block of element_size bytes
-    void* allocate()
-    {
-        std::lock_guard<std::mutex> l(mutex);
+    void* allocate();           // return a block of element_size bytes
+    void deallocate(void *ptr); // free a block returned by allocate()
 
-        if (!first) {
-            if (!next) {
-                next = new MemoryPool(element_size, count);
-            }
-            return next->allocate();
-        }
-
-        Chunk *chunk = first;
-        first = first->next;
-        used++;
-        return (void*) chunk;
-    }
-
-    // free a block returned by allocate()
-    void deallocate(void *ptr)
-    {
-        std::lock_guard<std::mutex> l(mutex);
-
-        if (!isInPool(ptr))
-        {
-            ASSERT(next);
-            if (next)
-                next->deallocate(ptr);
-            return;
-        }
-
-        Chunk *chunk = (Chunk*) ptr;
-        chunk->next = first;
-        first = chunk;
-        used--;
-    }
 
     friend void* operator new(size_t nbytes, MemoryPool& mp)
     {
@@ -1440,6 +1270,15 @@ public:
     }
     
 };
+
+template <typename T>
+size_t SizeOf(const T& val) { return sizeof(T); }
+
+template <typename T>
+size_t SizeOf(const T* ptr) { return ptr? SizeOf(*ptr) : 0; }
+
+template <typename T>
+size_t SizeOf(const std::vector<T> &vec) { return SizeOf(vec[0]) * vec.capacity(); }
 
 
 #endif

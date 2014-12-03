@@ -11,7 +11,7 @@ struct ShaderParticles;
 
 struct IParticleShader : public ShaderProgramBase {
 
-    virtual void UseProgram(const ShaderState& ss, const View& view, float depth, float time) const=0;
+    virtual void UseProgram(const ShaderState& ss, const View& view, float time) const=0;
 };
 
 void ShaderParticlesInstance();
@@ -57,10 +57,10 @@ private:
     vector<Particle>        m_vertices;
     IndexBuffer<uint>       m_ibo;
     VertexBuffer<Particle>  m_vbo;
-    int                     m_addFirst;
-    int                     m_addPos;
-    uint                    m_lastMaxedStep;
-    float                   m_planeZ;
+    int                     m_addFirst = 0;
+    int                     m_addPos = 0;
+    uint                    m_lastMaxedStep = -1;
+    float                   m_planeZ = 0.f;
     std::mutex              m_mutex;
     View                    m_view;
     vector<ParticleTrail>   m_trails;
@@ -70,18 +70,18 @@ private:
 
 protected:
 
-    uint                   m_simStep;
-    float                  m_simTime;
+    uint                   m_simStep = 0;
+    float                  m_simTime = 0.f;
     int                    m_maxParticles = 0;
     
     bool visible(const float3 &pos, float size) const
     {
-        return forceVisible || m_view.intersectCircle(float3(pos.x, pos.y, pos.z + m_planeZ), 10.f * size);
+        return forceVisible || m_view.intersectCircle(float3(pos.x, pos.y, pos.z + m_planeZ), 5.f * size + 100.f);
     }
 
     bool visible(const float2 &pos, float size) const
     {
-        return forceVisible || m_view.intersectCircle(float3(pos.x, pos.y, m_planeZ), 10.f * size);
+        return forceVisible || m_view.intersectCircle(float3(pos.x, pos.y, m_planeZ), 5.f * size + 100.f);
     }
 
     void setTime(Particle &p, float t);
@@ -100,7 +100,7 @@ public:
     ~ParticleSystem();
 
     void setView(const View &view) { m_view = view; }
-    void render(const ShaderState &ss, const View& view, float time, float depth);
+    void render(const ShaderState &ss, const View& view, float time);
     void update(uint step, float time);
     void clear();
     

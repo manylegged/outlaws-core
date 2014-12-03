@@ -25,7 +25,7 @@
 
 #include "StdAfx.h"
 #include "Event.h"
-
+#include "Unicode.h"
 
 string Event::toString() const
 {
@@ -71,13 +71,15 @@ bool Event::isKey() const
 
 bool& KeyState::operator[](int c)
 {
-    if (0 <= c && c < 256)
+    if (0 <= c && c < 256) {
         return ascii[c];
-    if (NSUpArrowFunctionKey <= c && c < SpecialKeyCount)
+    } else if (NSUpArrowFunctionKey <= c && c < SpecialKeyMax)
         return function[c - NSUpArrowFunctionKey];
-    else
-        ASSERT(0);
-    return misc;
+    else if (LeftMouseButton <= c && c < EventKeyMax) {
+        return device[c - LeftMouseButton];
+    } else {
+        return misc[c];
+    }
 }
 
 
@@ -85,7 +87,7 @@ void KeyState::reset()
 {
     memset(ascii, false, sizeof(ascii));
     memset(function, false, sizeof(function));
-    misc = false;
+    misc.clear();
     foreach (float2& ax, gamepadAxis)
         ax = float2();
 }
@@ -189,6 +191,18 @@ Event KeyState::OnEvent(const Event* event)
     return revent;
 }
 
+static string keyToUTF8(int key)
+{
+    if (key < 255) {
+        return std::isprint(key) ? str_format("%c", key) : string();
+    } else if ((NSUpArrowFunctionKey <= key && key < SpecialKeyMax) ||
+               (LeftMouseButton <= key && key < EventKeyMax)) {
+        return "";
+    } else { 
+        return UCS2_to_UTF8(key);
+    }
+}
+
 static string rawKeyToString(int key)
 {
     switch (key) 
@@ -196,6 +210,8 @@ static string rawKeyToString(int key)
     case LeftMouseButton:          return "Left Mouse";
     case RightMouseButton:         return "Right Mouse";
     case MiddleMouseButton:        return "Middle Mouse";
+    case MouseButtonFour:          return "Mouse4";
+    case MouseButtonFive:          return "Mouse5";
     case NSUpArrowFunctionKey:     return "Up";
     case NSDownArrowFunctionKey:   return "Down";
     case NSRightArrowFunctionKey:  return "Right";
@@ -256,12 +272,18 @@ static string rawKeyToString(int key)
     case GamepadRightRight:        return "Right Stick Right";
     case GamepadTriggerLeft:       return "Left Trigger";
     case GamepadTriggerRight:      return "Right Trigger";
+    case Keypad0:                  return "Keypad 0";
+    case Keypad1:                  return "Keypad 1";
+    case Keypad2:                  return "Keypad 2";
+    case Keypad3:                  return "Keypad 3";
+    case Keypad4:                  return "Keypad 4";
+    case Keypad5:                  return "Keypad 5";
+    case Keypad6:                  return "Keypad 6";
+    case Keypad7:                  return "Keypad 7";
+    case Keypad8:                  return "Keypad 8";
+    case Keypad9:                  return "Keypad 9";
     case 0:                        return " ";
-    default:
-        if (key <= 255 && isprint(key)) 
-            return str_format("%c", key);
-        else
-            return str_format("%#x", key);
+    default:                       return or_(keyToUTF8(key), str_format("%#x", key));
     }
 }
 
@@ -275,3 +297,9 @@ string keyToString(int key)
     if (key&MOD_SHFT) str += "Shft-";
     return str + rawKeyToString(key&~MOD_MASK);
 }
+
+string Event::toUTF8() const
+{
+    return keyToUTF8(key);
+}
+

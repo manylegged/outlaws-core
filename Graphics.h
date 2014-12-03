@@ -376,9 +376,10 @@ struct View {
     float2 position;            // in world coordinates
     float2 velocity;            // change in position
     float  scale = 1.f;               // larger values are more zoomed out
+    float  z = 0.f;                   // depth of camera (related to scale)
     float  angle = 0.f;               // rotation is applied after position
     float  zfar = 3500.f;
-
+    
     // interpolation support
     friend View operator+(const View& a, const View& b)
     {
@@ -399,43 +400,34 @@ struct View {
         return r;
     }
 
-    float getScale(float z) const 
+    float getScale() const 
     {
         return ((0.5f * sizePoints.y * scale) - z) / (0.5f * sizePoints.y); 
     }
 
+    // Z is in worldspace
     float2 toWorld(float2 p) const
     {
         // FIXME angle
         p -= 0.5f * sizePoints;
-        p *= scale;
+        p *= getScale();
         p += position;
         return p;
     }
 
-    // Z is in worldspace
-    float2 toWorld(float2 p, float z) const
-    {
-        // FIXME angle
-        p -= 0.5f * sizePoints;
-        p *= getScale(z);
-        p += position;
-        return p;
-    }
-
-    float2 toScreen(float2 p, float z=0.f) const
+    float2 toScreen(float2 p) const
     {
         double2 dp = double2(p);
         dp -= position;
         dp = rotate(dp, double(-angle));
-        dp /= getScale(z);
+        dp /= getScale();
         dp += 0.5f * sizePoints;
         return float2(dp);
     }
 
     float getPointSize() const { return (sizePixels.y / sizePoints.y); }
 
-    float2 toScreenPixels(float2 p, float z=0.f) const { return toScreen(p, z) * (sizePixels / sizePoints); }
+    float2 toScreenPixels(float2 p) const { return toScreen(p) * (sizePixels / sizePoints); }
 
     void adjust(const View& v)
     {
@@ -445,21 +437,21 @@ struct View {
         angle    = v.angle;
     }
 
-    float  toScreenSize(float  p, float z=0.f) const { return p / getScale(z); }
-    float2 toScreenSize(float2 p, float z=0.f) const { return p / getScale(z); }
+    float  toScreenSize(float  p) const { return p / getScale(); }
+    float2 toScreenSize(float2 p) const { return p / getScale(); }
 
-    float  toScreenSizePixels(float  p, float z=0.f) const { return toScreenSize(p, z) * getPointSize(); }
-    float2 toScreenSizePixels(float2 p, float z=0.f) const { return toScreenSize(p, z) * getPointSize(); }
+    float  toScreenSizePixels(float  p) const { return toScreenSize(p) * getPointSize(); }
+    float2 toScreenSizePixels(float2 p) const { return toScreenSize(p) * getPointSize(); }
     
     float2 getAspect() const { return float2(sizePoints.x / sizePoints.y, 1.f); }
 
-    float  toWorldSize(float  p, float z=0.f) const { return p * getScale(z); }
-    float2 toWorldSize(float2 p, float z=0.f) const { return p * getScale(z); }
+    float  toWorldSize(float  p) const { return p * getScale(); }
+    float2 toWorldSize(float2 p) const { return p * getScale(); }
 
     // get size of screen in world coordinates
-    float2 getWorldSize(float z) const 
+    float2 getWorldSize(float z2=0.2) const
     {
-        float2 zPlaneSize = (scale * sizePoints) - 2.f * z * getAspect();
+        float2 zPlaneSize = (scale * sizePoints) - 2.f * (z+z2) * getAspect();
         return max(zPlaneSize, float2(0));
     }
 
@@ -487,12 +479,11 @@ struct View {
     bool intersectCircle(const float3 &a, float r) const
     {
         float2 zPlaneSize = (0.5f * scale * sizePoints) - getAspect() * a.z;
-        return intersectCircleRectangle(float2(a.x, a.y), r, 
-                                        position, zPlaneSize);
+        return intersectCircleRectangle(float2(a.x, a.y), r, position, zPlaneSize);
     }
 
-    float getScreenPointSizeInPixels(float depth) const { return sizePixels.x / ((sizePoints.x) - depth); }
-    float getWorldPointSizeInPixels(float depth) const  { return sizePixels.x / ((scale * sizePoints.x) - depth); }
+    float getScreenPointSizeInPixels() const { return sizePixels.x / ((sizePoints.x) - z); }
+    float getWorldPointSizeInPixels() const  { return sizePixels.x / ((scale * sizePoints.x) - z); }
 
     uint getCircleVerts(float worldRadius, int mx=24) const
     {
@@ -500,7 +491,7 @@ struct View {
         return verts;
     }
 
-    ShaderState getWorldShaderState(float3 offset) const;
+    ShaderState getWorldShaderState() const;
     ShaderState getScreenShaderState() const;
 
     float3 getScreenCameraPos(float3 offset) const { return float3(0.f, 0.f, 0.5f * sizePoints.y); }
@@ -529,18 +520,18 @@ struct View {
         return intersectCircleRectangle(a, r, 0.5f * sizePoints, 0.5f * sizePoints);
     }
 
-    void setScreenLineWidth(float z=0.f, float scl=1.f) const
+    void setScreenLineWidth(float scl=1.f) const
     {
-        const float width     = getScreenPointSizeInPixels(z);
+        const float width     = getScreenPointSizeInPixels();
         const float pointSize = sizePixels.x / sizePoints.x;
         const float lineWidth = clamp(width, 0.1f, 1.5f * pointSize);
         glLineWidth(lineWidth * scl);
         glReportError();
     }
 
-    void setWorldLineWidth(float z) const
+    void setWorldLineWidth() const
     {
-        const float width     = getWorldPointSizeInPixels(z);
+        const float width     = getWorldPointSizeInPixels();
         const float pointSize = sizePixels.x / sizePoints.x;
         const float lineWidth = clamp(width, 0.1f, 1.5f * pointSize);
         glLineWidth(lineWidth);
@@ -554,7 +545,7 @@ struct View {
 
     float getWorldRadius() const
     {
-        return max_dim(getWorldSize(0.f)) / 2.f;
+        return max_dim(getWorldSize()) / 2.f;
     }
 
     float worldRadiusToScale(float rad) const
@@ -645,6 +636,14 @@ public:
 
 template <typename T>
 struct ShaderBase {
+
+    string m_typeName;
+
+    const char* getTypeName() const
+    {
+        m_typeName = TYPE_NAME(T);
+        return m_typeName.c_str();
+    }
 
     static const T& instance()
     {

@@ -163,6 +163,40 @@ std::string str_urlencode(const std::string &value)
     return ret;
 }
 
+std::string str_urldecode(const std::string &value) 
+{
+    std::string ret;
+
+    char seq[3] = {};
+    int in_seq = 0;
+    
+    for (int i=0; i<value.size(); i++)
+    {
+        const char c = value[i];
+        if (in_seq && std::isxdigit(c)) {
+            seq[in_seq++ - 1] = c;
+            if (in_seq == 3) {
+                in_seq = 0;
+                long num = strtol(seq, NULL, 16);
+                if (num && num < 0xF7)
+                    ret += num;
+            }
+        } else if (in_seq) {
+            // abort, put it back
+            ret += '%';
+            for (int j=0; j<in_seq; j++)
+                ret += seq[j];
+            ret += c;
+        } else if (c == '%') {
+            in_seq = 1;
+        } else {
+            ret += c;
+        }
+    }
+ 
+    return ret;
+}
+
 std::string str_time_format(float seconds)
 {
     seconds = max(epsilon, seconds);
@@ -256,7 +290,17 @@ string str_tohex(const char* digest, int size)
     return result;
 }
 
-
+std::string str_capitalize(const char* str)
+{
+    std::string s = str;
+    s[0] = toupper(s[0]);
+    for (int i=1; i<s.size(); i++) {
+        if (str_contains(" \n\t_-", s[i-1]))
+            s[i] = toupper(s[i]);
+    }
+        
+    return s;
+}
 
 #if DEBUG
 

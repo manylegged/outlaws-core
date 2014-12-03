@@ -44,6 +44,7 @@
 #pragma warning(disable: 4244) // possible loss of data
 #pragma warning(disable: 4305) // truncation from double to float
 #pragma warning(disable: 4800) // forcing value to bool true or false
+#pragma warning(disable: 4351) 
 
 #define __func__ __FUNCTION__
 

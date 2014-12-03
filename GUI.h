@@ -28,10 +28,11 @@
 #define GUI_H
 
 #include "GLText.h"
-#include "Shaders.h"
 
-static const float  kPadDist            = 2;
-static const float2 kButtonPad         = float2(4.f);
+struct ShaderState;
+
+static const float  kPadDist   = 2;
+static const float2 kButtonPad = float2(4.f);
 
 #define COLOR_TARGET  0xff3a3c
 #define COLOR_TEXT_BG 0x101010
@@ -62,7 +63,7 @@ struct WidgetBase {
 
 struct ButtonBase : public WidgetBase {
 
-    int keys[4];
+    int keys[4] = {};
     string tooltip;
     bool   pressed          = false;
     bool   visible          = true;
@@ -73,7 +74,7 @@ struct ButtonBase : public WidgetBase {
     uint   defaultBGColor   = kGUIBg;
     float  subAlpha         = 1.f;
 
-    ButtonBase() { memset(keys, 0, sizeof(keys)); }
+    ButtonBase() { }
     ButtonBase(const char* ks) { setKeys(ks); }
 
     bool HandleEvent(const Event* event, bool* isActivate, bool* isPress=NULL);
@@ -95,7 +96,7 @@ struct ButtonBase : public WidgetBase {
         }
     }
 
-    void setKeys(std::initializer_list<int> lst)
+    void setKeys(std::initializer_list<uint> lst)
     {
         ASSERT(isBetween((int)lst.size(), 1, (int)arraySize(keys)));
         for (int i = 0; i < arraySize(keys); i++) {
@@ -553,7 +554,7 @@ struct TabWindow : public WidgetBase {
     int getTab() const { return selected; }
     ITabInterface* getActive() { return buttons[selected].interface; }
 
-    float getTabHeight() const { return 2.f * kPadDist + 1.5f * GLText::getScaledSize(textSize); }
+    float getTabHeight() const;
     float2 getContentsCenter() const { return position - float2(0.f, 0.5f * getTabHeight()); }
     float2 getContentsSize() const { return size - float2(4.f * kPadDist) - float2(0.f, getTabHeight()); }
     float2 getContentsStart() const { return getContentsCenter() - 0.5f * getContentsSize(); }
@@ -709,6 +710,19 @@ struct TextBox {
     float       tSize   = 12.f;
     
     void Draw(const ShaderState& ss1, float2 point, const string& text) const;
+};
+
+struct OverlayMessage : public WidgetBase {
+    std::mutex mutex;
+    string     message;
+    float      startTime = 0.f;
+    float      totalTime = 1.;
+    uint       color     = kGUIText;
+    float      textSize  = 14.f;
+
+    bool isVisible() const;
+    bool setMessage(const string& msg, uint clr=0); // return true if changed
+    void render(const ShaderState &ss);
 };
 
 

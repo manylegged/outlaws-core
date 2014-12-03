@@ -197,7 +197,7 @@ inline float dotAngles(float a, float b)
 #define M_PIf float(M_PI)
 #define M_PI_2f float(M_PI_2)
 #define M_PI_4f float(M_PI_4)
-#define M_TAOf float(2 * M_PI)
+#define M_TAOf float(2.0 * M_PI)
 #define M_SQRT2f float(M_SQRT2)
 
 template <typename T>
@@ -215,25 +215,13 @@ inline T sign(T val)
 inline float2 rotate90(float2 v)  { return float2(-v.y, v.x); }
 inline float2 rotateN90(float2 v) { return float2(v.y, -v.x); }
 
-inline float getAngleError(float a, float b)
+// return shortest signed difference between angles [0, pi]
+inline float distanceAngles(float a, float b)
 {
-#if 1
-    const float e = dotAngles(a, b + M_PI_2f);
-    if (dotAngles(a, b) >= 0.f)
-        return e;
-    else
-        // return sign(e) * 2.f - e;
-        return std::copysign(2.f, e) - e;
-#else
-    const float2 va = angleToVector(a);
-    const float2 vb = angleToVector(b);
-    const float e = dot(va, rotate90(vb));
-    if (dot(va, vb) >= 0.f)
-        return e;
-    else
-        // return sign(e) * 2.f - e;
-        return std::copysign(2.f, e) - e;
-#endif
+    float e = dotAngles(a, b + M_PI_2f);
+    if (dotAngles(a, b) < 0.f)
+        e = std::copysign(2.f, e) - e;
+    return M_PIf * e;
 }
 
 static const double kGoldenRatio = 1.61803398875;
@@ -264,6 +252,12 @@ inline float clamp_mag(float v, float mn, float mx)
     const float vm = abs(v);
     return ((vm < mn) ? ((v > 0.f) ? mn : -mn) :
             (vm > mx) ? ((v > 0.f) ? mx : -mx) : v);
+}
+
+inline float2 clamp_aspect(float2 size, float minWH, float maxWH)
+{
+    ASSERT(maxWH > minWH);
+    return min(size, float2(size.y * maxWH, size.x / minWH));
 }
 
 // return vector V clamped to fit inside origin centered rectangle with radius RAD
@@ -470,6 +464,14 @@ inline T lerp(T *array, float v)
     const float f = floor(v);
     const float n = ceil(v);
     return (f == n) ? array[(int)f] : lerp(array[(int)f], array[(int)n], v-f);
+}
+
+template <typename Fun>
+inline auto lerp(const Fun &fvals, float v) -> decltype(fvals(0))
+{
+    const float f = floor(v);
+    const float n = ceil(v);
+    return (f == n) ? fvals((int)f) : lerp(fvals((int)f), fvals((int)n), v-f);
 }
 
 template <typename T, typename Fun>

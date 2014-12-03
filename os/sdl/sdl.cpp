@@ -4,9 +4,10 @@
 #include "StdAfx.h"
 
 #include <locale>
-#include <codecvt>
 
 #include "Graphics.h"
+#include "Unicode.h"
+
 #include "sdl_inc.h"
 #include "sdl_os.h"
 
@@ -21,27 +22,19 @@ static string       g_logdata;
 static bool         g_openinglog = false;
 
 
-string ws2s(const std::wstring& wstr)
-{
-    typedef std::codecvt_utf8<wchar_t> convert_typeX;
-    std::wstring_convert<convert_typeX, wchar_t> converterX;
-
-    return converterX.to_bytes(wstr);
-}
-
 std::wstring s2ws(const std::string& s)
 {
-    int slength = (int)s.length();
 #if WIN32
-    int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), slength, 0, 0);
+    int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), s.length(), 0, 0);
     std::wstring r(len, L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), slength, &r[0], len);
+    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), s.length(), &r[0], len);
 #else
     std::mbtowc(NULL, 0, 0); // reset the conversion state
+    const char* ptr = s.c_str();
     const char* end = s.c_str() + s.size();
-    int ret;
-    std::wstring r
-    for (wchar_t wc; (ret = std::mbtowc(&wc, s.c_str(), end-s.c_str())) > 0; ptr+=ret) {
+    int ret = 0;
+    std::wstring r;
+    for (wchar_t wc; (ret = std::mbtowc(&wc, ptr, end-ptr)) > 0; ptr+=ret) {
         r += wc;
     }
 #endif
@@ -569,10 +562,11 @@ float OL_FontHeight(int fontName, float size)
     return TTF_FontLineSkip(font) / g_scaling_factor;
 }
 
+
 struct Strip {
-    TTF_Font     *font;
-    int           pixel_width;
-    std::wstring  text;
+    TTF_Font    *font;
+    int          pixel_width;
+    std::string  text;
 };
 
 
@@ -587,41 +581,48 @@ int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int _font,
     int text_pixel_width = 0;
     vector< Strip > strips;
 
-    int last_strip_start = 0;
+    int strip_start = 0;
     int newlines = 0;
     bool last_was_fallback = false;
     int line_pixel_width = 0;
 
-    std::wstring ustr = s2ws(str);
+    size_t textlen = SDL_strlen(str);
+    const size_t totallen = textlen;
+    const char* text = str;
 
     // split string up by lines, fallback font
-    for (int i=0; true; i++)
+    while (1)
     {
-        const int chr = ustr[i];
+        const size_t chr_start = totallen - textlen;        
+        const Uint16 chr = textlen ? UTF8_getch(&text, &textlen) : '\0';
+        const size_t chr_end = totallen - textlen;
 
         int pixel_width, pixel_height;
 
-        if (chr == '\n' || chr == '\0')
+        if (chr == '\n' || chr == '\0' || chr == UNKNOWN_UNICODE)
         {
-            Strip st = { font, -1, std::wstring(&ustr[last_strip_start], i - last_strip_start) };
-            TTF_SizeUNICODE(font, (const Uint16 *) st.text.c_str(), &pixel_width, &pixel_height);
+            Strip st = { font, -1, string(&str[strip_start], chr_start - strip_start) };
+            if (st.text.size())
+                TTF_SizeUTF8(font, st.text.c_str(), &pixel_width, &pixel_height);
+            else
+                pixel_width = 0;
             strips.push_back(std::move(st));
 
             text_pixel_width = max(text_pixel_width, line_pixel_width + pixel_width);
-            last_strip_start = i+1;
+            strip_start = chr_end;
             newlines++;
             line_pixel_width = 0;
 
-            if (chr == '\0')
+            if (chr == '\0' || chr == UNKNOWN_UNICODE)
                 break;
         }
         else if (!TTF_GlyphIsProvided(font, chr))
         {
-            if (!last_was_fallback && i > last_strip_start) {
-                std::wstring strip(&ustr[last_strip_start], i - last_strip_start);
-                TTF_SizeUNICODE(font, (const Uint16 *)strip.c_str(), &pixel_width, &pixel_height);
+            if (!last_was_fallback && chr_start > strip_start) {
+                string strip(&str[strip_start], chr_start - strip_start);
+                TTF_SizeUTF8(font, strip.c_str(), &pixel_width, &pixel_height);
                 line_pixel_width += pixel_width;
-                Strip st = { font, pixel_width, std::wstring(&ustr[last_strip_start], i - last_strip_start) };
+                Strip st = { font, pixel_width, strip };
                 strips.push_back(std::move(st));
             }
 
@@ -644,18 +645,19 @@ int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int _font,
                     fallback_font = font; // just use boxes, oh well...
             }
 
-            TTF_SizeUNICODE(fallback_font, (const Uint16 *)std::wstring(1, chr).c_str(), &pixel_width, &pixel_height);
+            const string c8(&str[chr_start], chr_end - chr_start);
+            TTF_SizeUTF8(fallback_font, c8.c_str(), &pixel_width, &pixel_height);
             line_pixel_width += pixel_width;
-            last_strip_start = i+1;
+            strip_start = chr_end;
 
             if (last_was_fallback && strips.back().font == fallback_font)
             {
                 strips.back().pixel_width += pixel_width;
-                strips.back().text += chr;
+                strips.back().text += c8;
             }
             else
             {
-                Strip st = { fallback_font, pixel_width, std::wstring(1, chr) };
+                Strip st = { fallback_font, pixel_width, c8 };
                 strips.push_back(std::move(st));
             }
             last_was_fallback = true;
@@ -677,11 +679,11 @@ int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int _font,
     SDL_Rect dstrect;
     memset(&dstrect, 0, sizeof(dstrect));
 
-    for (int i=0; i<strips.size(); i++)
+    foreach (const Strip &st, strips)
     {
-        if (strips[i].text.size())
+        if (st.text.size())
         {
-            SDL_Surface* initial = TTF_RenderUNICODE_Blended(strips[i].font, (const Uint16 *)strips[i].text.c_str(), color);
+            SDL_Surface* initial = TTF_RenderUTF8_Blended(st.font, st.text.c_str(), color);
             if (initial)
             {
                 SDL_SetSurfaceBlendMode(initial, SDL_BLENDMODE_NONE);
@@ -694,11 +696,11 @@ int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int _font,
             }
         }
 
-        if (strips[i].pixel_width < 0.f) { 
+        if (st.pixel_width < 0.f) { 
             dstrect.y += font_pixel_height;
             dstrect.x = 0;
         } else {
-            dstrect.x += strips[i].pixel_width;
+            dstrect.x += st.pixel_width;
         }
     }
 
@@ -725,7 +727,7 @@ static int keysymToKey(const SDL_Keysym &keysym)
 {
     const SDL_Keycode sym = keysym.sym;
     
-    if (keysym.mod & (KMOD_SHIFT|KMOD_CAPS)) {
+    if (keysym.mod & KMOD_SHIFT) {
         // a -> A
         if ('a' <= sym && sym <= 'z')
             return sym - 32;
@@ -786,16 +788,16 @@ static int keysymToKey(const SDL_Keysym &keysym)
     case SDLK_F10:      return NSF10FunctionKey;
     case SDLK_F11:      return NSF11FunctionKey;
     case SDLK_F12:      return NSF12FunctionKey;
-    case SDLK_KP_0:     return '0';
-    case SDLK_KP_1:     return '1';
-    case SDLK_KP_2:     return '2';
-    case SDLK_KP_3:     return '3';
-    case SDLK_KP_4:     return '4';
-    case SDLK_KP_5:     return '5';
-    case SDLK_KP_6:     return '6';
-    case SDLK_KP_7:     return '7';
-    case SDLK_KP_8:     return '8';
-    case SDLK_KP_9:     return '9';
+    case SDLK_KP_0:     return Keypad0;
+    case SDLK_KP_1:     return Keypad1;
+    case SDLK_KP_2:     return Keypad2;
+    case SDLK_KP_3:     return Keypad3;
+    case SDLK_KP_4:     return Keypad4;
+    case SDLK_KP_5:     return Keypad5;
+    case SDLK_KP_6:     return Keypad6;
+    case SDLK_KP_7:     return Keypad7;
+    case SDLK_KP_8:     return Keypad8;
+    case SDLK_KP_9:     return Keypad9;
     case SDLK_KP_ENTER: return '\r';
     case SDLK_KP_EQUALS: return '=';
     case SDLK_KP_PLUS:  return '+';
@@ -815,8 +817,9 @@ static int keysymToKey(const SDL_Keysym &keysym)
     case SDLK_BACKSPACE: return NSBackspaceCharacter;
     case SDLK_DELETE:   return NSDeleteFunctionKey;
     default:
-        ReportSDL("Unhandled Keysym: %#x '%c'", sym, sym);
-        return 0;
+        ASSERT(sym < 0xffff);
+        return sym;
+        
     }
 }
 
@@ -827,7 +830,7 @@ static void HandleEvents()
     while (SDL_PollEvent(&evt))
     {
         if (Controller_HandleEvent(&evt))
-            return;
+            continue;
 
         OLEvent e;
         memset(&e, 0, sizeof(e));
@@ -915,6 +918,18 @@ static void HandleEvents()
 
             break;
         }
+#if 0
+        case SDL_TEXTINPUT:
+        {
+            std::wstring text = s2ws(evt.text.text);
+            e.type = SDL_KEYDOWN;
+            foreach (wchar_t chr, text) {
+                e.key = (int)chr;
+                OLG_OnEvent(e);
+            }
+            e.type = SDL_KEYUP;
+        }
+#endif
         case SDL_MOUSEMOTION:
         {
             e.dx = evt.motion.xrel / g_scaling_factor;
@@ -950,9 +965,12 @@ static void HandleEvents()
             e.type = evt.type == SDL_MOUSEBUTTONDOWN ? OLEvent::MOUSE_DOWN : OLEvent::MOUSE_UP;
             switch (evt.button.button)
             {
-            case SDL_BUTTON_LEFT: e.key = 0; break;
-            case SDL_BUTTON_RIGHT: e.key = 1; break;
+            case SDL_BUTTON_LEFT:   e.key = 0; break;
+            case SDL_BUTTON_RIGHT:  e.key = 1; break;
             case SDL_BUTTON_MIDDLE: e.key = 2; break;
+            case SDL_BUTTON_X1:     e.key = 3; break;
+            case SDL_BUTTON_X2:     e.key = 4; break;
+            default:                e.key = 0; break;
             }
             OLG_OnEvent(&e);
             break;
@@ -1147,7 +1165,7 @@ int sdl_os_main(int argc, const char **argv)
     SDL_GL_SetAttribute(SDL_GL_RED_SIZE, 8);
     SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, 8);
     SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE, 8);
-    SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0);
+    SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 16);
 
     int mode = OLG_Init(argc, argv);
 
@@ -1196,6 +1214,7 @@ int sdl_os_main(int argc, const char **argv)
 #endif
 
     SDL_GLContext _glcontext = SDL_GL_CreateContext(g_displayWindow);
+    UNUSED(_glcontext);
     
     if (!initGlew())
         return 1;
