@@ -50,6 +50,12 @@ uint gpuMemoryUsed = 0;
 
 vector<GLRenderTexture*> GLRenderTexture::s_bound;
 
+GLRenderTexture* GLRenderTexture::getBound(int idx)
+{
+    return vec_at(s_bound, -idx - 1);
+}
+
+
 #define CASE_STR(X) case X: return #X
 static const char* textureFormatToString(GLint fmt)
 {
@@ -127,11 +133,13 @@ void GLRenderTexture::Generate(ZFlags zflags)
     gpuMemoryUsed += width * height * textureFormatBytesPerPixel(m_format);
 
     glBindFramebuffer(GL_FRAMEBUFFER, m_fbname);
+    glReportError();
 
     // The depth buffer
     if (zflags&HASZ)
     {
         glGenRenderbuffers(1, &m_zrbname);
+        glReportError();
         glBindRenderbuffer(GL_RENDERBUFFER, m_zrbname);
         glReportError();
         
@@ -283,6 +291,19 @@ void GLTexture::clear()
     }
     m_texname = 0;
 }
+
+OutlawTexture GLTexture::getTexture() const 
+{
+    OutlawTexture ot;
+    memset(&ot, 0, sizeof(ot));
+    ot.width = (uint) m_size.x;
+    ot.height = (uint) m_size.y;
+    ot.texwidth = (uint) m_texsize.x;
+    ot.texheight = (uint) m_texsize.y;
+    ot.texnum = m_texname;
+    return ot;
+}
+
 
 void GLTexture::DrawFSBegin(ShaderState& ss) const
 {
@@ -879,6 +900,82 @@ void PostProc::Draw(bool bindFB)
         getWrite().DrawFullscreen<ShaderTexture>();
     }
     // nothing to do if bindFB and no blur
+}
+
+View operator+(const View& a, const View& b)
+{
+    View r(a);
+    r.position = a.position + b.position;
+    r.velocity = a.velocity + b.velocity;
+    r.scale    = a.scale + b.scale;
+    r.angle    = a.angle + b.angle;
+    return r;
+}
+
+View operator*(float a, const View& b)
+{
+    View r(b);
+    r.position = a * b.position;
+    r.velocity = a * b.velocity;
+    r.scale    = a * b.scale;
+    r.angle    = a * b.angle;
+    return r;
+}
+
+float View::getScale() const 
+{
+    return ((0.5f * sizePoints.y * scale) - z) / (0.5f * sizePoints.y); 
+}
+
+float2 View::toWorld(float2 p) const
+{
+    // FIXME angle
+    p -= 0.5f * sizePoints;
+    p *= getScale();
+    p += position;
+    return p;
+}
+
+float2 View::toScreen(float2 p) const
+{
+    double2 dp = double2(p);
+    dp -= position;
+    dp = rotate(dp, double(-angle));
+    dp /= getScale();
+    dp += 0.5f * sizePoints;
+    return float2(dp);
+}
+
+bool View::intersectRectangle(const float3 &a, const float2 &r) const
+{
+    // FIXME take angle into account
+    float2 zPlaneSize = (0.5f * scale * sizePoints) - getAspect() * a.z;
+    return intersectRectangleRectangle(float2(a.x, a.y), r, 
+                                       position, zPlaneSize);
+}
+
+void View::setScreenLineWidth(float scl) const
+{
+    const float width     = getScreenPointSizeInPixels();
+    const float pointSize = sizePixels.x / sizePoints.x;
+    const float lineWidth = clamp(width, 0.1f, 1.5f * pointSize);
+    glLineWidth(lineWidth * scl);
+    glReportError();
+}
+
+void View::setWorldLineWidth() const
+{
+    const float width     = getWorldPointSizeInPixels();
+    const float pointSize = sizePixels.x / sizePoints.x;
+    const float lineWidth = clamp(width, 0.1f, 1.5f * pointSize);
+    glLineWidth(lineWidth);
+    glReportError();
+}
+
+uint View::getCircleVerts(float worldRadius, int mx) const
+{
+    const uint verts = clamp(uint(round(toScreenSize(worldRadius))), 3, mx);
+    return verts;
 }
 
 ShaderState View::getWorldShaderState() const

@@ -262,8 +262,6 @@ struct ShaderWormhole : public ShaderProgramBase, public ShaderBase<ShaderWormho
     void LoadTheProgram()
     {
         LoadProgram("ShaderWormhole");
-        GET_ATTR_LOC(SourceColor0);
-        GET_ATTR_LOC(SourceColor1);
         GET_ATTR_LOC(TexCoord);
         GET_UNIF_LOC(Time);
     }
@@ -271,8 +269,6 @@ struct ShaderWormhole : public ShaderProgramBase, public ShaderBase<ShaderWormho
     void UseProgram(const ShaderState& input, const VertexPos2ColorTex* ptr, const VertexPos2ColorTex* base) const
     {
         UseProgramBase(input, &ptr->pos, base);
-        vertexAttribPointer(SourceColor0, &ptr->color, base);
-        vertexAttribPointer(SourceColor1, &ptr->color1, base);
         vertexAttribPointer(TexCoord, &ptr->tex, base);
         glUniform1f(Time, globals.renderTime);
     }

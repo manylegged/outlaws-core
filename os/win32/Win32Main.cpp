@@ -573,6 +573,7 @@ static LONG WINAPI myExceptionHandler(EXCEPTION_POINTERS *info)
                     "sdl2", "openal", "zlib",
                     "ogl", // nvoglv32.dll and atioglxx.dll
                     "igd", // intel drivers
+                    "steam",
                 };
                 foreach (const char* str, substrs)
                 {
@@ -720,6 +721,10 @@ int main(int argc, char* argv[])
         if (pSetProcessDPIAware)
             pSetProcessDPIAware();
     }
-   
-    return sdl_os_main(argc, (const char**) argv);
+
+    try {
+        return sdl_os_main(argc, (const char**) argv);
+    } catch (const std::exception &e) {
+        ReportWin32("Unhandled exception: %s", e.what());
+    }
 }

@@ -817,9 +817,8 @@ static int keysymToKey(const SDL_Keysym &keysym)
     case SDLK_BACKSPACE: return NSBackspaceCharacter;
     case SDLK_DELETE:   return NSDeleteFunctionKey;
     default:
-        ASSERT(sym < 0xffff);
+        ASSERTF(sym < 0xffff, "%#x", sym);
         return sym;
-        
     }
 }
 
@@ -937,9 +936,11 @@ static void HandleEvents()
             e.x = evt.motion.x / g_scaling_factor;
             e.y = (g_windowSize.y - evt.motion.y) / g_scaling_factor;
             const Uint8 state = evt.motion.state;
-            const int key = ((state&SDL_BUTTON_LMASK) ? 0 : 
-                             (state&SDL_BUTTON_RMASK) ? 1 :
-                             (state&SDL_BUTTON_MMASK) ? 2 : -1);
+            const int key = ((state&SDL_BUTTON_LMASK)  ? 0 :
+                             (state&SDL_BUTTON_RMASK)  ? 1 :
+                             (state&SDL_BUTTON_MMASK)  ? 2 :
+                             (state&SDL_BUTTON_X1MASK) ? 3 :
+                             (state&SDL_BUTTON_X2MASK) ? 4 : -1);
             if (key == -1) {
                 e.type = OLEvent::MOUSE_MOVED;
             } else {

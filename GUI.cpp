@@ -179,13 +179,13 @@ void Button::renderText(const ShaderState &s_) const
         return;
     const uint tcolor = MultAlphaAXXX((!active) ? inactiveTextColor : textColor, alpha);
     const float2 pos = position + justY(subtext.size() ? size.y * (0.5f - (textSize / (subtextSize + textSize))) : 0.f);
-    GLText::DrawStr(s_, pos, subtext.size() ? GLText::CENTERED : GLText::MID_CENTERED,
-                    textFont, tcolor, textSize, text);
+    GLText::Put(s_, pos, subtext.size() ? GLText::CENTERED : GLText::MID_CENTERED,
+                textFont, tcolor, textSize, text);
     
     if (subtext.size())
     {
         const uint stc = MultAlphaAXXX(subtextColor, alpha);
-        GLText::DrawStr(s_, pos , GLText::DOWN_CENTERED, textFont, stc, subtextSize, subtext);
+        GLText::Put(s_, pos , GLText::DOWN_CENTERED, textFont, stc, subtextSize, subtext);
     }
 }
 
@@ -540,9 +540,9 @@ void TextInputBase::render(const ShaderState &s_)
             s1.color(textColor, alpha);
             ShaderUColor::instance().DrawRectCorners(s1, float2(0), float2(size.x, charHeight));
             if (cursor.x < lines[i].size()) {
-                GLText::DrawStr(s1, float2(0.f), GLText::LEFT, kMonoFont,
-                                ALPHA_OPAQUE|GetContrastWhiteBlack(textColor),
-                                textSize, utf8_substr(lines[i], cursor.x, 1));
+                GLText::Put(s1, float2(0.f), GLText::LEFT, kMonoFont,
+                            ALPHA_OPAQUE|GetContrastWhiteBlack(textColor),
+                            textSize, utf8_substr(lines[i], cursor.x, 1));
             }
         }
         
@@ -564,7 +564,7 @@ void TextInputCommandLine::loadHistory(const char *fname)
     if (data) {
         string sdat = data;
 #if WIN32
-       sdat = str_replace(sdat, "\r", "");
+        sdat = str_replace(sdat, "\r", "");
 #endif
         commandHistory = str_split(sdat, '\n');
     }
@@ -902,7 +902,7 @@ void ContextMenuBase::render(ShaderState *s_)
         ShaderUColor::instance().DrawColorLineRect(s1, lineColor, sz);
     }
         
-    GLText::DrawStr(s, position, GLText::LEFT, titleTextColor, textSize, title);
+    GLText::Put(s, position, GLText::LEFT, titleTextColor, textSize, title);
 
     if (lines.empty())
         return;
@@ -920,7 +920,7 @@ void ContextMenuBase::render(ShaderState *s_)
         }
 
         const uint color = (selected == i) ? selectedTextColor : textColor;
-        GLText::DrawStr(s, position, GLText::LEFT, color, textSize, lines[i]);
+        GLText::Put(s, position, GLText::LEFT, color, textSize, lines[i]);
     }
 }
 
@@ -1020,7 +1020,7 @@ void OptionSlider::render(const ShaderState &s_)
                        (i == hoveredValue) ? hoveredLineColor : defaultLineColor,
                        alpha);
             if (i == value)
-                GLText::DrawStr(s_, pos, GLText::MID_CENTERED, MultAlphaAXXX(kGUIText, alpha), 12, "X");
+                GLText::Put(s_, pos, GLText::MID_CENTERED, MultAlphaAXXX(kGUIText, alpha), 12, "X");
             pos.x += 2.f * w;
         }
         h.Draw(s_);
@@ -1103,8 +1103,8 @@ void TabWindow::render(const ShaderState &ss)
 
         foreach (const TabButton& but, buttons)
         {
-            GLText::DrawStr(ss, but.position, GLText::MID_CENTERED, MultAlphaAXXX(textColor, alpha),
-                            textSize, but.text);
+            GLText::Put(ss, but.position, GLText::MID_CENTERED, MultAlphaAXXX(textColor, alpha),
+                        textSize, but.text);
         }
     }
     buttons[selected].interface->renderTab(getContentsCenter(), getContentsSize(), alpha, alpha2);
@@ -1194,8 +1194,8 @@ void MessageBoxWidget::render(const ShaderState &ss, const View& view)
         
     float2 pos = position + justY(boxRad) - justY(boxPad);
         
-    pos.y -= GLText::DrawStr(ss, pos, GLText::DOWN_CENTERED, MultAlphaAXXX(kGUIText, alpha),
-                             titleSize, title).y;
+    pos.y -= GLText::Put(ss, pos, GLText::DOWN_CENTERED, MultAlphaAXXX(kGUIText, alpha),
+                         titleSize, title).y;
 
     pos.x = position.x - boxRad.x + boxPad.x;
 
@@ -1269,7 +1269,7 @@ void ColorPicker::render(const ShaderState &ss)
 
         setupHsvRect(verts, hueSlider.position, hueSlider.size/2.f, alpha, {
                 float3(0.f, 1.f, 1.f), float3(M_TAOf, 1.f, 1.f),
-                float3(0.f, 1.f, 1.f), float3(M_TAOf, 1.f, 1.f) });
+                    float3(0.f, 1.f, 1.f), float3(M_TAOf, 1.f, 1.f) });
 
         DrawElements(ShaderHsv::instance(), ss, GL_TRIANGLES, verts, indices, arraySize(indices));
         s1.color32(hueSlider.getFGColor(), alpha);
@@ -1279,7 +1279,7 @@ void ColorPicker::render(const ShaderState &ss)
         const float hn = hsvColor.x / 360.f;
         setupHsvRect(verts, svRectPos, svRectSize/2.f, alpha, {
                 float3(hn, 0.f, 1.f), float3(hn, 1.f, 1.f),
-                float3(hn, 0.f, 0.f), float3(hn, 1.f, 0.f) });
+                    float3(hn, 0.f, 0.f), float3(hn, 1.f, 0.f) });
 
         DrawElements(ShaderHsv::instance(), ss, GL_TRIANGLES, verts, indices, arraySize(indices));
         lmesh.color32((svHovered || svDragging) ? kGUIFgActive : kGUIFg, alpha);
@@ -1398,6 +1398,5 @@ void OverlayMessage::render(const ShaderState &ss)
     if (!isVisible())
         return;
     const float a = alpha * inv_lerp(startTime + totalTime, startTime, (float)globals.renderTime);
-    size = GLText::DrawStr(ss, position, GLText::MID_CENTERED,
-                           SetAlphaAXXX(color, a), textSize, message);
+    size = GLText::Put(ss, position, GLText::MID_CENTERED, SetAlphaAXXX(color, a), textSize, message);
 }

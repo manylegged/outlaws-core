@@ -468,16 +468,18 @@ inline void vec_shuffle(V& vec)
     
 
 template <typename Vec>
-const typename Vec::value_type &vec_at(const Vec &v, size_t i,
+const typename Vec::value_type &vec_at(const Vec &v, int i,
                                        const typename Vec::value_type &def=typename Vec::value_type())
 {
-    return (i < v.size()) ? v[i] : def;
+    return ((uint)i < v.size()) ? v[i] :
+        ((uint)(-1-i) < v.size()) ? v[v.size() + i] : def;
 }
 
 template <typename T, size_t S>
-const T &vec_at(const T (&v)[S], size_t i, const T &def=T())
+const T &vec_at(const T (&v)[S], int i, const T &def=T())
 {
-    return (i < S) ? v[i] : def;
+    return ((int)i < S) ? v[i] :
+        ((uint)(-1) < S) ? v[S + i] : def;
 }
 
 template <typename V> size_t vec_size(const V &v) { return v.size(); }
@@ -1169,18 +1171,20 @@ inline std::map<uint64, std::string> &_thread_name_map()
     return names;
 }
 
-void set_current_thread_name(const char* name);
+void thread_set_current_name(const char* name);
 
 #if OL_USE_PTHREADS
-
-pthread_t create_pthread(void *(*start_routine)(void *), void *arg);
-void thread_join(pthread_t &thread);
-
+typedef pthread_t OL_Thread;
+#define THREAD_IS_SELF(B) (pthread_self() == (B))
+#define THREAD_ALIVE(B) (B)
 #else
-
-void thread_join(std::thread& thread);
-
+typedef std::thread OL_Thread;
+#define THREAD_IS_SELF(B) (std::this_thread::get_id() == (B).get_id())
+#define THREAD_ALIVE(B) ((B).joinable())
 #endif
+
+OL_Thread thread_create(void *(*start_routine)(void *), void *arg);
+void thread_join(OL_Thread &thread);
 
 
 // adapted from boost::reverse_lock

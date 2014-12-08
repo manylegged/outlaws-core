@@ -270,12 +270,12 @@ static void doMouseEvent(enum EventType type, NSEvent *theEvent)
 
 - (void)rightMouseDown:(NSEvent *)theEvent
 {
-    [self mouseDown:theEvent];
+    doMouseEvent(MOUSE_DOWN, theEvent);
 }
 
 - (void)otherMouseDown:(NSEvent *)theEvent
 {
-    [self mouseDown:theEvent];
+    doMouseEvent(MOUSE_DOWN, theEvent);
 }
 
 - (void)mouseUp:(NSEvent *)theEvent
@@ -285,15 +285,25 @@ static void doMouseEvent(enum EventType type, NSEvent *theEvent)
 
 - (void)rightMouseUp:(NSEvent *)theEvent
 {
-    [self mouseUp:theEvent];
+    doMouseEvent(MOUSE_UP, theEvent);
 }
 
 - (void)otherMouseUp:(NSEvent *)theEvent
 {
-    [self mouseUp:theEvent];
+    doMouseEvent(MOUSE_UP, theEvent);
 }
 
 - (void)mouseDragged:(NSEvent *)theEvent
+{
+    doMouseEvent(MOUSE_DRAGGED, theEvent);
+}
+
+- (void)rightMouseDragged:(NSEvent *)theEvent
+{
+    doMouseEvent(MOUSE_DRAGGED, theEvent);
+}
+
+- (void)otherMouseDragged:(NSEvent *)theEvent
 {
     doMouseEvent(MOUSE_DRAGGED, theEvent);
 }
@@ -324,15 +334,6 @@ static void doMouseEvent(enum EventType type, NSEvent *theEvent)
 
 // ---------------------------------
 
-- (void)rightMouseDragged:(NSEvent *)theEvent
-{
-    [self mouseDragged: theEvent];
-}
-
-- (void)otherMouseDragged:(NSEvent *)theEvent
-{
-    [self mouseDragged: theEvent];
-}
 
 // from SDL2 SDL_cocoamouse.m
 static NSCursor* invisibleCursor()

@@ -73,9 +73,7 @@
        float length2(vec2 x) { return dot(x, x); }"
 
       ,
-      "attribute vec4 SourceColor0;
-      attribute vec4 SourceColor1;
-      attribute vec2 TexCoord;
+      "attribute vec2 TexCoord;
       
       void main(void) {
           DestColor0 = vec4(0.2, 0.3, 0.8, 0);

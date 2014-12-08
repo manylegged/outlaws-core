@@ -70,9 +70,6 @@ int OLG_InitGL(void);
 // called when window manager changes full screen state
 void OLG_SetFullscreenPref(int enabled);
 
-// return true if we should do a modeset when entering fullscreen mode
-int OLG_UseRealFullscreen(void);
-
 // handle assertions. return 1
 int OLG_OnAssertFailed(const char* file, int line, const char* func, const char* x,
                         const char* format, ...) __printflike(5, 6) CLANG_ANALYZER_NORETURN;

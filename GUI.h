@@ -209,6 +209,7 @@ struct TextInputBase : public WidgetBase {
 
     void popText(int chars);          // remove at end
     void pushText(const char *txt, int linesback=1);   // insert at end
+    void pushText(const string& str, int linesback=1) { pushText(str.c_str(), linesback); }
     void insertText(const char *txt); // insert at cursor
 
     void scrollForInput()

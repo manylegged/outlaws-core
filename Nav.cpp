@@ -33,7 +33,7 @@ static DEFINE_CVAR(float, kNavCanRotateThreshold, 0.1);
 
 static DEFINE_CVAR(bool, kNavThrustWhileTurning, true);
 
-static DEFINE_CVAR(float, kNavRotKp, 1.f);
+static DEFINE_CVAR(float, kNavRotKp, 1.2f);
 static DEFINE_CVAR(float, kNavRotKd, 0.3f);
 
 

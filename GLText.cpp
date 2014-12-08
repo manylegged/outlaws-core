@@ -201,6 +201,27 @@ float2 GLText::DrawScreen(const ShaderState &s_, float2 p, Align align, uint col
     return size;
 }
 
+float2 GLText::Fmt(const ShaderState &s_, float2 p, Align align, uint color, 
+                   float sizeUnscaled, const char* fmt, ...)
+{
+    va_list vl;
+    va_start(vl, fmt);
+    float2 size = Put(s_, p, align, color, sizeUnscaled, str_vformat(fmt, vl));
+    va_end(vl);
+    return size;
+}
+
+float2 GLText::Fmt(const ShaderState &s_, float2 p, Align align, int font, uint color,
+                   float sizeUnscaled, const char* fmt, ...)
+{
+    va_list vl;
+    va_start(vl, fmt);
+    float2 size = Put(s_, p, align, font, color, sizeUnscaled, str_vformat(fmt, vl));
+    va_end(vl);
+    return size;
+}
+
+
 const float2 kOutlinePad = float2(2.f, 1.f);
 
 float2 DrawOutlinedText(const ShaderState &s_, float2 pos, float2 relnorm, uint color,

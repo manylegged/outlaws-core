@@ -212,6 +212,18 @@ std::string str_time_format(float seconds)
                           modulo((int)floor(seconds), 60));
 }
 
+std::string str_bytes_format(int bytes)
+{
+    static const double kilo = 1000.0; // 1024.0;
+    if (bytes < kilo)
+        return str_format("%d B", bytes);
+    else if (bytes < kilo * kilo)
+        return str_format("%.1f KB", bytes / kilo);
+    else if (bytes < kilo * kilo * kilo)
+        return str_format("%.1f MB", bytes / (kilo * kilo));
+    else
+        return str_format("%.1f GB", bytes / (kilo * kilo * kilo));
+}
 
 std::string str_path_standardize(const std::string &str)
 {

@@ -66,6 +66,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <random>
+#include <cfloat>
 
 
 typedef unsigned char uchar;
@@ -200,6 +201,7 @@ inline float dotAngles(float a, float b)
 #define M_TAOf float(2.0 * M_PI)
 #define M_SQRT2f float(M_SQRT2)
 
+
 template <typename T>
 inline T squared(const T& val)
 {
@@ -221,7 +223,7 @@ inline float distanceAngles(float a, float b)
     float e = dotAngles(a, b + M_PI_2f);
     if (dotAngles(a, b) < 0.f)
         e = std::copysign(2.f, e) - e;
-    return M_PIf * e;
+    return M_PI_2f * e;
 }
 
 static const double kGoldenRatio = 1.61803398875;

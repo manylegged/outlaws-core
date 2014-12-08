@@ -100,6 +100,7 @@ public:
         if (m_id) {
             glDeleteBuffers(1, &m_id);
             m_id = 0;
+            gpuMemoryUsed -= m_size * sizeof(Type);
         }
         m_size = 0;
     }
@@ -139,6 +140,7 @@ public:
         glBufferData(GLType, size * sizeof(Type), data, mode);
         glReportError();
         Unbind();
+        gpuMemoryUsed += (size - m_size) * sizeof(Type);
         m_size = size;
         m_usage = mode;
     }
@@ -244,17 +246,7 @@ public:
 
     void loadFile(const char* fname);
 
-    OutlawTexture getTexture() const 
-    {
-        OutlawTexture ot;
-        memset(&ot, 0, sizeof(ot));
-        ot.width = (uint) m_size.x;
-        ot.height = (uint) m_size.y;
-        ot.texwidth = (uint) m_texsize.x;
-        ot.texheight = (uint) m_texsize.y;
-        ot.texnum = m_texname;
-        return ot;
-    }
+    OutlawTexture getTexture() const;
 
     void BindTexture(int slot) const
     {
@@ -276,10 +268,10 @@ public:
     void GenerateMipmap();
 
     template <typename Shader>
-    void DrawFullscreen() const { DrawFullscreen(Shader::instance()); }
+    void DrawFullscreen(uint color=0xffffffff) const { DrawFullscreen(Shader::instance(), color); }
 
     template <typename Shader>
-    void DrawFullscreen(const Shader& shader) const;
+    void DrawFullscreen(const Shader& shader, uint color=0xffffffff) const;
 };
 
 const GLTexture &getDitherTex();
@@ -289,14 +281,9 @@ const GLTexture &getDitherTex();
 struct ShaderState {
 
     glm::mat4            uTransform;
-    uint                 uColor;
-    uint                 uColor1;
+    uint                 uColor = 0xffffffff;
+    uint                 uColor1 = 0xffffffff;
 
-    ShaderState()
-    {
-        uColor = 0xffffffff;
-    }
-    
     void translate(float2 t) { uTransform = glm::translate(uTransform, float3(t.x, t.y, 0)); }
     void translateZ(float z) { uTransform = glm::translate(uTransform, float3(0, 0, z)); }
     void translate(const float3 &t) { uTransform = glm::translate(uTransform, t); }
@@ -333,9 +320,10 @@ struct ShaderState {
 };
 
 template <typename Shader>
-void GLTexture::DrawFullscreen(const Shader& shader) const
+void GLTexture::DrawFullscreen(const Shader& shader, uint color) const
 {
     ShaderState ss;
+    ss.uColor = color;
     DrawFSBegin(ss);
     shader.DrawRectCorners(ss, getTexture(), float2(0.f), float2(1.f));
     DrawFSEnd();
@@ -367,6 +355,9 @@ public:
     void BindFramebuffer(float2 sizePixels, ZFlags zflags=HASZ);
     void RebindFramebuffer();
     void UnbindFramebuffer() const;
+
+    // return bound texture, with idx 0 being the currently bound
+    static GLRenderTexture *getBound(int idx);
 };
 
 // camera/view data
@@ -381,61 +372,16 @@ struct View {
     float  zfar = 3500.f;
     
     // interpolation support
-    friend View operator+(const View& a, const View& b)
-    {
-        View r(a);
-        r.position = a.position + b.position;
-        r.velocity = a.velocity + b.velocity;
-        r.scale    = a.scale + b.scale;
-        r.angle    = a.angle + b.angle;
-        return r;
-    }
-    friend View operator*(float a, const View& b)
-    {
-        View r(b);
-        r.position = a * b.position;
-        r.velocity = a * b.velocity;
-        r.scale    = a * b.scale;
-        r.angle    = a * b.angle;
-        return r;
-    }
+    friend View operator+(const View& a, const View& b);
+    friend View operator*(float a, const View& b);
 
-    float getScale() const 
-    {
-        return ((0.5f * sizePoints.y * scale) - z) / (0.5f * sizePoints.y); 
-    }
-
-    // Z is in worldspace
-    float2 toWorld(float2 p) const
-    {
-        // FIXME angle
-        p -= 0.5f * sizePoints;
-        p *= getScale();
-        p += position;
-        return p;
-    }
-
-    float2 toScreen(float2 p) const
-    {
-        double2 dp = double2(p);
-        dp -= position;
-        dp = rotate(dp, double(-angle));
-        dp /= getScale();
-        dp += 0.5f * sizePoints;
-        return float2(dp);
-    }
+    float getScale() const;
+    float2 toWorld(float2 p) const;
+    float2 toScreen(float2 p) const;
 
     float getPointSize() const { return (sizePixels.y / sizePoints.y); }
 
     float2 toScreenPixels(float2 p) const { return toScreen(p) * (sizePixels / sizePoints); }
-
-    void adjust(const View& v)
-    {
-        position = v.position;
-        velocity = v.velocity;
-        scale    = v.scale;
-        angle    = v.angle;
-    }
 
     float  toScreenSize(float  p) const { return p / getScale(); }
     float2 toScreenSize(float2 p) const { return p / getScale(); }
@@ -453,11 +399,6 @@ struct View {
     {
         float2 zPlaneSize = (scale * sizePoints) - 2.f * (z+z2) * getAspect();
         return max(zPlaneSize, float2(0));
-    }
-
-    float scaleForWorldPoints(float world) const
-    {
-        return world / max_dim(sizePoints);
     }
 
     // intersectX functions are in world coordinates
@@ -485,34 +426,14 @@ struct View {
     float getScreenPointSizeInPixels() const { return sizePixels.x / ((sizePoints.x) - z); }
     float getWorldPointSizeInPixels() const  { return sizePixels.x / ((scale * sizePoints.x) - z); }
 
-    uint getCircleVerts(float worldRadius, int mx=24) const
-    {
-        const uint verts = clamp(2 * uint(round(toScreenSize(worldRadius))), 3, mx);
-        return verts;
-    }
+    uint getCircleVerts(float worldRadius, int mx=24) const;
 
     ShaderState getWorldShaderState() const;
     ShaderState getScreenShaderState() const;
 
     float3 getScreenCameraPos(float3 offset) const { return float3(0.f, 0.f, 0.5f * sizePoints.y); }
 
-    // is circle completely overlapping the view?
-    bool containedInCircle(float2 a, float r) const
-    {
-        const float2 vrad = 0.5f * scale * sizePoints;
-        return (intersectPointCircle(position - vrad, a, r) &&
-                intersectPointCircle(position + float2(vrad.x, 0) , a, r) &&
-                intersectPointCircle(position + float2(0, vrad.y) , a, r) &&
-                intersectPointCircle(position + vrad , a, r));
-    }
-
-    bool intersectRectangle(const float3 &a, const float2 &r) const
-    {
-        // FIXME take angle into account
-        float2 zPlaneSize = (0.5f * scale * sizePoints) - getAspect() * a.z;
-        return intersectRectangleRectangle(float2(a.x, a.y), r, 
-                                           position, zPlaneSize);
-    }
+    bool intersectRectangle(const float3 &a, const float2 &r) const;
 
     // intersectScreenX functions are in screen coordinages
     bool intersectScreenCircle(float2 a, float r) const
@@ -520,23 +441,8 @@ struct View {
         return intersectCircleRectangle(a, r, 0.5f * sizePoints, 0.5f * sizePoints);
     }
 
-    void setScreenLineWidth(float scl=1.f) const
-    {
-        const float width     = getScreenPointSizeInPixels();
-        const float pointSize = sizePixels.x / sizePoints.x;
-        const float lineWidth = clamp(width, 0.1f, 1.5f * pointSize);
-        glLineWidth(lineWidth * scl);
-        glReportError();
-    }
-
-    void setWorldLineWidth() const
-    {
-        const float width     = getWorldPointSizeInPixels();
-        const float pointSize = sizePixels.x / sizePoints.x;
-        const float lineWidth = clamp(width, 0.1f, 1.5f * pointSize);
-        glLineWidth(lineWidth);
-        glReportError();
-    }
+    void setScreenLineWidth(float scl=1.f) const;
+    void setWorldLineWidth() const;
 
     void setWorldRadius(float rad)
     {
@@ -1609,9 +1515,9 @@ struct TriMesh : public PrimMesh<Vtx, 3> {
 
         for (int i=0; i < numVerts; ++i)
         {
-            const float angle = M_TAOf * (float) i / (float) numVerts;
-            const uint  j     = (uint) this->m_vl.size();
-            float2      p     = pos + radius * angleToVector(angle);
+            const float  angle = M_TAOf * (float) i / (float) numVerts;
+            const uint   j     = (uint) this->m_vl.size();
+            const float2 p     = pos + radius * angleToVector(angle);
 
             this->PushV(&p, 1);
 
@@ -1632,6 +1538,34 @@ struct TriMesh : public PrimMesh<Vtx, 3> {
     Index PushCircleCenterVert(float radius, int numVerts=32)
     {
         return PushCircleCenterVert(float2(0.f), radius, numVerts);
+    }
+
+    Index PushPolyCenterVert(float2 pos, float scale, float2* verts, int numVerts)
+    {
+        ASSERT(numVerts >= 3);
+
+        Index start = this->m_vl.size();
+        this->PushV(&pos, 1);
+
+        for (int i=0; i < numVerts; ++i)
+        {
+            const uint   j = (uint) this->m_vl.size();
+            const float2 p = pos + scale * verts[i];
+
+            this->PushV(&p, 1);
+
+            if (j - start > 0)
+            {
+                this->m_il.push_back(start);
+                this->m_il.push_back(j-1);
+                this->m_il.push_back(j);
+            }
+        }
+
+        this->m_il.push_back(start);
+        this->m_il.push_back(start + numVerts);
+        this->m_il.push_back(start + 1);
+        return start;
     }
 
     template <typename Prog>
@@ -1785,6 +1719,12 @@ public:
     void Draw(bool drawFinal);
 
     bool isWriteReady() const { return !const_cast<PostProc*>(this)->getWrite().empty(); }
+
+    void clear()
+    {
+        m_tex[0].clear();
+        m_tex[1].clear();
+    }
 };
 
 

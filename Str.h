@@ -466,6 +466,9 @@ std::string str_urldecode(const std::string &value);
 
 std::string str_time_format(float seconds);
 
+// return data byte size in MB, KB, etc
+std::string str_bytes_format(int bytes);
+
 std::string str_tohex(const char* digest, int size);
 
 #endif

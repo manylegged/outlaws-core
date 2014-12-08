@@ -460,7 +460,7 @@ int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int fontNa
 
 	[image lockFocus];
     {
-        const BOOL useAA = size > 10.f;
+        const BOOL useAA = size >= 7.f;
         [[NSGraphicsContext currentContext] setShouldAntialias:useAA];
         //[[NSCol=or blackColor] setFill];
         //[NSBezierPath fillRect:NSMakeRect(0, 0, frameSize.width, frameSize.height)];

@@ -93,7 +93,7 @@ void SetThreadName(DWORD dwThreadID, const char* threadName)
 
 #endif
 
-void set_current_thread_name(const char* name)
+void thread_set_current_name(const char* name)
 {
     uint64 tid = 0;
 #if _WIN32
@@ -118,7 +118,7 @@ void set_current_thread_name(const char* name)
 
 #if OL_USE_PTHREADS
 
-pthread_t create_pthread(void *(*start_routine)(void *), void *arg)
+pthread_t thread_create(void *(*start_routine)(void *), void *arg)
 {
     int            err = 0;
     pthread_attr_t attr;
@@ -146,6 +146,11 @@ void thread_join(pthread_t &thread)
 }
 
 #else
+
+std::thread thread_create(void *(*start_routine)(void *), void *arg)
+{
+    return std::thread(start_routine, arg);
+}
 
 void thread_join(std::thread& thread)
 {

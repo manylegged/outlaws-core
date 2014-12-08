@@ -109,18 +109,23 @@ public:
     static float2 DrawScreen(const ShaderState &s_, float2 p, Align align, uint color, 
                              float sizeUnscaled, const char *format, ...) __printflike(6, 7);
 
-    static float2 DrawStr(const ShaderState &s_, float2 p, Align align, uint color, 
-                          float sizeUnscaled, const string& str)
+    static float2 Put(const ShaderState &s_, float2 p, Align align, uint color, 
+                      float sizeUnscaled, const string& str)
     {
         return Draw(s_, p, align, kDefaultFont, color, getScaledSize(sizeUnscaled), str);
     }
 
-    static float2 DrawStr(const ShaderState &s_, float2 p, Align align, int font, uint color, 
-                          float sizeUnscaled, const string& str)
+    static float2 Put(const ShaderState &s_, float2 p, Align align, int font, uint color, 
+                      float sizeUnscaled, const string& str)
     {
         return Draw(s_, p, align, font, color, getScaledSize(sizeUnscaled), str);
     }
-    
+
+    static float2 Fmt(const ShaderState &s_, float2 p, Align align, uint color,
+                      float sizeUnscaled, const char* fmt, ...) __printflike(6, 7);
+
+    static float2 Fmt(const ShaderState &s_, float2 p, Align align, int font, uint color,
+                      float sizeUnscaled, const char* fmt, ...) __printflike(7, 8);
 };
 
 // RELNORM of (0, 0) sets pos in bottom left corner, (1, 1) sets pos in upper right corner
