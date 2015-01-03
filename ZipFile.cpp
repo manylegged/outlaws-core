@@ -182,13 +182,17 @@ string ZF_LoadFile(const char* path)
 int ZF_SaveFile(const char* path, const char* data, size_t size)
 {
     gzFile gzf = openGzip(path, "w");
-    if (!gzf)
+    if (!gzf) {
+        ASSERT_FAILED("openGzip", "Failed to open '%s' for %s: %s",
+                      path, str_bytes_format(size).c_str(), strerror(errno));
         return false;
+    }
     int written = gzwrite(gzf, data, size);
     gzclose(gzf);
-    const bool success = written == size;
+    const bool success = (written == size);
     if (!success) {
-        ReportMessagef("gzwrite wrote %d of %d bytes", written, (int)size);
+        ReportMessagef("gzwrite wrote %d of %d bytes to '%s'",
+                       written, (int)size, path);
     }
     return success;
 }
@@ -203,7 +207,12 @@ ZFDirMap ZF_LoadDirectory(const char* path)
         for (; *ptr; ptr++)
         {
             string fname = str_path_join(path, *ptr);
-            dir[fname] = OL_LoadFile(fname.c_str());
+            const char* data = OL_LoadFile(fname.c_str());
+            if (data) {
+                dir[fname] = data;
+            } else {
+                ReportMessagef("Error loading '%s' from '%s'", *ptr, path);
+            }
         }
         return dir;
     }
@@ -284,6 +293,8 @@ string ZF_Compress(const char* data, size_t size)
 
 string ZF_Decompress(const char* data, size_t size)
 {
+    if (!data || size == 0)
+        return string();
     z_stream stream;
     int stat = 0;
 

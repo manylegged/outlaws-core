@@ -104,7 +104,6 @@ struct FrameLogger {
     {
         if (m_paused)
             return;
-        ASSERT(m_currentPhases.empty());
         m_currentPhases.push_back(std::make_pair(phase, OL_GetCurrentTime()));
     }
 
@@ -113,8 +112,11 @@ struct FrameLogger {
         if (m_paused)
             return;
         ASSERT(m_currentPhases.size() && m_currentPhases.back().first == phase);
-        map_setdefault(m_current, m_currentPhases.back().first, 0.0) += OL_GetCurrentTime() - m_currentPhases.back().second;
+        const double time = OL_GetCurrentTime() - m_currentPhases.back().second;
+        map_setdefault(m_current, m_currentPhases.back().first, 0.0) += time;
         m_currentPhases.pop_back();
+        if (m_currentPhases.size())
+            m_currentPhases.back().second += time;
     }
 
     void addPhase(const char *phase, double length)

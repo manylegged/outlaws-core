@@ -57,6 +57,18 @@ void Watchable::nullReferencesTo()
     }
 }
 
+std::mutex& _thread_name_mutex()
+{
+    static std::mutex m;
+    return m;
+}
+
+
+OL_ThreadNames &_thread_name_map()
+{
+    static OL_ThreadNames *names = new OL_ThreadNames();
+    return *names;
+}
 
 #if _WIN32
 //
@@ -93,8 +105,12 @@ void SetThreadName(DWORD dwThreadID, const char* threadName)
 
 #endif
 
-void thread_set_current_name(const char* name)
+void thread_setup(const char* name)
 {
+    OL_OnThreadInit();
+    // random number generator per-thread
+    random_device() = new std::mt19937(random_seed());
+
     uint64 tid = 0;
 #if _WIN32
     tid = GetCurrentThreadId();
@@ -102,9 +118,13 @@ void thread_set_current_name(const char* name)
 #elif __APPLE__
     pthread_threadid_np(pthread_self(), &tid);
     pthread_setname_np(name);
-#else
+#else // linux
+    static_assert(sizeof(pthread_t) <= sizeof(tid), "");
     tid = pthread_self();
-    pthread_setname_np(pthread_self(), name);
+    int status = 0;
+    // 16 character maximum!
+    if ((status = pthread_setname_np(pthread_self(), name)))
+        ReportMessagef("pthread_setname_np(pthread_t, const char*) failed: %s", strerror(status));
 #endif
 
     {
@@ -112,7 +132,7 @@ void thread_set_current_name(const char* name)
         _thread_name_map()[tid] = name;
     }
 
-    ReportMessagef("Thread 0x%llx is named '%s'", tid, name);
+    ReportMessagef("Thread %#llx is named '%s'", tid, name);
 }
 
 

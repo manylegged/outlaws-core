@@ -25,4 +25,9 @@
 
 #define HAS_SOUND 1
 
+// use nanosleep in gcc 4.8
+#ifndef _GLIBCXX_USE_NANOSLEEP
+#define _GLIBCXX_USE_NANOSLEEP 1
+#endif
+
 #endif

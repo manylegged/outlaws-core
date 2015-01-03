@@ -65,7 +65,6 @@
 #include <algorithm>
 #include <stdlib.h>
 #include <string.h>
-#include <random>
 #include <cfloat>
 
 
@@ -81,9 +80,8 @@ typedef int int32;
 typedef long long int64;
 
 // ternary digit: -1, 0, or 1, (false, unknown, true)
-class trit {
+struct trit {
     int val;
-public:
     trit() : val(0) {}
     trit(int v) : val(v > 0 ? 1 : v < 0 ? -1 : 0) {}
     trit(bool v) : val(v ? 1 : -1) {}
@@ -128,6 +126,8 @@ using glm::round;
 using glm::mat3;
 using glm::mat2;
 
+using std::sqrt;
+
 #ifdef _MSC_VER
 #include <float.h>
 namespace std {
@@ -138,12 +138,15 @@ namespace std {
 }
 #endif
 
+#if IS_DEVEL
 template <typename T>
 inline bool fpu_error(T x) { return (std::isinf(x) || std::isnan(x)); }
 
 inline bool fpu_error(float2 x) { return fpu_error(x.x) || fpu_error(x.y); }
 inline bool fpu_error(float3 x) { return fpu_error(x.x) || fpu_error(x.y) || fpu_error(x.z); }
-
+#else
+#define fpu_error(X) (0)
+#endif
 
 static const float epsilon = 0.0001f;
 
@@ -192,7 +195,7 @@ inline float vectorToAngle(float2 vec) { return std::atan2(vec.y, vec.x); }
 inline float dotAngles(float a, float b)
 {
     //return dot(angleToVector(a), angleToVector(b));
-    return cos(abs(a-b));
+    return cos(a-b);
 }
 
 #define M_PIf float(M_PI)
@@ -383,6 +386,12 @@ inline float distanceSqr(const float2 &a, const float2& b) { return lengthSqr(a-
 inline float lengthSqr(const float3 &a) { return a.x * a.x + a.y * a.y + a.z * a.z; }
 inline float distanceSqr(const float3 &a, const float3& b) { return lengthSqr(a-b); }
 
+inline double lengthSqr(const double2 &a) { return a.x * a.x + a.y * a.y; }
+inline double distanceSqr(const double2 &a, const double2& b) { return lengthSqr(a-b); }
+
+inline double lengthSqr(const double3 &a) { return a.x * a.x + a.y * a.y + a.z * a.z; }
+inline double distanceSqr(const double3 &a, const double3& b) { return lengthSqr(a-b); }
+
 inline float todegrees(float radians) { return 360.f / (2.f * M_PIf) * radians; }
 inline float toradians(float degrees) { return 2.f * M_PIf / 360.0f * degrees; }
 
@@ -396,10 +405,20 @@ inline glm::detail::tvec2<T, glm::defaultp> rotate(glm::detail::tvec2<T, glm::de
     return glm::detail::tvec2<T, glm::defaultp>(cosa * v.x - sina * v.y, sina * v.x + cosa * v.y);
 }
 
+// rotate counterclockwise
 template <typename T>
-inline glm::detail::tvec2<T, glm::defaultp> rotate(const glm::detail::tvec2<T, glm::defaultp> &v, const glm::detail::tvec2<T, glm::defaultp> &a)
+inline glm::detail::tvec2<T, glm::defaultp> rotate(const glm::detail::tvec2<T, glm::defaultp> &v, 
+                                                   const glm::detail::tvec2<T, glm::defaultp> &a)
 {
     return glm::detail::tvec2<T, glm::defaultp>(a.x * v.x - a.y * v.y, a.y * v.x + a.x * v.y);
+}
+
+// rotate clockwise
+template <typename T>
+inline glm::detail::tvec2<T, glm::defaultp> rotateN(const glm::detail::tvec2<T, glm::defaultp> &v, 
+                                                    const glm::detail::tvec2<T, glm::defaultp> &a)
+{
+    return glm::detail::tvec2<T, glm::defaultp>(a.x * v.x + a.y * v.y, -a.y * v.x + a.x * v.y);
 }
 
 inline float2 swapXY(float2 v)    { return float2(v.y, v.x); }
@@ -687,22 +706,14 @@ inline bool intersectCircleCircle(const float2 &p, float pr, const float2 &c, fl
     return intersectPointCircle(p, c, pr+cr);
 }
 
-inline float distancePointCircleSqr(float2 ap, float2 bp, float br)
-{
-    const float2 x = ap-bp;
-    return (x.x * x.x + x.y * x.y) - (br*br);
-}
-
-inline float distanceCircleCircleSqr(float2 ap, float ar, float2 bp, float br)
-{
-    return distancePointCircleSqr(ap, bp, ar+br);
-}
-
 // intersect two circles, returning number of intersections with points in RA and RB
 int intersectCircleCircle(float2 *ra, float2 *rb, const float2 &p, float pr, const float2 &c, float cr);
 
 bool intersectSegmentSegment(float2 a1, float2 a2, float2 b1, float2 b2);
 bool intersectSegmentSegment(float2 *o, float2 a1, float2 a2, float2 b1, float2 b2);
+
+// return count, up to two points in OUTP
+int intersectPolySegment(float2 *outp, const float2 *points, int npoints, float2 sa, float2 sb);
 
 // distance from point P to closest point on line A B
 // FIXME could probably do this with only one sqrt...
@@ -1039,9 +1050,9 @@ bool intersectSectorCircle(float2 ap, float ar, float ad, float aa, float2 cp, f
 // shortest vector pointing from q to p (p-q)
 inline float2 toroidalDelta(const float2 &p, const float2 &q, const float2 &w)
 {
-    ASSERT(w.x > 0 && w.y > 0 &&
-           intersectPointRectangleCorners(p, float2(0.f), w) &&
-           intersectPointRectangleCorners(q, float2(0.f), w));
+    DASSERT(w.x > 0 && w.y > 0 &&
+            intersectPointRectangleCorners(p, float2(0.f), w) &&
+            intersectPointRectangleCorners(q, float2(0.f), w));
 
     const float2 v = p - q;
 
@@ -1140,5 +1151,6 @@ static double findRootRegulaFalsi(const Fun& fun, double lo, double hi, double e
 // x where a^2x + bx + c = 0
 int quadraticFormula(double* r0, double* r1, double a, double b, double c);
 
+bool mathRunTests();
 
 #endif

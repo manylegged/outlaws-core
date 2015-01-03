@@ -19,9 +19,6 @@ void sdl_os_oncrash(const char* message);
 
 void sdl_set_scaling_factor(float factor);
 
-// return log file as a string
-string sdl_get_logdata();
-
 // utf8 <-> utf16
 std::wstring s2ws(const std::string& s);
 
@@ -31,11 +28,13 @@ std::wstring s2ws(const std::string& s);
 struct SDL_SysWMinfo;
 
 // display a message box to the user on unrecoverable errors
-void os_errormessage1(const char* msg, const string& data, SDL_SysWMinfo *info);
+void os_errormessage1(const string& message, SDL_SysWMinfo *info);
 
 int os_create_parent_dirs(const char* path);
 
 string os_get_platform_info();
+
+void os_stacktrace();
 
 int os_init();
 

@@ -29,6 +29,15 @@ extern "C"
 #endif
 #endif
 
+#ifndef NOINLINE
+#if _MSC_VER
+#define NOINLINE __declspec(noinline)
+#elif __clang__ || __GNUC__
+#define NOINLINE __attribute__((noinline))
+#else
+#define NOINLINE
+#endif
+#endif
 ////////////////////////////// OS layer calls into Game ///////////////////////////////
 
 // main game function - called once per frame
@@ -65,16 +74,19 @@ void OLG_OnClose(void);
 int OLG_Init(int argc, const char** argv);
 
 // init opengl, return NULL if supported or error message if not
-int OLG_InitGL(void);
+const char* OLG_InitGL(void);
 
 // called when window manager changes full screen state
 void OLG_SetFullscreenPref(int enabled);
 
 // handle assertions. return 1
-int OLG_OnAssertFailed(const char* file, int line, const char* func, const char* x,
-                        const char* format, ...) __printflike(5, 6) CLANG_ANALYZER_NORETURN;
-int OLG_vOnAssertFailed(const char* file, int line, const char* func, const char* x,
-                         const char* format, va_list v) __printflike(5, 0) CLANG_ANALYZER_NORETURN;
+NOINLINE int OLG_OnAssertFailed(const char* file, int line, const char* func,
+                                const char* x, const char* format, ...)
+    __printflike(5, 6) CLANG_ANALYZER_NORETURN;
+
+NOINLINE int OLG_vOnAssertFailed(const char* file, int line, const char* func,
+                                 const char* x, const char* format, va_list v)
+    __printflike(5, 0) CLANG_ANALYZER_NORETURN;
 
 // return target frame rate. e.g. 60 fps
 float OLG_GetTargetFPS(void);
@@ -88,6 +100,8 @@ int OLG_UseDevSavePath(void);
 // return name of log file to open
 const char* OLG_GetLogFileName(void);
 
+// upload logfile to server
+int OLG_UploadLog(const char* logdata, int loglen);
 
  //////////////////////////////// Game calls into OS layer //////////////////////////////////
 
@@ -95,6 +109,7 @@ const char* OLG_GetLogFileName(void);
 // these allocate and drain autorelease pools on Apple platforms
 void OL_ThreadBeginIteration(int i);
 void OL_ThreadEndIteration(int i);
+void OL_OnThreadInit(void);
 
 // return number of cpu cores
 int OL_GetCpuCount(void);
@@ -105,6 +120,7 @@ void OL_ReportMessage(const char *str);
 // time since start of game in seconds
 double OL_GetCurrentTime(void);
 
+// get logged in username
 const char* OL_GetUserName(void);
 
 // return string describing runtime platform and current time, for log
@@ -115,6 +131,9 @@ int OL_OpenWebBrowser(const char* url);
 
 // quit gracefully
 void OL_DoQuit(void);
+
+// request that log be uploaded when game is shutdown
+void OL_ScheduleUploadLog(void);
 
 // read string from clipboard (may return null)
 const char* OL_ReadClipboard(void);
@@ -145,6 +164,9 @@ void OL_SetWindowSizePoints(int w, int h);
 
 // change swap interval (0 is immediate flip, 1 is vsync 60fps, 2 is vsync 30fps...)
 void OL_SetSwapInterval(int interval);
+
+// return true if driver supports tear control, aka adaptive vsync
+int OL_HasTearControl(void);
 
 typedef struct OutlawImage {
     int width, height;

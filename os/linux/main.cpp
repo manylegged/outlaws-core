@@ -17,10 +17,12 @@
 #include <execinfo.h>
 #include <dlfcn.h>
 #include <link.h>
+#include <ucontext.h>
 
 #define MAX_PATH 256
 
-const char *g_binaryName;
+const char *g_binaryName = NULL;
+int g_signaldepth = 0;
 
 // don't go through ReportMessagef/ReportMessage!
 static void ReportLinux(const char *format, ...)
@@ -232,9 +234,9 @@ const char** OL_ListDirectory(const char* path1)
     return &elements[0];
 }
 
-void os_errormessage1(const char* msg, const string& data, SDL_SysWMinfo *info)
+void os_errormessage1(const string& message, SDL_SysWMinfo *info)
 {
-    OL_ReportMessage(msg);
+    OL_ReportMessage(message.c_str());
 }
 
 string os_get_platform_info()
@@ -330,20 +332,19 @@ static int so_callback(struct dl_phdr_info *info, size_t size, void *data)
     return 0;
 }
 
-void list_loaded_shared_objects()
-{
-    ReportLinux("Dumping loaded shared objects");
-    SoCallbackData data = { str_basename(g_binaryName), 0 };
-    dl_iterate_phdr(so_callback, &data);
-}
-
 
 // from http://spin.atomicobject.com/2013/01/13/exceptions-stack-traces-c/
 static const char* signal_to_string(int sig, siginfo_t *siginfo)
 {
     switch(sig)
     {
-    case SIGSEGV: return ("Caught SIGSEGV: Segmentation Fault");
+    case SIGSEGV:
+        switch(siginfo->si_code)
+        {
+        case SEGV_MAPERR: return "Caught SIGSEGV: Segmentation Fault (address not mapped to object)";
+        case SEGV_ACCERR: return "Caught SIGSEGV: Segmentation Fault (invalid permissions for mapped object)";
+        default: return ("Caught SIGSEGV: Segmentation Fault");
+        }
     case SIGINT: return ("Caught SIGINT: Interactive attention signal, (usually ctrl+c)");
     case SIGFPE:
         switch(siginfo->si_code)
@@ -377,28 +378,115 @@ static const char* signal_to_string(int sig, siginfo_t *siginfo)
     }
 }
 
-static void posix_signal_handler(int sig, siginfo_t *siginfo, void *context)
+static void print_backtrace()
 {
-    puts("signal handler called");
-    fflush(NULL);
-    ReportLinux("%s (signal %d)", signal_to_string(sig, siginfo), sig);
-    list_loaded_shared_objects();
-    fflush(NULL);
-
     static const int maxbuf = 128;
     void* buffer[maxbuf];
     memset(buffer, 0, sizeof(buffer));
     const int count = backtrace(buffer, maxbuf);
 
-    ReportLinux("Dumping stack");
+    const pthread_t current_tid = pthread_self();
+    ReportLinux("Dumping stack for thread %#llx '%s'", (uint64)current_tid, map_get(_thread_name_map(), (uint64)current_tid).c_str());
     for (int i=0; i<count; i++)
         ReportLinux("%2d. Called from %p", i, buffer[i]);
-    sdl_os_oncrash(str_format("Oops! %s crashed.\n", OLG_GetName()).c_str());
+}
+
+void os_stacktrace()
+{
+    const int saved_depth = g_signaldepth;
+    if (g_signaldepth == 0) {
+        g_signaldepth = 1;
+    }
+
+    ReportLinux("Dumping loaded shared objects");
+    SoCallbackData data = { str_basename(g_binaryName), 0 };
+    dl_iterate_phdr(so_callback, &data);
+    
+    print_backtrace();
+    fflush(NULL);
+
+    const pthread_t current_tid = pthread_self();
+#if 0
+    ReportLinux("Stopping %d threads", (int)_thread_name_map().size()-1);
+    foreach (const auto &x, _thread_name_map())
+    {
+        if (!x.first || x.first == current_tid)
+            continue;
+        int status;
+        if ((status = pthread_kill((pthread_t) x.first, SIGSTOP)))
+            ReportLinux("pthread_kill(%#llx, SIGSTOP) failed: %s", x.first, strerror(status));
+    }
+#endif
+    ReportLinux("Observed %d threads from %#llx '%s'",
+                (int)_thread_name_map().size(), (uint64)current_tid, 
+                map_get(_thread_name_map(), (uint64)current_tid).c_str());
+    foreach (const auto &x, _thread_name_map())
+    {
+        if (!x.first || x.first == current_tid)
+            continue;
+        ReportLinux("Sending SIGTERM to thread %#llx, '%s'", x.first, x.second.c_str());
+        int status;
+        if ((status = pthread_kill((pthread_t) x.first, SIGTERM)))
+            ReportLinux("pthread_kill(%#llx, SIGTERM) failed: %s", x.first, strerror(status));
+    }
+    sleep(1);                   // wait for other threads to print
+    ReportLinux("Handling thread done backtracing");
+    g_signaldepth = saved_depth;
+}
+
+static void posix_signal_handler(int sig, siginfo_t *siginfo, void *context)
+{
+    g_signaldepth++;
+    if (g_signaldepth > 2)
+    {
+        if (g_signaldepth == 3)
+            ReportLinux("Recursive Signal Handler detected - returning");
+        return;
+    }
+    else if (g_signaldepth == 2)
+    {
+        print_backtrace();
+        return;
+    }
+    
+    puts("\nsignal handler called");
+    fflush(NULL);
+    ReportLinux("%s (signal %d)", signal_to_string(sig, siginfo), sig);
+
+    const ucontext_t *ctx = (ucontext_t*)context;
+    const mcontext_t &mcontext = ctx->uc_mcontext;
+
+    if (sig == SIGILL || sig == SIGFPE || sig == SIGSEGV || sig == SIGBUS || sig == SIGTRAP)
+    {
+        const greg_t ecode = mcontext.gregs[REG_ERR];
+        ReportLinux("Invalid %s to %p", (ecode&4) ? "Exec" : (ecode&2) ? "Write" : "Read", siginfo->si_addr);
+    }
+    
+#ifdef __LP64__
+    ReportLinux("PC/RIP: %#llx SP/RSP: %#llx, FP/RBP: %#llx", mcontext.gregs[REG_RIP], mcontext.gregs[REG_RSP], mcontext.gregs[REG_RBP]);
+#else
+    ReportLinux("PC/EIP: %#x SP/ESP: %#x, FP/EBP: %#x", mcontext.gregs[REG_EIP], mcontext.gregs[REG_ESP], mcontext.gregs[REG_EBP]);
+#endif
+    
+    if (sig == SIGTERM || sig == SIGINT)
+    {
+        OLG_OnClose();
+        OL_DoQuit();
+        g_signaldepth--;
+        return;
+    }
+
+    os_stacktrace();
+    g_signaldepth--;
+    
+    sdl_os_oncrash("Spacetime Segmentation Fault Detected\n(Reassembly crashed)\n");
+    exit(1);
 }
 
 
 void set_signal_handler()
 {
+#if 0
     /* setup alternate stack */
     {
         static uint8_t alternate_stack[SIGSTKSZ];
@@ -414,6 +502,7 @@ void set_signal_handler()
             ReportLinux("signalstack failed: %s", strerror(errno));
         }
     }
+#endif
  
     /* register our signal handlers */
     {
@@ -426,7 +515,7 @@ void set_signal_handler()
            when we use an alternate stack */
         sig_action.sa_flags = SA_SIGINFO;
 #else
-        sig_action.sa_flags = SA_SIGINFO | SA_ONSTACK;
+        sig_action.sa_flags = SA_SIGINFO;// | SA_ONSTACK;
 #endif
  
         const int signals[] = { SIGSEGV, SIGFPE, SIGINT, SIGILL, SIGTERM, SIGABRT };
@@ -467,5 +556,6 @@ int main(int argc, const char** argv)
         return sdl_os_main(argc, argv);
     } catch (const std::exception &e) {
         ReportLinux("unhandled exception: %s", e.what());
+        return 1;
     }
 }

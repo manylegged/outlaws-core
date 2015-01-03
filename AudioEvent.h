@@ -95,11 +95,18 @@ static string sourceToString(cAudio::IAudioSource *src)
 
 class AudioAllocator {
 
-    cAudio::IAudioManager                   *m_mgr = NULL;
-    vector<pair<cAudio::IAudioSource*, int>> m_sources;
-    vector<cAudio::IAudioSource*>            m_streamSources;
-    std::map<lstring, cAudio::IAudioBuffer*> m_buffers;
-    float2                                   m_lsnrPos;
+    struct SourceData {
+        cAudio::IAudioSource* source    = NULL;
+        int                   priority  = 0;
+        float                 gain      = 0.f;
+    };
+    
+    cAudio::IAudioManager                    *m_mgr = NULL;
+    vector<SourceData>                        m_sources;
+    vector<cAudio::IAudioSource*>             m_streamSources;
+    std::map<lstring, cAudio::IAudioBuffer*>  m_buffers;
+    float2                                    m_lsnrPos;
+    cAudioMutex                               m_dummy;
     
 public:
 
@@ -134,6 +141,14 @@ public:
         mutex = m_mgr->getMutex();
         return true;
     }
+
+    void shutdown()
+    {
+        mutex = &m_dummy;
+        releaseAll();
+        cAudio::destroyAudioManager(m_mgr);
+        m_mgr = NULL;
+    }
     
     AudioAllocator()
     {
@@ -142,14 +157,7 @@ public:
 
     ~AudioAllocator()
     {
-        releaseAll();
-        cAudio::destroyAudioManager(m_mgr);
-    }
-
-    static AudioAllocator& instance()
-    {
-        static AudioAllocator *aa = new AudioAllocator;
-        return *aa;
+        shutdown();
     }
 
     cAudio::IAudioManager* getMgr() { return m_mgr; }
@@ -167,18 +175,12 @@ public:
     uint getSourcesUsed() const
     {
         cAudioMutexBasicLock l(*mutex);
-        uint sources = m_streamSources.size();
-        for (uint i=0; i<m_sources.size(); i++) {
-            if (m_sources[i].first->isPlaying())
-                sources++;
-        }
-        return sources;
+        return m_streamSources.size() + m_sources.size();
     }
 
     uint getSourcesTotal() const
     {
-        cAudioMutexBasicLock l(*mutex);
-        return m_streamSources.size() + m_sources.size();
+        return kStreamSources + kSoundSources;
     }
 
     uint getBufferCount() const { return m_buffers.size(); }
@@ -186,9 +188,9 @@ public:
 
     void releaseAll()
     {
-        foreach (auto &src, m_sources) {
-            src.first->stop();
-            src.first->drop();
+        foreach (auto &sd, m_sources) {
+            sd.source->stop();
+            sd.source->drop();
         }
         m_sources.clear();
 
@@ -199,8 +201,10 @@ public:
         m_streamSources.clear();
 
         foreach (auto& x, m_buffers) {
-            ASSERT(x.second->getReferenceCount() == 1);
-            x.second->drop();
+            if (x.second) {
+                ASSERT(x.second->getReferenceCount() == 1);
+                x.second->drop();
+            }
         }
         m_buffers.clear();
 
@@ -208,8 +212,20 @@ public:
         //cAudio::getLogger()->setLogLevel((globals.debugRender&DBG_SOUND) ? cAudio::ELL_DEBUG : cAudio::ELL_INFO);
     }
 
-#define REUSE_SOURCES 0
-    
+    void onUpdate()
+    {
+        for (uint i=0; i<m_sources.size(); )
+        {
+            SourceData &sd = m_sources[i];
+            cAudio::IAudioSource *src = sd.source;
+            if (vec_pop_increment(m_sources, i, !src->isPlaying())) {
+                src->drop();
+            } else {
+                sd.gain = src->calculateGain();
+            }
+        }
+    }
+
     cAudio::IAudioSource *getSource(float newGain, int priority)
     {
         if (newGain < 0.001f)
@@ -217,67 +233,31 @@ public:
         if (!init())
             return NULL;
         
-        cAudio::IAudioSource *usrc = NULL;
-        
         float minVol = newGain;
         int   minIdx = -1;
         int   minPri = priority;
 
-        // At least on Apple's OpenAL implementation, reusing sources like this results
-        // in sounds not playing or playing in a weird muffled way
-#if REUSE_SOURCES
-        while (m_sources.size() < kSoundSources) {
-            cAudio::IAudioSource *src = m_mgr->createStatic(NULL);
-            ASSERT(src);
-            if (src) {
-                m_sources.push_back(make_pair(src, priority));
-            }
-        }
-
-        for (uint i=0; i<m_sources.size(); i++) {
-            cAudio::IAudioSource *src = m_sources[i].first;
-            if (!src->isPlaying()) {
-                minIdx = i;
-                break;
-            }
-            const float vol = src->calculateGain();
-            if (vol < minVol) {
-                minIdx = i;
-                minVol = vol;
-            }
-        }
-
-        if (minIdx < 0)
-            return NULL;
-        usrc = m_sources[minIdx].first;
-#else
         if (m_sources.size() >= kSoundSources)
         {
-            // first steal by volume 
-            for (uint i=0; i<m_sources.size();) {
-                cAudio::IAudioSource *src = m_sources[i].first;
-                const int             pri = m_sources[i].second;
-                if (!src->isPlaying()) {
-                    src->drop();
-                    vec_pop(m_sources, i);
-                } else {
-                    if (pri < minPri)
-                    {
-                        minVol = src->calculateGain();
-                        minPri = pri;
-                        minIdx = i;
-                    }
-                    else if (pri == minPri)
-                    {
-                        const float vol = src->calculateGain();
-                        if (vol < minVol) {
-                            minIdx = i;
-                            minPri = pri;
-                            minVol = vol;
-                        }
-                    }
-                    i++;
+            // first steal by volume
+            int i=0;
+            foreach (const SourceData &sd, m_sources)
+            {
+                if (sd.priority < minPri)
+                {
+                    minVol = sd.gain;
+                    minPri = sd.priority;
+                    minIdx = i;
                 }
+                else if (sd.priority == minPri)
+                {
+                    if (sd.gain < minVol) {
+                        minIdx = i;
+                        minPri = sd.priority;
+                        minVol = sd.gain;
+                    }
+                }
+                i++;
             }
 
             if (m_sources.size() >= kSoundSources)
@@ -286,24 +266,19 @@ public:
                 {
                     return NULL;
                 }
-                cAudio::IAudioSource *src = m_sources[minIdx].first;
+                cAudio::IAudioSource *src = m_sources[minIdx].source;
                 vec_pop(m_sources, minIdx);
                 src->stop();
                 src->drop();
             }
         }
 
-        usrc = m_mgr->createStatic(NULL);
-        if (usrc)
-            m_sources.push_back(make_pair(usrc, priority));
-#endif
+        cAudio::IAudioSource *usrc = m_mgr->createStatic(NULL);
+        if (!usrc)
+            return NULL;
 
-        if (usrc) {
-            usrc->stop();
-            usrc->unRegisterAllEventHandlers();
-            usrc->seek(0.f);
-        }
-        
+        SourceData sd = { usrc, priority, newGain };
+        m_sources.push_back(sd);
         return usrc;
     }
 
@@ -454,13 +429,15 @@ private:
     float                   m_pitch  = 1.f;
     float                   m_offset = 0.f;
     bool                    m_loop   = false;
+    bool                    m_relative = false;
     cAudio::IAudioSource*   m_source = NULL;
+    AudioAllocator*         m_allocator = NULL;
 
     const vector<lstring> &getSamples() const { return m_se->samples[m_layer]; }
     lstring getSample() const { return getSamples()[m_se->m_index]; }
 
 public: 
-    cAudio::IAudioSource *prepare(float gain3d=1.f)
+    cAudio::IAudioSource *prepare(AudioAllocator *alloc, float gain3d=1.f)
     {
         if (m_source)
             return m_source;
@@ -473,7 +450,7 @@ public:
         m_se->m_index = min(m_se->m_index, (uint)getSamples().size()-1);
         
         if (m_se->flags&EventDescription::STREAM) {
-            m_source = AudioAllocator::instance().getStreamSource(getSample());
+            m_source = alloc->getStreamSource(getSample());
             if (!m_source) {
                 // DPRINT(SOUND, ("Failed to load stream sample %s:%d, erasing",
                                // m_se->name.c_str(), m_se->m_index));
@@ -481,10 +458,10 @@ public:
                 return NULL;
             }
         } else {
-            m_source = AudioAllocator::instance().getSource(vol, m_se->priority);
+            m_source = alloc->getSource(vol, m_se->priority);
             if (!m_source)
                 return NULL;
-            cAudio::IAudioBuffer *buf = AudioAllocator::instance().getBuffer(getSample());
+            cAudio::IAudioBuffer *buf = alloc->getBuffer(getSample());
             if (!buf) {
                 m_source->stop();
                 m_source = NULL;
@@ -495,6 +472,7 @@ public:
             //                getSamples()[m_se->m_index].c_str()));
         }
         
+        m_allocator = alloc;
         m_source->setPitch(m_pitch * (m_se->pitch + randrange(-m_se->pitchRandomize, m_se->pitchRandomize)));
         m_source->setVolume(m_volume * m_se->volume);
         m_source->seek(m_offset, false);
@@ -509,13 +487,13 @@ private:
 
     void onRelease()
     {
-        cAudioMutexBasicLock l(*AudioAllocator::instance().mutex);
+        cAudioMutexBasicLock l(*m_allocator->mutex);
         m_source = NULL;
     }
 
     void onStop()
     {
-        cAudioMutexBasicLock l(*AudioAllocator::instance().mutex);
+        cAudioMutexBasicLock l(*m_allocator->mutex);
         if (m_source) {
             m_source->unRegisterEventHandler(this);
             m_source->drop();
@@ -572,19 +550,26 @@ public:
         m_loop = loop;
     }
 
-    float getOffset() const { return m_source ? m_source->getCurrentAudioTime() : m_offset; }
+    void update()
+    {
+        if (m_source)
+            m_offset = m_source->getCurrentAudioTime();
+    }
+
+    float getOffset() const { return m_offset; }
     float getVolume() const { return m_volume; }
     float getPitch()  const { return m_pitch; }
     bool  isLoop()    const { return m_loop; }
     bool  isValid()   const { return m_se != NULL; }
     bool  isPlaying() const { return m_source && m_source->isPlaying(); }
-    bool  isRelative() const { return m_source && m_source->isRelative(); }
+    bool  isRelative() const { return m_relative; }
     const EventDescription& getDescription() const { return *m_se; }
 
-    void play2d()
+    void play2d(AudioAllocator *alloc)
     {
-        if (prepare(1.f)) 
+        if (prepare(alloc, 1.f)) 
         {
+            m_relative = true;
             m_source->setPosition(c3zero);
             m_source->setVelocity(c3zero);
             m_source->setRolloffFactor(1.f);
@@ -594,13 +579,13 @@ public:
         }
     }
 
-    void play3d(float2 pos, float2 vel)
+    void play3d(AudioAllocator *alloc, float2 pos, float2 vel)
     {
-        const float gain3d = AudioAllocator::instance().calculateGain(
-            pos, m_se->minDist, m_se->maxDist, m_se->rolloff);
+        const float gain3d = alloc->calculateGain(pos, m_se->minDist, m_se->maxDist, m_se->rolloff);
 
-        if (prepare(gain3d)) 
+        if (prepare(alloc, gain3d)) 
         {
+            m_relative = false;
             m_source->setVelocity(c3(vel));
             m_source->setMinDistance(m_se->minDist);
             m_source->setMaxAttenuationDistance(m_se->maxDist);
@@ -722,20 +707,20 @@ public:
         return false;
     }
 
-    void play2d()
+    void play2d(AudioAllocator *alloc)
     {
         if (!m_se || m_se->samples.empty() || m_se->volume < epsilon)
             return;
         for (uint i=0; i<m_layerCount; i++)
-            m_layers[i].play2d();
+            m_layers[i].play2d(alloc);
     }
     
-    void play3d()
+    void play3d(AudioAllocator *alloc)
     {
         if (!m_se || m_se->samples.empty() || m_se->volume < epsilon)
             return;
         for (uint i=0; i<m_layerCount; i++)
-            m_layers[i].play3d(m_pos, m_vel);
+            m_layers[i].play3d(alloc, m_pos, m_vel);
     }
 
     void advance(int delta)

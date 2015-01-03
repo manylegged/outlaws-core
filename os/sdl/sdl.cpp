@@ -20,26 +20,8 @@ static SDL_RWops   *g_logfile        = NULL;
 static const char*  g_logpath        = NULL;
 static string       g_logdata;
 static bool         g_openinglog = false;
-
-
-std::wstring s2ws(const std::string& s)
-{
-#if WIN32
-    int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), s.length(), 0, 0);
-    std::wstring r(len, L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), s.length(), &r[0], len);
-#else
-    std::mbtowc(NULL, 0, 0); // reset the conversion state
-    const char* ptr = s.c_str();
-    const char* end = s.c_str() + s.size();
-    int ret = 0;
-    std::wstring r;
-    for (wchar_t wc; (ret = std::mbtowc(&wc, ptr, end-ptr)) > 0; ptr+=ret) {
-        r += wc;
-    }
-#endif
-    return r;
-}
+static int          g_supportsTearControl = -1;
+static bool         g_wantsLogUpload = false;
 
 void SetWindowResizable(SDL_Window *win, SDL_bool resizable)
 {
@@ -59,12 +41,12 @@ void SetWindowResizable(SDL_Window *win, SDL_bool resizable)
 #endif
 }
 
-void os_errormessage(const char* msg)
+void os_errormessage(const string &str)
 {
     SDL_SysWMinfo info;
     SDL_VERSION(&info.version);
     SDL_GetWindowWMInfo(g_displayWindow, &info);
-    return os_errormessage1(msg, g_logdata, &info);
+    return os_errormessage1(str, &info);
 }
 
 // don't go through ReportMessagef/ReportMessage!
@@ -77,20 +59,31 @@ static void ReportSDL(const char *format, ...)
     va_end(vl);
 }
 
-void sdl_os_oncrash(const char* message)
+static const string loadFile(SDL_RWops *io, const char* name)
 {
-    fflush(NULL);
-
-    string dest;
-    {
-        std::chrono::time_point<std::chrono::system_clock> start = std::chrono::system_clock::now();
-        const std::time_t cstart = std::chrono::system_clock::to_time_t(start);
-        char mbstr[100];
-        std::strftime(mbstr, sizeof(mbstr), "%Y%m%d_%I.%M.%S.%p", std::localtime(&cstart));
-        dest = OL_PathForFile(str_format("~/Desktop/%s_crashlog_%s.txt", OLG_GetName(), mbstr).c_str(), "w");
-        ReportSDL("Copying log from %s to %s", g_logpath, dest.c_str());
+    if (!io)
+        return "";
+    string buf;
+    Sint64 size = SDL_RWsize(io);
+    buf.resize(size);
+    if (SDL_RWread(io, (char*)buf.data(), buf.size(), sizeof(char)) <= 0) {
+        ReportSDL("error writing to %s: %s", name, SDL_GetError());
+    }
+    if (SDL_RWclose(io) != 0) {
+        ReportSDL("error closing file %s: %s", name, SDL_GetError());
     }
 
+    return buf;
+}
+
+static bool readUploadLog(string& data)
+{
+    data = loadFile(SDL_RWFromFile(g_logpath, "r"), g_logpath);
+    return data.size() ? OLG_UploadLog(data.c_str(), data.size()) : 0;
+}
+
+void sdl_os_oncrash(const char* message)
+{
     fflush(NULL);
     if (g_logfile)
     {
@@ -98,15 +91,38 @@ void sdl_os_oncrash(const char* message)
         SDL_RWclose(g_logfile);
         g_logfile = NULL;
     }
-    g_quitting = true;
+    g_quitting = true;          // prevent log from reopening
+
+    string data;
+    bool success = readUploadLog(data);
+    SteamAPI_SetMiniDumpComment(data.size() ? data.c_str() : "Error loading log");
+
+    if (success)
+    {
+        os_errormessage(str_format("%s\nAnonymous log uploaded OK.\n\n%s", message, g_logpath));
+        return;
+    }
+    
+    std::chrono::time_point<std::chrono::system_clock> start = std::chrono::system_clock::now();
+    const std::time_t cstart = std::chrono::system_clock::to_time_t(start);
+    char mbstr[100];
+    std::strftime(mbstr, sizeof(mbstr), "%Y%m%d_%I.%M.%S.%p", std::localtime(&cstart));
+    string dest = OL_PathForFile(str_format("~/Desktop/%s_crashlog_%s.txt", OLG_GetName(), mbstr).c_str(), "w");
+    ReportSDL("Copying log from %s to %s", g_logpath, dest.c_str());
 
     OL_CopyFile(g_logpath, dest.c_str());
-
+    
     os_errormessage(str_format(
         "%s\n"
         "Please email\n"
         "%s\nto arthur@anisopteragames.com",
         message, dest.c_str()).c_str());
+}
+
+void OL_ScheduleUploadLog(void)
+{
+    ReportSDL("Log upload scheduled");
+    g_wantsLogUpload = true;
 }
 
 
@@ -135,9 +151,8 @@ void OL_ReportMessage(const char *str_)
 {
 #if OL_WINDOWS
     OutputDebugStringA(str_);
-#else
-    printf("%s", str_);
 #endif
+    printf("%s", str_);
 
     if (g_quitting)
         return;
@@ -193,11 +208,20 @@ int OL_GetFullscreen(void)
         return 0;
 }
 
+// 0 is windows, 1 is "fake" fullscreen, 2 is "true" fullscreen
 void OL_SetFullscreen(int fullscreen)
 {
     const int wasfs = OL_GetFullscreen();
+    
+#if !OL_WINDOWS
+    if (fullscreen)
+        fullscreen = 2;
+#endif
+
     if (fullscreen != wasfs)
     {
+        g_supportsTearControl = -1; // reset
+
         // disable / save old state
         if (wasfs == 0)
         {
@@ -215,6 +239,9 @@ void OL_SetFullscreen(int fullscreen)
         {
             ReportSDL("Disabled Fullscreen");
             SDL_SetWindowFullscreen(g_displayWindow, 0);
+#if OL_LINUX
+            SDL_SetWindowGrab(g_displayWindow, SDL_FALSE);
+#endif
         }
 
         // enable new state
@@ -242,34 +269,25 @@ void OL_SetFullscreen(int fullscreen)
         {
             ReportSDL("Enabled Fullscreen");
             SDL_SetWindowFullscreen(g_displayWindow, SDL_WINDOW_FULLSCREEN_DESKTOP);
+#if OL_LINUX
+            SDL_SetWindowGrab(g_displayWindow, SDL_TRUE);
+#endif
         }
     }
 }
 
 double OL_GetCurrentTime()
 {
-    // SDL_GetTicks is in milliseconds
-#if OL_WINDOWS
     static double frequency = 0.0;
     if (frequency == 0.0)
-    {
-        LARGE_INTEGER freq;
-        QueryPerformanceFrequency(&freq);
-        frequency = (double)freq.QuadPart;
-    }
+        frequency = (double) SDL_GetPerformanceFrequency();
 
-    LARGE_INTEGER count;
-    QueryPerformanceCounter(&count);
+    const Uint64 count = SDL_GetPerformanceCounter();
 
-    static LARGE_INTEGER start = count;
+    static Uint64 start = count;
 
-    const uint64 rel = count.QuadPart - start.QuadPart;
+    const uint64 rel = count - start;
     return (double) rel / frequency;
-#else
-    const uint   ticks = SDL_GetTicks();
-    const double secs  = (double) ticks / 1000.0;
-    return secs;
-#endif
 }
 
 
@@ -346,6 +364,12 @@ void OL_DoQuit()
     g_quitting = true;
 }
 
+void OL_OnTerminate()
+{
+    ReportSDL("OL_OnTerminate called");
+    exit(1);
+}
+
 void sdl_set_scaling_factor(float factor)
 {
     g_scaling_factor = factor;
@@ -369,7 +393,19 @@ void OL_SetWindowSizePoints(int w, int h)
 
 void OL_SetSwapInterval(int interval)
 {
-    SDL_GL_SetSwapInterval(interval);
+    int error = SDL_GL_SetSwapInterval(interval);
+    if (interval < 0) {
+        const int supports = error ? 0 : 1;
+        if (supports != g_supportsTearControl) {
+            ReportSDL("Tear Control %s Supported", supports ? "is" : "is NOT");
+            g_supportsTearControl = supports;
+        }
+    }
+}
+
+int OL_HasTearControl(void)
+{
+    return g_supportsTearControl;
 }
 
 float OL_GetBackingScaleFactor() 
@@ -814,6 +850,8 @@ static int keysymToKey(const SDL_Keysym &keysym)
         //case SDLK_LMETA:    // fallthrough
     case SDLK_RALT:     // fallthrough
     case SDLK_LALT:     return OAltKey;
+    case SDLK_LGUI:     //fallthrough (windows / apple key)
+    case SDLK_RGUI:     return OControlKey;
     case SDLK_BACKSPACE: return NSBackspaceCharacter;
     case SDLK_DELETE:   return NSDeleteFunctionKey;
     default:
@@ -854,18 +892,18 @@ static void HandleEvents()
                         evt.window.data2);
                 break;
             case SDL_WINDOWEVENT_SIZE_CHANGED:
-                ReportSDL("Window %d size changed", evt.window.windowID);
                 g_windowSize.x = evt.window.data1;
                 g_windowSize.y = evt.window.data2;
                 glViewport(0, 0, g_windowSize.x, g_windowSize.y);
+                ReportSDL("Window %d size changed to %dx%d", evt.window.windowID, 
+                          evt.window.data1, evt.window.data2);
                 break;
             case SDL_WINDOWEVENT_RESIZED:
                 g_windowSize.x = evt.window.data1;
                 g_windowSize.y = evt.window.data2;
                 glViewport(0, 0, g_windowSize.x, g_windowSize.y);
-                ReportSDL("Window %d resized to %dx%d",
-                        evt.window.windowID, evt.window.data1,
-                        evt.window.data2);
+                ReportSDL("Window %d resized to %dx%d", evt.window.windowID, 
+                          evt.window.data1, evt.window.data2);
                 break;
             case SDL_WINDOWEVENT_MINIMIZED:
                 ReportSDL("Window %d minimized", evt.window.windowID);
@@ -917,18 +955,6 @@ static void HandleEvents()
 
             break;
         }
-#if 0
-        case SDL_TEXTINPUT:
-        {
-            std::wstring text = s2ws(evt.text.text);
-            e.type = SDL_KEYDOWN;
-            foreach (wchar_t chr, text) {
-                e.key = (int)chr;
-                OLG_OnEvent(e);
-            }
-            e.type = SDL_KEYUP;
-        }
-#endif
         case SDL_MOUSEMOTION:
         {
             e.dx = evt.motion.xrel / g_scaling_factor;
@@ -977,7 +1003,7 @@ static void HandleEvents()
             break;
         }
         case SDL_QUIT:
-            // FIXME call OLG_OnClose
+            OLG_OnClose();
             g_quitting = true;
             break;
         }
@@ -990,9 +1016,36 @@ void OL_Present(void)
 }
 
 
+static void sdlTerminateHandler()
+{
+    ReportSDL("terminate handler called");
+    const char* message = "<no info>";
+    std::exception_ptr eptr = std::current_exception();
+    try {
+        if (eptr) {
+            std::rethrow_exception(eptr);
+        }
+    } catch(const std::exception& e) {
+        message = e.what();
+    }
+
+    ReportSDL("Terminate what: %s", message);
+    
+    os_stacktrace();
+    
+    sdl_os_oncrash(str_format("Spacetime Terminated: %s\n(Reassembly crashed)\n",
+                              message).c_str());
+    exit(1);
+}
+
+
 void OL_ThreadBeginIteration(int i)
 {
-    
+}
+
+void OL_OnThreadInit()
+{
+    std::set_terminate(sdlTerminateHandler);
 }
 
 struct AutoreleasePool {
@@ -1028,21 +1081,6 @@ const char* sdl_os_autorelease(std::string &val)
     return AutoreleasePool::instance().autorelease(val);
 }
 
-static const string loadFile(SDL_RWops *io, const char* name)
-{
-    string buf;
-    Sint64 size = SDL_RWsize(io);
-    buf.resize(size);
-    if (SDL_RWread(io, (char*)buf.data(), buf.size(), sizeof(char)) <= 0) {
-        ReportSDL("error writing to %s: %s", name, SDL_GetError());
-    }
-    if (SDL_RWclose(io) != 0) {
-        ReportSDL("error closing file %s: %s", name, SDL_GetError());
-    }
-
-    return buf;
-}
-
 const char *OL_LoadFile(const char *name)
 {
     const char *fname = OL_PathForFile(name, "r");
@@ -1052,16 +1090,6 @@ const char *OL_LoadFile(const char *name)
         return NULL;
     string buf = loadFile(io, fname);
     return sdl_os_autorelease(buf);
-}
-
-string sdl_get_logdata()
-{
-    if (g_logfile)
-        return NULL;
-    SDL_RWops *io = SDL_RWFromFile(g_logpath, "r");
-    if (!io)
-        return "";
-    return loadFile(io, g_logpath);
 }
 
 void OL_ThreadEndIteration(int i)
@@ -1144,11 +1172,10 @@ static bool initGlew()
     COPY_GL_EXT_IMPL(glRenderbufferStorage);
 
     // make sure we print the gl version no matter what!
-    int success = OLG_InitGL();
-    if (!success)
+    const char* error = OLG_InitGL();
+    if (error)
     {
-        sdl_os_oncrash("Opengl Init failed");
-        return 0;
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, "OpenGL Error", error, NULL);
     }
     return 1;
 }
@@ -1236,7 +1263,8 @@ int sdl_os_main(int argc, const char **argv)
         OLG_Draw();
         const double frameTime = max(0.0, OL_GetCurrentTime() - start);
         if (frameTime < kFrameTime) {
-            SDL_Delay((kFrameTime - frameTime) * 1000.0);
+            std::this_thread::sleep_for(std::chrono::microseconds(int(round(1e6 * (kFrameTime - frameTime)))));
+            // SDL_Delay((kFrameTime - frameTime) * 1000.0);
         }
     }
 
@@ -1247,6 +1275,12 @@ int sdl_os_main(int argc, const char **argv)
         SDL_RWwrite(g_logfile, "\n", 1, 1);
         SDL_RWclose(g_logfile);
         g_logfile = NULL;
+
+        if (g_wantsLogUpload)
+        {
+            string data;
+            readUploadLog(data);
+        }
     }
 
     fflush(NULL);

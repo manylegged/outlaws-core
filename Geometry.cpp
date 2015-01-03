@@ -85,6 +85,19 @@ bool intersectSegmentSegment(float2 *o, float2 a1, float2 a2, float2 b1, float2 
     return intersecting;
 }
 
+int intersectPolySegment(float2 *outp, const float2 *points, int npoints, float2 sa, float2 sb)
+{
+    int count = 0;
+    for (int i=1; i<npoints; i++) {
+        if (intersectSegmentSegment(&outp[count], points[i-1], points[i], sa, sb))
+            count++;
+    }
+    if (intersectSegmentSegment(&outp[count], points[npoints-1], points[0], sa, sb))
+        count++;
+    return count;
+}
+
+
 /*               Return a positive value if the point pd lies inside the     */
 /*               circle passing through pa, pb, and pc; a negative value if  */
 /*               it lies outside; and zero if the four points are cocircular.*/
@@ -415,4 +428,15 @@ float snoise(vec2 v)
     return 130.f * dot(m, g);
 }
 
+#include "RGB.h"
+
+bool mathRunTests()
+{
+    DASSERT(distanceRgb(0xff0000, 0xff0000) == 0.f);
+    DASSERT(distanceRgb(0xff0000, 0x00ff00) > 0.7f);
+    DASSERT(distanceRgb(0xff0000, 0xffffff) > 0.9f);
+    DASSERT(distanceRgb(0xff0000, 0x000000) > 0.9f);
+
+    return 0;
+}
 

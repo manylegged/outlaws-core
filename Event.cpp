@@ -87,6 +87,7 @@ void KeyState::reset()
 {
     memset(ascii, false, sizeof(ascii));
     memset(function, false, sizeof(function));
+    memset(device, false, sizeof(device));
     misc.clear();
     foreach (float2& ax, gamepadAxis)
         ax = float2();

@@ -43,10 +43,11 @@
 #endif
 
 #if _MSC_VER
-#define NOEXCEPT
+#define NOEXCEPT _NOEXCEPT
 #else
 #define NOEXCEPT noexcept
 #endif
+
 
 #define unless(X) if (!(X))
 
@@ -83,12 +84,14 @@ int findLeadingOne(uint v, int i=0);
 int findLeadingOne(uint64 v);
 
 template <typename T>
-inline void setBits(T &bits, const T &flag, bool val)
+inline T setBits(T &bits, const T &flag, bool val)
 {
+    const T was = bits&flag;
     if (val)
         bits |= flag;
     else
         bits &= ~flag;
+    return was;
 }
 
 template <typename T>
@@ -966,8 +969,8 @@ inline int vec_pop_unless_deep(T &vec, F pred)
 // FIXME make these work for undordered_map as well
 // const T& map, const T::value_type& val, ...
 
-template <typename K, typename V>
-inline bool map_contains(const std::map<K, V> &m, const K& key)
+template <typename M>
+inline bool map_contains(const M &m, const typename M::key_type& key)
 {
     return m.count(key) != 0;
 }
@@ -1147,7 +1150,7 @@ inline T* slist_insert(T* list, T* node)
 }
 
 template <typename T>
-inline void slist_clear(T *node)
+inline T *slist_clear(T *node)
 {
     while (node != NULL)
     {
@@ -1155,23 +1158,49 @@ inline void slist_clear(T *node)
         delete node;
         node = next;
     }
+    return NULL;
 }
+
+// adapter to use intrusive linked lists in foreach loops
+template <typename T>
+struct slist_iter_t {
+    typedef T value_type;
+    T *ptr;
+    slist_iter_t(T* p=NULL) : ptr(p) {}
+    slist_iter_t &operator++() {
+        ptr = ptr->next;
+        return *this;
+    }
+    slist_iter_t operator++(int) {
+        slist_iter_t self = *this;
+        ptr = ptr->next;
+        return self;
+    }
+    T* operator*() { return ptr; }
+    const T* operator*() const { return ptr; }
+    bool operator=(slist_iter_t o) const { return o.ptr == ptr; }
+    bool operator!=(slist_iter_t o) const { return o.ptr != ptr; }
+    slist_iter_t begin() const { return *this; }
+    slist_iter_t end() const { return slist_iter_t(); }
+};
+
+template <typename T>
+slist_iter_t<T> slist_iter(T *pt=NULL)
+{
+    return slist_iter_t<T>(pt);
+}
+
+
 
 ////////////////////////////////////////////////////////////////////////////////////
 
-inline std::mutex& _thread_name_mutex()
-{
-    static std::mutex m;
-    return m;
-}
 
-inline std::map<uint64, std::string> &_thread_name_map()
-{
-    static std::map<uint64, std::string> names;
-    return names;
-}
+typedef std::map<uint64, std::string> OL_ThreadNames;
+OL_ThreadNames &_thread_name_map();
+ std::mutex& _thread_name_mutex();
 
-void thread_set_current_name(const char* name);
+// set thread name, random seed, terminate handler, etc.
+void thread_setup(const char* name);
 
 #if OL_USE_PTHREADS
 typedef pthread_t OL_Thread;

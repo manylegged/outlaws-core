@@ -12,9 +12,6 @@
 #include "Graphics.h"
 #include "Shaders.h"
 
-#include <locale>
-#include <codecvt>
-
 #include "Shlwapi.h"
 #pragma comment(lib, "Shlwapi.lib")
 
@@ -39,13 +36,25 @@
 // iswow64process
 // #include <Wow64apiset.h>
 
+// UNLEN
+#include "Lmcons.h"
+
 string ws2s(const std::wstring& wstr)
 {
-    typedef std::codecvt_utf8<wchar_t> convert_typeX;
-    std::wstring_convert<convert_typeX, wchar_t> converterX;
-
-    return converterX.to_bytes(wstr);
+    int len = WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), wstr.length(), 0, 0, NULL, NULL);
+    std::string r(len, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), wstr.length(), &r[0], len, NULL, NULL);
+    return r;
 }
+
+std::wstring s2ws(const std::string& s)
+{
+    int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), s.length(), 0, 0);
+    std::wstring r(len, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), s.length(), &r[0], len);
+    return r;
+}
+
 
 static const wchar_t* canonicalizePath(const wchar_t* inpt)
 {
@@ -89,6 +98,8 @@ static void ReportWin32(const char *format, ...)
     va_list vl;
     va_start(vl, format);
     string buf = "\n[win32] " + str_vformat(format, vl);
+    while (buf.back() == '\n')
+        buf.pop_back();
     OL_ReportMessage(buf.c_str());
     va_end(vl);
 }
@@ -108,32 +119,30 @@ static const std::wstring& getDataDir()
     return str;
 }
 
-static void ReportWin32Err(const char *msg, DWORD dwLastError)
+static void ReportWin32Err1(const char *msg, DWORD dwLastError, const char* file, int line)
 {
-    TCHAR   lpBuffer[256] = _T("?");
+    wchar_t lpBuffer[256] = _T("?");
     if (dwLastError != 0)    // Don't want to see a "operation done successfully" error ;-)
         ::FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM,                // It's a system error
                         NULL,                                      // No string to be formatted needed
                         dwLastError,                               // Hey Windows: Please explain this error!
                         MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), // Do it in the standard language
                         lpBuffer,                                  // Put the message here
-                        (sizeof(lpBuffer)*sizeof(TCHAR)) - 1,      // Number of bytes to store the message
+                        (sizeof(lpBuffer)*sizeof(wchar_t)) - 1,      // Number of bytes to store the message
                         NULL);
-    ReportWin32("Error: %s failed: %ls", msg, lpBuffer);
+    const std::string buf = ws2s(lpBuffer);
+    ReportWin32("%s:%d:error: %s failed: %#x %s", file, line, msg, dwLastError, buf.c_str());
 }
 
-static void ReportWin32Err(const char *msg)
-{
-    return ReportWin32Err(msg, GetLastError());
-}
+#define ReportWin32Err(msg, err) ReportWin32Err1(msg, err, __FILE__, __LINE__)
 
 const char* OL_GetUserName(void)
 {
-    std::wstring buf(128, ' ');
-    DWORD size = buf.size()-1;
-    if (!GetUserName(const_cast<LPWSTR>(buf.data()), &size) || size == 0)
+    std::wstring buf(UNLEN +1, ' ');
+    DWORD size = buf.size();
+    if (!GetUserName(&buf[0], &size) || size == 0)
     {
-        ReportWin32Err("GetUserName");
+        ReportWin32Err("GetUserName", GetLastError());
         return "Unknown";
     }
 
@@ -147,12 +156,12 @@ static FARPROC GetModuleAddr(LPCTSTR modName, LPCSTR procName)
     if (!GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
                            modName, &module))
     {
-        ReportWin32Err("GetModuleHandleEx");
+        ReportWin32Err("GetModuleHandleEx", GetLastError());
         return NULL;
     }
     FARPROC proc = GetProcAddress(module, procName);
     if (!proc)
-        ReportWin32Err("GetProcAddress");
+        ReportWin32Err("GetProcAddress", GetLastError());
     return proc;
 }
 
@@ -173,7 +182,7 @@ std::wstring getKnownPath(REFKNOWNFOLDERID fid)
         if (pSHGetKnownFolderPath(fid, 0, NULL, &path) == S_OK)
             return path;
         else
-            ReportWin32Err("SHGetKnownFolderPath");
+            ReportWin32Err("SHGetKnownFolderPath", GetLastError());
     }
     
     ReportWin32("SHGetKnownFolderPath not found, falling back on SHGetFolderPath");
@@ -181,7 +190,7 @@ std::wstring getKnownPath(REFKNOWNFOLDERID fid)
     if (fid == FOLDERID_Downloads || fid == FOLDERID_Desktop)
         csidl = CSIDL_DESKTOPDIRECTORY;
 
-    TCHAR szPath[MAX_PATH];
+    wchar_t szPath[MAX_PATH];
     HRESULT res = SHGetFolderPath(NULL, csidl, NULL, 0, szPath);
     if (SUCCEEDED(res))
         return szPath;
@@ -211,7 +220,7 @@ static const std::wstring& getSaveDir()
                 ReportWin32("Moved save games from %s to %s: %s",
                             ws2s(opath).c_str(), ws2s(str).c_str(), success ? "OK" : "FAILED");
                 if (!success)
-                    ReportWin32Err("MoveFileEx");
+                    ReportWin32Err("MoveFileEx", GetLastError());
             }
 #endif
         }
@@ -226,7 +235,7 @@ int OL_CopyFile(const char* source, const char* dest)
     if (!CopyFile(s2ws(OL_PathForFile(source, "r")).c_str(), 
                   s2ws(dpath).c_str(), FALSE))
     {
-        ReportWin32Err("CopyFile");
+        ReportWin32Err("CopyFile", GetLastError());
         return -1;
     }
 
@@ -306,7 +315,7 @@ const char** OL_ListDirectory(const char* path1)
 
     HANDLE hdir = FindFirstFile((path + L"\\*").c_str(), &data);
     if (hdir == INVALID_HANDLE_VALUE) {
-        ReportWin32Err("FindFirstFile");
+        ReportWin32Err("FindFirstFile", GetLastError());
         return NULL;
     }
 
@@ -325,9 +334,9 @@ const char** OL_ListDirectory(const char* path1)
     return &elements[0];
 }
 
-void os_errormessage1(const char* msg, const string& data, SDL_SysWMinfo *info)
+void os_errormessage1(const string &msg, SDL_SysWMinfo *info)
 {
-    ReportWin32("ErrorMessage: %s", msg);
+    ReportWin32("ErrorMessage: %s", msg.c_str());
 
     // HINSTANCE hInstance = NULL;
     // HWND hWnd = info->info.win.window;
@@ -398,7 +407,7 @@ int OL_SaveFile(const char *name, const char* data, int size)
     
     if (!MoveFileEx(s2ws(fnameb).c_str(), s2ws(fname).c_str(), MOVEFILE_REPLACE_EXISTING))
     {
-		ReportWin32Err("MoveFileEx");
+		ReportWin32Err("MoveFileEx", GetLastError());
         ReportWin32("Failed to write %s", fname);
         return 0;
     }
@@ -409,8 +418,10 @@ int OL_SaveFile(const char *name, const char* data, int size)
 int OL_RemoveFileOrDirectory(const char* dirname)
 {
 	const char* path = OL_PathForFile(dirname, "w");
-#if 1
+    ReportWin32("RemoveFileOrDirectory '%s'", path);
+    fflush(NULL);
     std::wstring buf = s2ws(path);
+    buf.push_back(L'\0');
     buf.push_back(L'\0');
     SHFILEOPSTRUCT v;
     memset(&v, 0, sizeof(v));
@@ -418,10 +429,9 @@ int OL_RemoveFileOrDirectory(const char* dirname)
     v.pFrom = buf.c_str();
     v.fFlags = FOF_NO_UI;
     int val = SHFileOperation(&v);
-#else
-	string cmd = str_format("rd /s /q %s", path);
-	int val = system(cmd.c_str());
-#endif
+    if (val != 0) {
+        ReportWin32Err("SHFileOperation(FO_DELETE)", val);
+    }
 	return val == 0 ? 1 : 0;
 }
 
@@ -437,10 +447,41 @@ extern "C" {
     _declspec(dllexport) DWORD NvOptimusEnablement = 0x00000001;
 }
 
-#define PRINT_EXP(X) case EXCEPTION_ ## X: return #X; break
+struct UntypedException {
+  UntypedException(const EXCEPTION_RECORD & er)
+    : exception_object(reinterpret_cast<void *>(er.ExceptionInformation[1])),
+      type_array(reinterpret_cast<_ThrowInfo *>(er.ExceptionInformation[2])->pCatchableTypeArray)
+  {}
+  void * exception_object;
+  _CatchableTypeArray * type_array;
+};
+ 
+void * exception_cast_worker(const UntypedException & e, const type_info & ti) {
+  for (int i = 0; i < e.type_array->nCatchableTypes; ++i) {
+    _CatchableType & type_i = *e.type_array->arrayOfCatchableTypes[i];
+    const std::type_info & ti_i = *reinterpret_cast<std::type_info *>(type_i.pType);
+    if (ti_i == ti) {
+      char * base_address = reinterpret_cast<char *>(e.exception_object);
+      base_address += type_i.thisDisplacement.mdisp;
+      return base_address;
+    }
+  }
+  return 0;
+}
+ 
+template <typename T>
+T * exception_cast(const UntypedException & e) {
+  const std::type_info & ti = typeid(T);
+  return reinterpret_cast<T *>(exception_cast_worker(e, ti));
+}
 
-static const char* getExceptionCodeName(DWORD code)
+#define PRINT_EXP(X) case EXCEPTION_ ## X: return #X;
+
+static const char* getExceptionCodeName(const EXCEPTION_RECORD *rec)
 {
+    DWORD code = rec->ExceptionCode;
+    static string str;
+
     switch(code)
     {
         PRINT_EXP(ACCESS_VIOLATION);
@@ -465,7 +506,21 @@ static const char* getExceptionCodeName(DWORD code)
         PRINT_EXP(INVALID_DISPOSITION);
         PRINT_EXP(GUARD_PAGE);
         PRINT_EXP(INVALID_HANDLE);
-    default: return "(unknown)";
+    case DBG_CONTROL_C: return "DBG_CONTROL_C";
+    case 0xE06D7363: {
+        UntypedException ue(*rec);
+        if (std::exception * e = exception_cast<std::exception>(ue)) {
+            const std::type_info & ti = typeid(*e);
+            str = str_format("%s(\"%s\")", ti.name(), e->what());
+            return str.c_str();
+        } else {
+            return "Unknown Cxx Exception";
+        }
+    }
+    default: {
+        str = str_format("UNKNOWN(%#d)", code);
+        return str.c_str();
+    }
     }
 }
 
@@ -514,24 +569,8 @@ static void printStack(HANDLE thread, CONTEXT &context)
     }
 }
 
-static LONG WINAPI myExceptionHandler(EXCEPTION_POINTERS *info)
+void printModulesStack(CONTEXT *ctx)
 {
-    fflush(NULL);
-    ReportWin32("Unhandled Top Level Exception");
-    const EXCEPTION_RECORD *rec = info->ExceptionRecord;
-
-    ReportWin32("Code: %s, Flags: 0x%x, PC: 0x%" PRIxPTR, 
-                   getExceptionCodeName(rec->ExceptionCode), 
-                   rec->ExceptionFlags, 
-                   (uintptr_t)rec->ExceptionAddress);
-
-    if (rec->ExceptionCode == EXCEPTION_ACCESS_VIOLATION || rec->ExceptionCode == EXCEPTION_IN_PAGE_ERROR)
-    {
-        ULONG type = rec->ExceptionInformation[0];
-        ULONG addr = rec->ExceptionInformation[1];
-        ReportWin32("Invalid %s to 0x%x", type == 0 ? "Read" : type == 1 ? "Write" : type == 8 ? "Exec" : "Unknown", (uint) addr);
-    }
-
     std::chrono::time_point<std::chrono::system_clock> start = std::chrono::system_clock::now();
     std::time_t cstart = std::chrono::system_clock::to_time_t(start);
     ReportWin32("Time is %s", std::ctime(&cstart));
@@ -593,25 +632,23 @@ static LONG WINAPI myExceptionHandler(EXCEPTION_POINTERS *info)
     ReportWin32("Dumping stack for current thread 0x%x, '%s'", 
                    current_tid, _thread_name_map()[current_tid].c_str());
 
-    CONTEXT context = *(info->ContextRecord);
+    CONTEXT context = *ctx;
     printStack(GetCurrentThread(), context);
     fflush(NULL);
 
     foreach (const auto &x, _thread_name_map())
     {
-        if (!x.first)
-            continue;
-        if (x.first == current_tid)
+        if (!x.first || x.first == current_tid)
             continue;
         ReportWin32("Dumping stack for thread 0x%x, '%s'", x.first, x.second.c_str());
         HANDLE hthread = OpenThread(THREAD_GET_CONTEXT|THREAD_SUSPEND_RESUME|THREAD_QUERY_INFORMATION,
                                     FALSE, x.first);
         if (!hthread) {
-            ReportWin32Err("OpenThread");
+            ReportWin32Err("OpenThread", GetLastError());
             continue;
         }
         if (SuspendThread(hthread) == -1) {
-            ReportWin32Err("SuspendThread");
+            ReportWin32Err("SuspendThread", GetLastError());
             continue;
         }
 
@@ -620,21 +657,65 @@ static LONG WINAPI myExceptionHandler(EXCEPTION_POINTERS *info)
         if (GetThreadContext(hthread, &context)) {
             printStack(hthread, context);
         } else {
-            ReportWin32Err("GetThreadContext");
+            ReportWin32Err("GetThreadContext", GetLastError());
             continue;
         }
     }
+}
 
-    sdl_os_oncrash(str_format("Oops! %s crashed.\n", OLG_GetName()).c_str());
+void os_stacktrace()
+{
+    CONTEXT context;
+    memset(&context, 0, sizeof(context));
+    RtlCaptureContext(&context);
+    
+    printModulesStack(&context);
+}
 
-    const string data = sdl_get_logdata();
-    if (data.c_str())
-        SteamAPI_SetMiniDumpComment(data.c_str());
+static LONG WINAPI myExceptionHandler(EXCEPTION_POINTERS *info)
+{
+    fflush(NULL);
+    ReportWin32("Unhandled Top Level Exception");
+    const EXCEPTION_RECORD *rec = info->ExceptionRecord;
 
-	// The 0 here is a build ID, we don't set it
-	SteamAPI_WriteMiniDump(rec->ExceptionCode, info, 0 );
+    ReportWin32("Code: %s, Flags: 0x%x, PC: 0x%" PRIxPTR,
+                getExceptionCodeName(rec),
+                rec->ExceptionFlags, 
+                (uintptr_t)rec->ExceptionAddress);
+    
+    if (rec->ExceptionCode == EXCEPTION_ACCESS_VIOLATION || rec->ExceptionCode == EXCEPTION_IN_PAGE_ERROR)
+    {
+        ULONG type = rec->ExceptionInformation[0];
+        ULONG addr = rec->ExceptionInformation[1];
+        ReportWin32("Invalid %s to 0x%x", type == 0 ? "Read" : type == 1 ? "Write" : type == 8 ? "Exec" : "Unknown", (uint) addr);
+    }
 
-    return EXCEPTION_CONTINUE_SEARCH;
+    printModulesStack(info->ContextRecord);
+
+    sdl_os_oncrash("Spacetime Segmentation Fault Detected\n(Reassembly crashed)\n");
+	SteamAPI_WriteMiniDump(rec->ExceptionCode, info, 0);
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+
+static bool verifyOsVersion(const DWORD major, const DWORD minor)
+{
+	OSVERSIONINFOEXW osvi;
+	DWORDLONG dwlConditionMask = 0;
+
+	//Initialize the OSVERSIONINFOEX structure
+	memset(&osvi, 0, sizeof(OSVERSIONINFOEXW));
+	osvi.dwOSVersionInfoSize = sizeof(OSVERSIONINFOEXW);
+	osvi.dwMajorVersion = major;
+	osvi.dwMinorVersion = minor;
+	osvi.dwPlatformId = VER_PLATFORM_WIN32_NT;
+
+	//Initialize the condition mask
+	VER_SET_CONDITION(dwlConditionMask, VER_MAJORVERSION, VER_GREATER_EQUAL);
+	VER_SET_CONDITION(dwlConditionMask, VER_MINORVERSION, VER_GREATER_EQUAL);
+	VER_SET_CONDITION(dwlConditionMask, VER_PLATFORMID, VER_EQUAL);
+
+	// Perform the test
+	return VerifyVersionInfo(&osvi, VER_MAJORVERSION | VER_MINORVERSION | VER_PLATFORMID, dwlConditionMask);
 }
 
 string os_get_platform_info()
@@ -644,19 +725,28 @@ string os_get_platform_info()
     osvi.dwOSVersionInfoSize = sizeof(OSVERSIONINFO);
 
     GetVersionEx(&osvi);
+
+    DWORD major = osvi.dwMajorVersion;
+    DWORD minor = osvi.dwMinorVersion;
+    //Determine the real *major* version first
+    while (verifyOsVersion(major+1, 0)) {
+        major++;
+        minor = 0;
+    }
+    while (verifyOsVersion(major, minor+1)) {
+        minor++;
+    }
+
     const char* name = NULL;
-    //if (IsWindows8Point1OrGreater())
-    //    name = "8.1";
-    //else
-    if (osvi.dwMajorVersion == 5 && osvi.dwMajorVersion == 1)
+    if (major == 5 && minor == 1)
         name = "XP";
-    else if (osvi.dwMajorVersion == 6 && osvi.dwMinorVersion == 0)
+    else if (major == 6 && minor == 0)
         name = "Vista";
-    else if (osvi.dwMajorVersion == 6 && osvi.dwMinorVersion == 1)
+    else if (major == 6 && minor == 1)
         name = "7";
-    else if (osvi.dwMajorVersion == 6 && osvi.dwMinorVersion == 2)
+    else if (major == 6 && minor == 2)
         name = "8";
-    else if (osvi.dwMajorVersion == 6 && osvi.dwMinorVersion == 3)
+    else if (major == 6 && minor == 3)
         name = "8.1";
     else
         name = "Unknown";
@@ -668,9 +758,39 @@ string os_get_platform_info()
     if (fnIsWow64Process && fnIsWow64Process(GetCurrentProcess(), &is64) && is64) {
         bitness = 64;
     }
+
+    typedef int (WINAPI *FN_GetUserDefaultLocaleName)(LPWSTR lpLocaleName, int cchLocaleName);
+    static FN_GetUserDefaultLocaleName fnGetUserDefaultLocaleName =
+        (FN_GetUserDefaultLocaleName) GetModuleAddr(L"kernel32", "GetUserDefaultLocaleName");
+    string locale = "<unknown>";
+    if (fnGetUserDefaultLocaleName) {
+        std::wstring buf(LOCALE_NAME_MAX_LENGTH, '\0');
+        int len = fnGetUserDefaultLocaleName(&buf[0], buf.size());
+        buf.resize(len - 1);
+        locale = ws2s(buf);
+    }
+
+    int CPUInfo[4] = {-1};
+    unsigned   nExIds, i =  0;
+    char CPUBrandString[0x40] = {};
+    // Get the information associated with each extended ID.
+    __cpuid(CPUInfo, 0x80000000);
+    nExIds = CPUInfo[0];
+    for (i=0x80000000; i<=nExIds; ++i)
+    {
+        __cpuid(CPUInfo, i);
+        // Interpret CPU brand string
+        if  (i == 0x80000002)
+            memcpy(CPUBrandString, CPUInfo, sizeof(CPUInfo));
+        else if  (i == 0x80000003)
+            memcpy(CPUBrandString + 16, CPUInfo, sizeof(CPUInfo));
+        else if  (i == 0x80000004)
+            memcpy(CPUBrandString + 32, CPUInfo, sizeof(CPUInfo));
+    }
     
-    return str_format("Windows %s %dbit (NT %d.%d build %d)", name, bitness,
-                      osvi.dwMajorVersion, osvi.dwMinorVersion, osvi.dwBuildNumber);
+    return str_format("Windows %s %dbit (NT %d.%d build %d) %s %s", name, bitness,
+                      major, minor, osvi.dwBuildNumber, locale.c_str(),
+                      str_strip(CPUBrandString).c_str());
 }
 
 int os_init()
@@ -722,9 +842,5 @@ int main(int argc, char* argv[])
             pSetProcessDPIAware();
     }
 
-    try {
-        return sdl_os_main(argc, (const char**) argv);
-    } catch (const std::exception &e) {
-        ReportWin32("Unhandled exception: %s", e.what());
-    }
+    return sdl_os_main(argc, (const char**) argv);
 }

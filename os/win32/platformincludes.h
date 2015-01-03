@@ -21,7 +21,10 @@
 
 #define _CRT_SECURE_NO_WARNINGS 1
 
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
+
 #define WIN32_LEAN_AND_MEAN             // Exclude rarely-used stuff from Windows headers
 #define _WIN32_WINNT 0x501              // xp compatibility
 #include <windows.h>
@@ -79,5 +82,7 @@ typedef unsigned short ushort;
 #ifdef MOD_SHIFT
 #undef MOD_SHIFT
 #endif
+
+std::wstring s2ws(const std::string& s);
 
 #endif

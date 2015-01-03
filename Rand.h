@@ -26,15 +26,18 @@
 #ifndef RAND_H
 #define RAND_H
 
-inline std::default_random_engine &random_device()
+#include <random>
+
+inline int& random_seed()
 {
-    static std::random_device rd;
     static int seed = 0;
-    if (!seed) {
-        seed = rd();
-        ReportMessagef("Random Seed: %#x", seed);
-    }
-    static std::default_random_engine e1(seed);
+    return seed;
+}
+
+inline std::mt19937 *&random_device()
+{
+    // static std::default_random_engine e1;
+    static THREAD_LOCAL std::mt19937 *e1 = NULL;
     return e1;
 }
 
@@ -43,7 +46,7 @@ inline uint randrange()
 {
     std::uniform_int_distribution<T> uniform_dist(std::numeric_limits<T>::min(), 
                                                   std::numeric_limits<T>::max());
-    return uniform_dist(random_device());
+    return uniform_dist(*random_device());
 }
 
 // return a random number from [start-end)
@@ -53,7 +56,7 @@ inline int randrange(int start, int end)
     if (start == end)
         return start;
     std::uniform_int_distribution<int> uniform_dist(start, end-1);
-    return uniform_dist(random_device());
+    return uniform_dist(*random_device());
 }
 
 // return a random number from [0-end)
@@ -63,7 +66,7 @@ inline int randrange(int end)
     if (0 == end)
         return 0;
     std::uniform_int_distribution<int> uniform_dist(0, end-1);
-    return uniform_dist(random_device());
+    return uniform_dist(*random_device());
 }
 
 inline bool randbool() { return randrange(0, 2); }
@@ -97,7 +100,7 @@ inline float randrange(float start, float end)
     if (start == end)
         return start;
     std::uniform_real_distribution<float> uniform_dist(start, end);
-    return uniform_dist(random_device());
+    return uniform_dist(*random_device());
     //return float(start + ((end - start) * float(rand())) / float(RAND_MAX));
 }
 

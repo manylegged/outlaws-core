@@ -238,43 +238,55 @@ inline uint randlerpXXX(const std::initializer_list<uint>& lst)
     return rgbf2rgb(color / total);
 }
 
-inline void flushNanToZero(float &val)
+// lolengine.net/blog/2013/07/27/rgb-to-hsv-in-glsl
+
+inline float3 rgb2hsv_(float3 c)
 {
-    if (fpu_error(val))
-        val = 0;
+    float4 K = float4(0.f, -1.f / 3.f, 2.f / 3.f, -1.f);
+    float4 p = glm::mix(float4(c.z, c.y, K.w, K.z), float4(c.y, c.z, K.x, K.y), glm::step(c.z, c.y));
+    float4 q = glm::mix(float4(p.x, p.y, p.w, c.x), float4(c.x, p.y, p.z, p.x), glm::step(p.x, c.x));
+
+    float d = q.x - min(q.w, q.y);
+    float e = 1.0e-10;
+    return float3(abs(q.z + (q.w - q.y) / (6.f * d + e)), d / (q.x + e), q.x);
 }
 
-inline void flushNanToZero(float2 &val)
+inline float3 hsv2rgb_(float3 c)
 {
-    flushNanToZero(val.x);
-    flushNanToZero(val.y);
+    float4 K = float4(1.f, 2.f / 3.f, 1.f / 3.f, 3.f);
+    float3 p = abs(glm::fract(float3(c.x) + float3(K.x, K.y, K.z)) * 6.f - float3(K.w));
+    return c.z * glm::mix(float3(K.x), clamp(p - float3(K.x), 0.f, 1.f), c.y);
 }
-
-inline void flushNanToZero(float3 &val)
-{
-    flushNanToZero(val.x);
-    flushNanToZero(val.y);
-    flushNanToZero(val.z);
-}
-
 
 inline float3 rgbf2hsvf(float3 rgb)
 {
-    float3 hsv = glm::hsvColor(rgb);
-    flushNanToZero(hsv);
+    float3 hsv = rgb2hsv_(rgb);
+    hsv.x *= 360.f;
     return hsv;
 }
 
 inline float3 hsvf2rgbf(float3 hsv)
 {
-    hsv.x = modulo(hsv.x, 360.f);
+    hsv.x = modulo(hsv.x/360.f, 1.f);
     hsv.y = clamp(hsv.y, 0.f, 1.f);
     hsv.z = clamp(hsv.z, 0.f, 1.f);
-    return glm::rgbColor(hsv);
+    return hsv2rgb_(hsv);
 }
 
 inline uint hsvf2rgb(const float3 &hsv) { return rgbf2rgb(hsvf2rgbf(hsv)); }
 inline float3 rgb2hsvf(uint rgb) { return rgbf2hsvf(rgb2rgbf(rgb)); }
+
+inline float distanceHsv(float3 a, float3 b)
+{
+    return length(float3(min(a.y, b.y) * ((1 - dotAngles(toradians(a.x), toradians(b.x))) / 2.f),
+                          a.y - b.y,
+                          a.z - b.z));
+}
+
+inline float distanceRgb(uint a, uint b)
+{
+    return distanceHsv(rgb2hsvf(a), rgb2hsvf(b));
+}
 
 inline float3 colorIntensify(float3 color)
 {

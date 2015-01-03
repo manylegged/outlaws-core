@@ -142,7 +142,7 @@ struct Button : public ButtonBase
     float2 getTextSize() const;
     void render(const ShaderState &s_, bool selected=false);
     void renderButton(DMesh& mesh, bool selected=false);
-    void renderText(const ShaderState &s_) const;
+    void renderContents(const ShaderState &s_) const;
     
     void setEscapeKeys() { setKeys({ EscapeCharacter, GamepadB });
                            subtext = KeyState::instance().stringNo(); }
@@ -190,7 +190,7 @@ struct TextInputBase : public WidgetBase {
         lines.push_back(string());
     }
     
-    virtual ~TextInputBase() {}
+    ~TextInputBase() {}
 
     string getText() const
     {
@@ -214,24 +214,13 @@ struct TextInputBase : public WidgetBase {
 
     void scrollForInput()
     {
-        startChars.y = clamp(startChars.y, max(0, cursor.y - sizeChars.y + 1), cursor.y);
-    }
-
-    bool isPress(const Event* event) const
-    {
-        bool isPress = (event->key == 0) && 
-                       ((event->type == Event::MOUSE_DOWN) /*|| (event->type == Event::MOUSE_DRAGGED)*/) &&
-                       intersectPointRectangle(event->pos, position, 0.5f*size);
-        return isPress;
+        startChars.y = max(0, (int)lines.size() - sizeChars.y);
     }
 
     int2 getSizeChars() const    { return sizeChars; }
     float2 getSizePoints() const { return size; }
 
-    virtual void updateState(int line, ShaderState* ss){}
-
     void render(const ShaderState &s_);
-
 };
 
 struct TextInputCommandLine : public TextInputBase {
@@ -586,7 +575,7 @@ struct ButtonLayout {
     {
         const int i = getScalarIndex();
         const int count = buttonCount.x * buttonCount.y;
-        return (introAnim * count > i) ? min(1.f, (introAnim * count - i)) : 0.f;
+        return (introAnim * count > i) ? min(introAnim, (introAnim * count - i)) : 0.f;
     }
 
     float2 getButtonPos() const
@@ -720,10 +709,16 @@ struct OverlayMessage : public WidgetBase {
     float      totalTime = 1.;
     uint       color     = kGUIText;
     float      textSize  = 14.f;
-
+    
     bool isVisible() const;
     bool setMessage(const string& msg, uint clr=0); // return true if changed
     void render(const ShaderState &ss);
+    
+    void reset()
+    {
+        startTime = 0.f;
+        message.clear();
+    }
 };
 
 

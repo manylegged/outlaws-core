@@ -125,7 +125,7 @@ void Button::render(const ShaderState &ss, bool selected)
     renderButton(theDMesh(), selected);
     h.Draw(ss);
     
-    renderText(ss);
+    renderContents(ss);
 }
 
 float2 Button::getTextSize() const
@@ -173,7 +173,7 @@ void Button::renderButton(DMesh& mesh, bool selected)
     }
 }
 
-void Button::renderText(const ShaderState &s_) const
+void Button::renderContents(const ShaderState &s_) const
 {
     if (!visible)
         return;
@@ -527,7 +527,6 @@ void TextInputBase::render(const ShaderState &s_)
 
         if (lines[i].size())
         {
-            updateState(i, &s);
             tx->render(&s);
         }
         
@@ -687,7 +686,7 @@ bool TextInputCommandLine::doCommand(const string& line)
 
         DPRINT(CONSOLE, ("-> '%s'", ot.c_str()));
         
-        const vector<string> nlines = str_split(ot, '\n');
+        const vector<string> nlines = str_split(str_word_wrap(ot, sizeChars.x), '\n');
         lines.insert(lines.end(), nlines.begin(), nlines.end());
     }
     pushCmdOutput("");      // prompt
@@ -854,11 +853,13 @@ bool TextInputCommandLine::HandleEvent(const Event* event, bool *textChanged)
         
     cursor.y = (int)lines.size()-1;
 
-    if (lines[cursor.y].size() < prompt.size()) {
+    string& line = lines[cursor.y];
+    if (line.size() < prompt.size()) {
         setLineText("");
-    } else if (lines[cursor.y].substr(0, prompt.size()) != prompt) {
+    } else if (!str_startswith(line, prompt)) {
         for (int i=0; i<prompt.size(); i++) {
-            lines[cursor.y][i] = prompt[i];
+            if (line[i] != prompt[i])
+                line.insert(i, 1, prompt[i]);
         }
     }
 

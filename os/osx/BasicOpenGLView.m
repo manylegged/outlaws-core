@@ -3,6 +3,7 @@
 
 #import "BasicOpenGLView.h"
 #include <sys/signal.h>
+#include <execinfo.h>
 
 #include "sdl_inc.h"
 #include "Outlaws.h"
@@ -470,17 +471,24 @@ void OL_SetSwapInterval(int interval)
     return YES;
 }
 
+static const NSApplicationPresentationOptions
+kFullscreenPresentationOptions = (NSApplicationPresentationHideMenuBar|
+                                  NSApplicationPresentationHideDock|
+                                  NSApplicationPresentationFullScreen);
+
 // ---------------------------------
+static void setupPresentationOptions(BOOL fullscreen)
+{
+    NSApplicationPresentationOptions opts = fullscreen ? kFullscreenPresentationOptions :
+                                            NSApplicationPresentationDefault;
+    [[NSApplication sharedApplication] setPresentationOptions:opts];
+    [[gView window] invalidateCursorRectsForView: gView];
+}
 
 - (void)windowDidEnterFullScreen:(NSNotification *)notification
 {
     self->fullscreen = YES;
-
-    NSApplicationPresentationOptions opts = NSApplicationPresentationHideMenuBar|
-                                            NSApplicationPresentationHideDock|
-                                            NSApplicationPresentationFullScreen;
-    [[NSApplication sharedApplication] setPresentationOptions:opts];
-
+    setupPresentationOptions(YES);
     if (!self->closing)
         OLG_SetFullscreenPref(1);
     LogMessage(@"Will Enter Fullscreen");
@@ -489,12 +497,17 @@ void OL_SetSwapInterval(int interval)
 - (void)windowDidExitFullScreen:(NSNotification *)notification
 {
     self->fullscreen = NO;
-
-    [[NSApplication sharedApplication] setPresentationOptions:NSApplicationPresentationDefault];
-
+    setupPresentationOptions(NO);
+    
     if (!self->closing)
         OLG_SetFullscreenPref(0);
     LogMessage(@"Will Exit Fullscreen");
+}
+
+- (NSApplicationPresentationOptions)window:(NSWindow *)window
+      willUseFullScreenPresentationOptions:(NSApplicationPresentationOptions)proposedOptions
+{
+    return kFullscreenPresentationOptions;
 }
 
 - (void)windowWillClose:(NSNotification *)notification
@@ -520,13 +533,23 @@ void OL_SetSwapInterval(int interval)
 
 - (void) handleBecomeKeyNotification: (NSNotification *) notification
 {
+    setupPresentationOptions(gView->fullscreen);
 }
 
 
-static void sigtermHandler()
+static void signalHandler()
 {
-    LogMessage(@"Caught SIGTERM!");
+    LogMessage(@"Caught SIGNAL! dumping stack");
     fflush(NULL);
+
+    void* callstack[256];
+    int i, frames = backtrace(callstack, 256);
+    char** strs = backtrace_symbols(callstack, frames);
+    for (i = 0; i < frames; ++i) {
+        LogMessage([NSString stringWithFormat:@"%d. called from %p %s", i, callstack[i], strs[i]]);
+    }
+    free(strs);
+    exit(1);
 }
 
 - (void) awakeFromNib
@@ -549,8 +572,9 @@ static void sigtermHandler()
                name:NSWindowDidBecomeKeyNotification
              object:nil ];
 
-    signal(SIGTERM, sigtermHandler);
-    signal(SIGINT, sigtermHandler); 
+    signal(SIGTERM, signalHandler);
+    signal(SIGINT, signalHandler);
+    signal(SIGSEGV, signalHandler);
     
     gView = self;
     self->fullscreen = NO;

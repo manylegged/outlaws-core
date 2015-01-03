@@ -144,7 +144,10 @@ inline size_t str_find(const char* &s, const std::string& v, size_t pos=0)
     return str_find(s, v.c_str(), pos);
 }
 
-inline std::string str_substr(const std::string &st, size_t idx, size_t len=std::string::npos) { return st.substr(idx, len); }
+inline std::string str_substr(const std::string &st, size_t idx, size_t len=std::string::npos)
+{
+    return st.substr(idx, len);
+}
 
 inline std::string str_substr(const char* st, size_t idx, size_t len=std::string::npos)
 {
@@ -173,17 +176,19 @@ inline std::string str_indent(T&& s, int amount)
 
 std::string str_align(const std::string& input, char token);
 
-inline std::string str_strip(const std::string& s)
+template <typename T>
+inline std::string str_strip(const T& s)
 {
+    const int sz = str_len(s);
     int st=0;
-    while (st < (int)s.size() && isspace(s[st])) {
+    while (st < sz && isspace(s[st])) {
         st++;
     }
-    int ed=(int) s.size()-1;
+    int ed=sz-1;
     while (ed >= st && isspace(s[ed])) {
         ed--;
     }
-    return s.substr(st, ed-st+1);
+    return str_substr(s, st, ed-st+1);
 }
 
 inline std::string str_chomp(const std::string &s)
@@ -207,6 +212,8 @@ inline std::string str_chomp(std::string &&s)
 
 inline bool str_startswith(const char* str, const char* prefix)
 {
+    if (!str || !prefix)
+        return false;
     while (*prefix)
     {
         if (*str != *prefix)    // will catch *str == NULL
@@ -369,29 +376,27 @@ std::string str_tolower(const T &str)
     return s;
 }
 
-inline bool str_contains(const std::string& str, const std::string& substr)
+template <typename T>
+bool str_contains(const std::string& str, const T &substr)
 {
     return str.find(substr) != std::string::npos;
 }
 
-inline bool str_contains(const std::string& str, const char *substr)
+template <typename T>
+inline bool str_contains(const char* str, const T &substr)
 {
-    return str.find(substr) != std::string::npos;
-}
-
-inline bool str_contains(const char* str, const char* substr)
-{
-    return strstr(str, substr) != NULL;
+    return str && strstr(str, str_tocstr(substr)) != NULL;
 }
 
 inline bool str_contains(const char* str, char chr)
 {
-    return strchr(str, chr) != NULL;
+    return str && strchr(str, chr) != NULL;
 }
 
-inline bool str_contains(const std::string &str, char chr)
+template <typename T>
+bool str_contains(lstring str, const T& substr)
 {
-    return str.find(chr) != std::string::npos;
+    return str_contains(str.c_str(), substr);
 }
 
 long chr_unshift(long chr);
@@ -465,10 +470,13 @@ std::string str_urlencode(const std::string &value);
 std::string str_urldecode(const std::string &value);
 
 std::string str_time_format(float seconds);
+std::string str_reltime_format(float seconds);
 
 // return data byte size in MB, KB, etc
 std::string str_bytes_format(int bytes);
 
 std::string str_tohex(const char* digest, int size);
+
+bool str_runtests();
 
 #endif

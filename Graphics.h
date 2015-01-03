@@ -567,10 +567,12 @@ struct Transform2D {
 
     glm::mat3 transform;
 
-    Transform2D &translateRotate(float2 t, float a)
+    Transform2D &translateRotate(float2 t, float a) { return translateRotate(t, angleToVector(a)); }
+
+    Transform2D &translateRotate(float2 t, float2 rot)
     {
-        glm::mat3 m(cos(a), sin(a), 0,
-                    -sin(a), cos(a), 0,
+        glm::mat3 m(rot.x, rot.y, 0,
+                    -rot.y, rot.x, 0,
                     t.x, t.y, 1);
         transform *=  m;
         return *this;
@@ -585,10 +587,12 @@ struct Transform2D {
         return *this;
     }
 
-    Transform2D &rotate(float a)
+    Transform2D &rotate(float a) { return rotate(angleToVector(a)); }
+    
+    Transform2D &rotate(float2 rot)
     {
-        glm::mat3 m(cos(a), sin(a), 0,
-                    -sin(a), cos(a), 0,
+        glm::mat3 m(rot.x, rot.y, 0,
+                    -rot.y, rot.x, 0,
                     0, 0, 1);
         transform *=  m;
         return *this;
@@ -1682,6 +1686,7 @@ void DrawFilledRect(const ShaderState &data, float2 pos, float2 r, uint bgColor,
 void fadeFullScreen(const ShaderState &ss, const View& view, uint color, float alpha);
 void sexyFillScreen(const ShaderState &ss, const View& view, uint color, uint color1, float alpha);
 
+// P is upper left corner, S is size
 float2 DrawBar(const ShaderState &ss, uint fill, uint line, float alpha, float2 p, float2 s, float a);
 
 void DrawAlignedGrid(ShaderState &wss, const View& view, float size, float z); 

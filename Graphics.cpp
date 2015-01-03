@@ -836,6 +836,7 @@ void sexyFillScreen(const ShaderState &ss, const View& view, uint color0, uint c
 {
     if (alpha < epsilon || (color0 == 0 && color1 == 0))
         return;
+
     glDepthMask(GL_FALSE);
     glDisable(GL_DEPTH_TEST);
     const float2 ws = view.sizePoints;
@@ -850,11 +851,8 @@ void sexyFillScreen(const ShaderState &ss, const View& view, uint color0, uint c
         VertexPosColor(ws,        a|rgb2bgr(lerpXXX(color0, color1, unorm_sin(5.f * t)))),
         VertexPosColor(justX(ws), a|rgb2bgr(lerpXXX(color0, color1, unorm_sin(7.f * t)))),
     };
-    static const ushort i[] = {0, 1, 2, 0, 2, 3};
-
-    ShaderColorDither::instance().UseProgram(ss, &v[0], (VertexPosColor*) NULL);
-    ss.DrawElements(GL_TRIANGLES, 6, i);
-    ShaderColorDither::instance().UnuseProgram();
+    static const uint i[] = {0, 1, 2, 0, 2, 3};
+    DrawElements(ShaderColorDither::instance(), ss, GL_TRIANGLES, v, i, arraySize(i));
 
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_TRUE);

@@ -74,8 +74,12 @@ struct SerialEnum : public T {
     typename T::Fields enm() const { return (typename T::Fields) value; }
     string toString() const;
 
-    void set(U bits, bool val) { setBits<U>(value, bits, val); }
+    U set(U bits, bool val) { return setBits<U>(value, bits, val); }
+    friend U setBits(SerialEnum &en, U bits, bool val) { return setBits<U>(en.value, bits, val); }
 
+    bool has(U bits) const { return hasBits<U>(value, bits); }
+    friend bool hasBits(const SerialEnum &en, U bits) { return hasBits<U>(en.value, bits); }
+    
     static uint getBitUnion()
     {
         static typename T::Type uni = 0;
@@ -100,7 +104,7 @@ struct SerialEnum : public T {
 #define DEFINE_ENUM(TYPE, NAME, FIELDS)                                 \
     struct NAME ## _ {                                                  \
         typedef TYPE Type;                                              \
-        enum Fields : TYPE { FIELDS(SERIAL_TO_ENUM) };                  \
+        enum Fields : TYPE { ZERO=0, FIELDS(SERIAL_TO_ENUM) };            \
         static const SaveEnum *getFields()                              \
         {                                                               \
             static const SaveEnum val[] = { FIELDS(SERIAL_TO_SAVEENUM) { NULL, 0}  }; \

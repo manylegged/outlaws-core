@@ -509,6 +509,11 @@ int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int fontNa
 }
 
 
+void OL_OnThreadInit(void)
+{
+    
+}
+
 #define THREADS 10
 static NSAutoreleasePool* gUpdateThreadPool[THREADS];
 
@@ -654,4 +659,14 @@ int OL_OpenWebBrowser(const char* url)
 {
     [[NSWorkspace sharedWorkspace] openURL: [NSURL URLWithString:[NSString stringWithUTF8String: url]]];
     return 1;
+}
+
+int OL_HasTearControl(void)
+{
+    return 0;
+}
+
+void OL_ScheduleUploadLog(void)
+{
+    // nothing to do
 }

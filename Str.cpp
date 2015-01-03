@@ -38,7 +38,6 @@ std::string str_format(const char *format, ...)
 
 std::string str_vformat(const char *format, va_list vl) 
 {
-#if 1
     va_list vl2;
     va_copy(vl2, vl);
     const int chars = vsnprintf(NULL, 0, format, vl2);
@@ -46,14 +45,6 @@ std::string str_vformat(const char *format, va_list vl)
     std::string s(chars, ' ');
     int r = vsnprintf((char*) s.data(), chars+1, format, vl);
     ASSERT(r == chars);
-#else
-    std::string s;
-    size_t mchars = 128;
-    char* buf = (char*) malloc(mchars);
-    int written = vsnprintf(buf, mchars+1, format, vl);
-    s = buf;
-    free(buf);
-#endif
     return s;
 }
 
@@ -212,6 +203,14 @@ std::string str_time_format(float seconds)
                           modulo((int)floor(seconds), 60));
 }
 
+std::string str_reltime_format(float seconds)
+{
+    if (seconds > 0)
+        return "in " + str_time_format(seconds);
+    else
+        return str_time_format(-seconds) + " ago";
+}
+
 std::string str_bytes_format(int bytes)
 {
     static const double kilo = 1000.0; // 1024.0;
@@ -314,14 +313,10 @@ std::string str_capitalize(const char* str)
     return s;
 }
 
-#if DEBUG
-
 #define assert_eql(A, B) ASSERTF(A == B, "'%s' != '%s'", str_tostr(A).c_str(), str_tostr(B).c_str())
 
-static int strtests()
+bool str_runtests()
 {
-    if (!IS_DEVEL)
-        return 1;
     assert_eql(str_path_standardize("~/Foo//Bar.lua"), "~/Foo/Bar.lua");
     assert_eql(str_path_standardize("../../bar.lua"), "../../bar.lua");
     assert_eql(str_path_standardize("foo/baz/../../bar.lua////"), "bar.lua");
@@ -340,10 +335,6 @@ static int strtests()
     return 1;
 }
 
-static int _strtests = strtests();
-
-#endif
-
 #if _MSC_VER
 
 std::string str_demangle(const char *str)
@@ -351,6 +342,7 @@ std::string str_demangle(const char *str)
     string name = str;
     name = str_replace(name, "struct ", "");
     name = str_replace(name, "class ", "");
+    name = str_replace(name, "std::basic_string<char,std::char_traits<char>,std::allocator<char> >", "std::string");
     return name;
 }
 

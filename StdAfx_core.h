@@ -117,6 +117,12 @@ struct IDeletable {
     virtual ~IDeletable() {}
 }; 
 
+#if _MSC_VER
+#define THREAD_LOCAL __declspec(thread)
+#else
+#define THREAD_LOCAL __thread
+#endif
+
 #include "Geometry.h"
 #include "Rand.h"
 #include "stl_ext.h"

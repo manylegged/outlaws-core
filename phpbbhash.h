@@ -27,7 +27,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <string>
 #include "md5.h"
 
-using namespace std;
+using std::string;
 
 class PHPBB3Password {
 public:

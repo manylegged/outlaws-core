@@ -86,7 +86,7 @@ public:
     {
         clear();
         m_cells.resize(cells);
-        m_width      = floor(sqrt(m_cells.size()));
+        m_width      = std::floor(std::sqrt((float)m_cells.size()));
         m_cell_size  = cell_size;
         m_icell_size = 1.f / cell_size;
     }
@@ -306,20 +306,20 @@ public:
 
 
     struct QueryNearest {
-        
-        mutable float             nearestDistSqr = std::numeric_limits<float>::max();
+
+        const float2              center;
+        mutable float             nearestDist = std::numeric_limits<float>::max();
         mutable const value_type *nearestElt;
 
-        QueryNearest(const value_type *def) : nearestElt(def) {}
+        QueryNearest(const value_type *def) : center(def->first.pos), nearestElt(def) {}
 
         bool operator()(const value_type& el) const
         {
-            const float distSqr = distanceCircleCircleSqr(el.first.pos, el.first.radius,
-                                                          nearestElt->first.pos, nearestElt->first.radius);
-            if (distSqr < nearestDistSqr)
+            const float distSqr = distanceSqr(el.first.pos, center);
+            if (distSqr < squared(nearestDist + el.first.radius))
             {
-                nearestDistSqr = distSqr;
-                nearestElt     = &el;
+                nearestDist = std::sqrt(distSqr) - el.first.radius;
+                nearestElt  = &el;
             }
             return true;
         }
