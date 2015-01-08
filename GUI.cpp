@@ -4,7 +4,7 @@
 // GUI.cpp - widget library
 //
 
-// Copyright (c) 2013-2014 Arthur Danskin
+// Copyright (c) 2013-2015 Arthur Danskin
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -1400,4 +1400,133 @@ void OverlayMessage::render(const ShaderState &ss)
         return;
     const float a = alpha * inv_lerp(startTime + totalTime, startTime, (float)globals.renderTime);
     size = GLText::Put(ss, position, GLText::MID_CENTERED, SetAlphaAXXX(color, a), textSize, message);
+}
+
+bool HandleConfirmKey(const Event *event, int* slot, int selected, bool *sawUp,
+                  int key0, int key1, bool *isConfirm)
+{
+    if (*slot >= 0 && selected != *slot) {
+        *slot = -1;
+        return false;
+    }
+
+    if (!(event->isKey() && (event->key == key0 || event->key == key1)))
+        return false;
+
+    if (*slot == -1 && event->isDown())
+    {
+        *sawUp = false;
+        *slot = selected;
+    }
+    else if (*slot >= 0 && event->isUp())
+    {
+        *sawUp = true;
+    }
+    else if (*slot >= 0 && *sawUp && event->isDown())
+    {
+        *slot = -1;
+        *sawUp = false;
+        *isConfirm = true;
+    }
+    return true;
+}
+
+bool HandleEventSelected(int* selected, ButtonBase &current, int count, int rows, 
+                         const Event* event, bool* isActivate)
+{
+    if (event->type == Event::KEY_DOWN)
+    {
+        switch (event->key)
+        {
+        case 'w':
+        case NSUpArrowFunctionKey:
+        case GamepadDPadUp:
+        case GamepadLeftUp:
+        case GamepadRightUp:
+            *selected = modulo(*selected-1, count);
+            globals.sound->OnButtonHover();
+            return true;
+
+        case 's':
+        case NSDownArrowFunctionKey:
+        case GamepadDPadDown:
+        case GamepadLeftDown:
+        case GamepadRightDown:
+            *selected = modulo(*selected+1, count);
+            globals.sound->OnButtonHover();
+            return true;
+
+        case 'a':
+        case NSLeftArrowFunctionKey:
+        case GamepadDPadLeft:
+        case GamepadLeftLeft:
+        case GamepadRightLeft:
+            if (rows <= 1)
+                return false;
+            *selected = modulo(*selected - ((count+rows-1) / rows), count);
+            globals.sound->OnButtonHover();
+            return true;
+
+        case 'd':
+        case NSRightArrowFunctionKey:
+        case GamepadDPadRight:
+        case GamepadLeftRight:
+        case GamepadRightRight:
+            if (rows <= 1)
+                return false;
+            *selected = modulo(*selected + ((count+rows-1) / rows), count);
+            globals.sound->OnButtonHover();
+            return true;
+
+        case '\r':
+        case GamepadA:
+            if (current.active)
+            {
+                *isActivate     = true;
+                current.pressed = true;
+                globals.sound->OnButtonPress();
+            }
+            else
+            {
+                globals.sound->OnButtonHover();   
+            }
+            return false;
+        }
+    }
+
+    if (event->type == Event::KEY_UP)
+    {
+        current.pressed = false;
+    }
+    
+    return false;
+}
+
+bool ButtonHandleEvent(ButtonBase &button, const Event* event, bool* isActivate, bool* isPress, int *selected)
+{
+    const bool wasHovered = button.hovered;
+
+    bool handled = false;
+    bool activate = false;
+    bool press = false;
+    
+    handled = button.HandleEvent(event, &activate, &press);
+    
+    if ((isActivate && activate) || (isPress && press))
+    {
+        globals.sound->OnButtonPress();
+    }
+    else if (!wasHovered && button.hovered && button.active)
+    {
+        globals.sound->OnButtonHover();
+        if (selected)
+            *selected = button.index;
+    }
+
+    if (isActivate && activate)
+        *isActivate = true;
+    if (isPress && press)
+        *isPress = true;
+
+    return handled;
 }

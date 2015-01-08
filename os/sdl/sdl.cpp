@@ -225,6 +225,7 @@ void OL_SetFullscreen(int fullscreen)
         // disable / save old state
         if (wasfs == 0)
         {
+            ReportSDL("Saving windowed window pos");
             SDL_GetWindowPosition(g_displayWindow, &g_savedWindowPos.x, &g_savedWindowPos.y);
             SDL_GetWindowSize(g_displayWindow, &g_savedWindowPos.w, &g_savedWindowPos.h);
         }
@@ -247,6 +248,7 @@ void OL_SetFullscreen(int fullscreen)
         // enable new state
         if (fullscreen == 0)
         {
+            ReportSDL("Restoring windowed window pos");
             SDL_SetWindowSize(g_displayWindow, g_savedWindowPos.w, g_savedWindowPos.h);
             SDL_SetWindowPosition(g_displayWindow, g_savedWindowPos.x, g_savedWindowPos.y);
         }
@@ -362,12 +364,6 @@ int OL_GetCpuCount()
 void OL_DoQuit()
 {
     g_quitting = true;
-}
-
-void OL_OnTerminate()
-{
-    ReportSDL("OL_OnTerminate called");
-    exit(1);
 }
 
 void sdl_set_scaling_factor(float factor)
@@ -1016,36 +1012,8 @@ void OL_Present(void)
 }
 
 
-static void sdlTerminateHandler()
-{
-    ReportSDL("terminate handler called");
-    const char* message = "<no info>";
-    std::exception_ptr eptr = std::current_exception();
-    try {
-        if (eptr) {
-            std::rethrow_exception(eptr);
-        }
-    } catch(const std::exception& e) {
-        message = e.what();
-    }
-
-    ReportSDL("Terminate what: %s", message);
-    
-    os_stacktrace();
-    
-    sdl_os_oncrash(str_format("Spacetime Terminated: %s\n(Reassembly crashed)\n",
-                              message).c_str());
-    exit(1);
-}
-
-
 void OL_ThreadBeginIteration(int i)
 {
-}
-
-void OL_OnThreadInit()
-{
-    std::set_terminate(sdlTerminateHandler);
 }
 
 struct AutoreleasePool {

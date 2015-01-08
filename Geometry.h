@@ -5,7 +5,7 @@
 // - vector and numerical operations
 //
 
-// Copyright (c) 2013 Arthur Danskin
+// Copyright (c) 2013-2015 Arthur Danskin
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -164,7 +164,6 @@ inline float2 round(float2 a, float v) { return float2(round(a.x, v), round(a.y,
 inline double round(double a, double v) { return v * round(a / v); }
 inline double2 round(double2 a, double v) { return double2(round(a.x, v), round(a.y, v)); }
 
-
 inline uint roundUpPower2(uint v)
 {
     uint i=1;
@@ -187,6 +186,16 @@ inline float floor(float a, float v)
     return v * floor(a / v);
 }
 
+inline int floor_int(float f)
+{
+    const int i = (int)f;
+    return (f < 0.0f && f != i ? i - 1 : i);
+}
+
+inline int2 floor_int(float2 f)
+{
+    return int2(floor_int(f.x), floor_int(f.y));
+}
 
 inline float2 angleToVector(float angle) { return float2(std::cos(angle), std::sin(angle)); }
 inline float vectorToAngle(float2 vec) { return std::atan2(vec.y, vec.x); }

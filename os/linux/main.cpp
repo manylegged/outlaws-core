@@ -7,22 +7,17 @@
 #include <ftw.h>
 #include <unistd.h>
 #include <sys/utsname.h>
-#include <libgen.h>
 #include <stdio.h>
 #include <errno.h>
-#include <sys/types.h>
-#include <sys/stat.h>
 #include <dirent.h>
-#include <signal.h>
-#include <execinfo.h>
 #include <dlfcn.h>
 #include <link.h>
-#include <ucontext.h>
+
+#include "../sdl_os/posix.h"
 
 #define MAX_PATH 256
 
 const char *g_binaryName = NULL;
-int g_signaldepth = 0;
 
 // don't go through ReportMessagef/ReportMessage!
 static void ReportLinux(const char *format, ...)
@@ -153,11 +148,7 @@ static int recursive_mkdir(const char *dir)
 
 int os_create_parent_dirs(const char* path)
 {
-    char tmp[MAX_PATH];
-    snprintf(tmp, sizeof(tmp),"%s", path);
-
-    const char* dir = dirname(tmp);
-    return recursive_mkdir(dir);
+    return recursive_mkdir(str_dirname(path).c_str());
 }
 
 int OL_SaveFile(const char *name, const char* data, int size)
@@ -332,217 +323,20 @@ static int so_callback(struct dl_phdr_info *info, size_t size, void *data)
     return 0;
 }
 
-
-// from http://spin.atomicobject.com/2013/01/13/exceptions-stack-traces-c/
-static const char* signal_to_string(int sig, siginfo_t *siginfo)
+void dump_loaded_shared_objects()
 {
-    switch(sig)
-    {
-    case SIGSEGV:
-        switch(siginfo->si_code)
-        {
-        case SEGV_MAPERR: return "Caught SIGSEGV: Segmentation Fault (address not mapped to object)";
-        case SEGV_ACCERR: return "Caught SIGSEGV: Segmentation Fault (invalid permissions for mapped object)";
-        default: return ("Caught SIGSEGV: Segmentation Fault");
-        }
-    case SIGINT: return ("Caught SIGINT: Interactive attention signal, (usually ctrl+c)");
-    case SIGFPE:
-        switch(siginfo->si_code)
-        {
-        case FPE_INTDIV: return ("Caught SIGFPE: (integer divide by zero)");
-        case FPE_INTOVF: return ("Caught SIGFPE: (integer overflow)");
-        case FPE_FLTDIV: return ("Caught SIGFPE: (floating-point divide by zero)");
-        case FPE_FLTOVF: return ("Caught SIGFPE: (floating-point overflow)");
-        case FPE_FLTUND: return ("Caught SIGFPE: (floating-point underflow)");
-        case FPE_FLTRES: return ("Caught SIGFPE: (floating-point inexact result)");
-        case FPE_FLTINV: return ("Caught SIGFPE: (floating-point invalid operation)");
-        case FPE_FLTSUB: return ("Caught SIGFPE: (subscript out of range)");
-        default: return ("Caught SIGFPE: Arithmetic Exception");
-        }
-    case SIGILL:
-        switch(siginfo->si_code)
-        {
-        case ILL_ILLOPC: return ("Caught SIGILL: (illegal opcode)");
-        case ILL_ILLOPN: return ("Caught SIGILL: (illegal operand)");
-        case ILL_ILLADR: return ("Caught SIGILL: (illegal addressing mode)");
-        case ILL_ILLTRP: return ("Caught SIGILL: (illegal trap)");
-        case ILL_PRVOPC: return ("Caught SIGILL: (privileged opcode)");
-        case ILL_PRVREG: return ("Caught SIGILL: (privileged register)");
-        case ILL_COPROC: return ("Caught SIGILL: (coprocessor error)");
-        case ILL_BADSTK: return ("Caught SIGILL: (internal stack error)");
-        default: return ("Caught SIGILL: Illegal Instruction");
-        }
-    case SIGTERM: return ("Caught SIGTERM: a termination request was sent to the program");
-    case SIGABRT: return ("Caught SIGABRT: usually caused by an abort() or assert()");
-    default: return "Caught UNKNOWN";
-    }
-}
-
-static void print_backtrace()
-{
-    static const int maxbuf = 128;
-    void* buffer[maxbuf];
-    memset(buffer, 0, sizeof(buffer));
-    const int count = backtrace(buffer, maxbuf);
-
-    const pthread_t current_tid = pthread_self();
-    ReportLinux("Dumping stack for thread %#llx '%s'", (uint64)current_tid, map_get(_thread_name_map(), (uint64)current_tid).c_str());
-    for (int i=0; i<count; i++)
-        ReportLinux("%2d. Called from %p", i, buffer[i]);
-}
-
-void os_stacktrace()
-{
-    const int saved_depth = g_signaldepth;
-    if (g_signaldepth == 0) {
-        g_signaldepth = 1;
-    }
-
     ReportLinux("Dumping loaded shared objects");
     SoCallbackData data = { str_basename(g_binaryName), 0 };
     dl_iterate_phdr(so_callback, &data);
-    
-    print_backtrace();
-    fflush(NULL);
-
-    const pthread_t current_tid = pthread_self();
-#if 0
-    ReportLinux("Stopping %d threads", (int)_thread_name_map().size()-1);
-    foreach (const auto &x, _thread_name_map())
-    {
-        if (!x.first || x.first == current_tid)
-            continue;
-        int status;
-        if ((status = pthread_kill((pthread_t) x.first, SIGSTOP)))
-            ReportLinux("pthread_kill(%#llx, SIGSTOP) failed: %s", x.first, strerror(status));
-    }
-#endif
-    ReportLinux("Observed %d threads from %#llx '%s'",
-                (int)_thread_name_map().size(), (uint64)current_tid, 
-                map_get(_thread_name_map(), (uint64)current_tid).c_str());
-    foreach (const auto &x, _thread_name_map())
-    {
-        if (!x.first || x.first == current_tid)
-            continue;
-        ReportLinux("Sending SIGTERM to thread %#llx, '%s'", x.first, x.second.c_str());
-        int status;
-        if ((status = pthread_kill((pthread_t) x.first, SIGTERM)))
-            ReportLinux("pthread_kill(%#llx, SIGTERM) failed: %s", x.first, strerror(status));
-    }
-    sleep(1);                   // wait for other threads to print
-    ReportLinux("Handling thread done backtracing");
-    g_signaldepth = saved_depth;
 }
 
-static void posix_signal_handler(int sig, siginfo_t *siginfo, void *context)
+void posix_oncrash(const char* msg)
 {
-    g_signaldepth++;
-    if (g_signaldepth > 2)
-    {
-        if (g_signaldepth == 3)
-            ReportLinux("Recursive Signal Handler detected - returning");
-        return;
-    }
-    else if (g_signaldepth == 2)
-    {
-        print_backtrace();
-        return;
-    }
-    
-    puts("\nsignal handler called");
-    fflush(NULL);
-    ReportLinux("%s (signal %d)", signal_to_string(sig, siginfo), sig);
-
-    const ucontext_t *ctx = (ucontext_t*)context;
-    const mcontext_t &mcontext = ctx->uc_mcontext;
-
-    if (sig == SIGILL || sig == SIGFPE || sig == SIGSEGV || sig == SIGBUS || sig == SIGTRAP)
-    {
-        const greg_t ecode = mcontext.gregs[REG_ERR];
-        ReportLinux("Invalid %s to %p", (ecode&4) ? "Exec" : (ecode&2) ? "Write" : "Read", siginfo->si_addr);
-    }
-    
-#ifdef __LP64__
-    ReportLinux("PC/RIP: %#llx SP/RSP: %#llx, FP/RBP: %#llx", mcontext.gregs[REG_RIP], mcontext.gregs[REG_RSP], mcontext.gregs[REG_RBP]);
-#else
-    ReportLinux("PC/EIP: %#x SP/ESP: %#x, FP/EBP: %#x", mcontext.gregs[REG_EIP], mcontext.gregs[REG_ESP], mcontext.gregs[REG_EBP]);
-#endif
-    
-    if (sig == SIGTERM || sig == SIGINT)
-    {
-        OLG_OnClose();
-        OL_DoQuit();
-        g_signaldepth--;
-        return;
-    }
-
-    os_stacktrace();
-    g_signaldepth--;
-    
-    sdl_os_oncrash("Spacetime Segmentation Fault Detected\n(Reassembly crashed)\n");
-    exit(1);
-}
-
-
-void set_signal_handler()
-{
-#if 0
-    /* setup alternate stack */
-    {
-        static uint8_t alternate_stack[SIGSTKSZ];
-
-        stack_t ss = {};
-        /* malloc is usually used here, I'm not 100% sure my static allocation
-           is valid but it seems to work just fine. */
-        ss.ss_sp = (void*)alternate_stack;
-        ss.ss_size = SIGSTKSZ;
-        ss.ss_flags = 0;
- 
-        if (sigaltstack(&ss, NULL) != 0) {
-            ReportLinux("signalstack failed: %s", strerror(errno));
-        }
-    }
-#endif
- 
-    /* register our signal handlers */
-    {
-        struct sigaction sig_action = {};
-        sig_action.sa_sigaction = posix_signal_handler;
-        sigemptyset(&sig_action.sa_mask);
- 
-#ifdef __APPLE__
-        /* for some reason we backtrace() doesn't work on osx
-           when we use an alternate stack */
-        sig_action.sa_flags = SA_SIGINFO;
-#else
-        sig_action.sa_flags = SA_SIGINFO;// | SA_ONSTACK;
-#endif
- 
-        const int signals[] = { SIGSEGV, SIGFPE, SIGINT, SIGILL, SIGTERM, SIGABRT };
-        foreach (int sig, signals) {
-            if (sigaction(sig, &sig_action, NULL) != 0) {
-                ReportLinux("sigaction failed: %s", strerror(errno));
-            }
-        }
-    }
+    sdl_os_oncrash(msg);
 }
 
 int os_init()
 {
-    // copy icon to icon dir - does not reliably cause desktop file to have icon
-    if (0)
-    {
-        const char* name = "reassembly_icon.png";
-        string src = str_format("linux/%s", name);
-        string dest = str_format("~/.local/share/icons/hicolor/128x128/apps/%s", name);
-        int status = 1;
-        if (!OL_FileDirectoryPathExists(dest.c_str()))
-        {
-            status = OL_CopyFile(src.c_str(), dest.c_str());
-        }
-        ReportLinux("Copied icon to %s: %s", dest.c_str(), 
-                    status == 1 ? "ALREADY OK" : status == 0 ? "OK" : "FAILED");
-    }
     return 1;
 }
 
@@ -550,7 +344,7 @@ int main(int argc, const char** argv)
 {
     g_binaryName = argv[0];
 
-    set_signal_handler();
+    posix_set_signal_handler();
 
     try {
         return sdl_os_main(argc, argv);

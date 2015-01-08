@@ -8,6 +8,8 @@
 #import "BasicOpenGLView.h"
 #include "Outlaws.h"
 
+#include "posix.h"
+
 #define ASSERT(X) if (!(X)) OLG_OnAssertFailed(__FILE__, __LINE__, __func__, #X, "")
 
 void LogMessage(NSString *str)
@@ -509,11 +511,6 @@ int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int fontNa
 }
 
 
-void OL_OnThreadInit(void)
-{
-    
-}
-
 #define THREADS 10
 static NSAutoreleasePool* gUpdateThreadPool[THREADS];
 
@@ -547,7 +544,8 @@ void OL_ThreadEndIteration(int i)
     }
 }
 
-static FILE *g_logfile = NULL;
+FILE *g_logfile = nil;
+NSString *g_logpath = nil;
 
 void OL_ReportMessage(const char *str)
 {
@@ -557,6 +555,7 @@ void OL_ReportMessage(const char *str)
 #endif
     if (!g_logfile) {
         NSString *fname = pathForFileName(OLG_GetLogFileName(), "w");
+        g_logpath = [fname retain];
         if (createParentDirectories(fname))
         {
             const char* logpath = [fname UTF8String];
@@ -582,7 +581,6 @@ void OL_ReportMessage(const char *str)
         fprintf(g_logfile, "%s", str);
     }
 }
-
 
 int OL_GetCpuCount(void)
 {
@@ -669,4 +667,22 @@ int OL_HasTearControl(void)
 void OL_ScheduleUploadLog(void)
 {
     // nothing to do
+}
+
+void dump_loaded_shared_objects()
+{
+    // FIXME implement me
+}
+
+void posix_oncrash(const char* msg)
+{
+    if (!g_logpath || !g_logfile)
+        return;
+    fclose(g_logfile);
+    g_logfile = nil;
+    NSString *contents = [NSString stringWithContentsOfFile:g_logpath encoding:NSUTF8StringEncoding error:nil];
+    if (!contents)
+        return;
+    const char* buf = [contents UTF8String];
+    OLG_UploadLog(buf, strlen(buf));
 }

@@ -3,7 +3,7 @@
 // SpacialHash.h - fast spacial hash for nearest-neighbor type queries
 //
 
-// Copyright (c) 2013 Arthur Danskin
+// Copyright (c) 2013-2015 Arthur Danskin
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -51,13 +51,11 @@ private:
     float                    m_icell_size; // inverse of m_cell_size
     uint                     m_width;      // sqrt(m_cells.size())
     mutable uint             m_currentQuery;
-
-
+    
     // return x, y grid cell for position
     int2 scale(float2 p) const
     {
-        float2 sp = p * m_icell_size;
-        return int2((int) floor(sp.x), (int) floor(sp.y));
+        return int2(floor_int(p.x * m_icell_size), floor_int(p.y * m_icell_size));
     }
 
     // return grid index for x, y

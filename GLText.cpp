@@ -4,7 +4,7 @@
 // - prerendered text is stored in a texture
 //
 
-// Copyright (c) 2013 Arthur Danskin
+// Copyright (c) 2013-2015 Arthur Danskin
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal

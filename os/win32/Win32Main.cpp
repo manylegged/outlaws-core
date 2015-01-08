@@ -663,13 +663,16 @@ void printModulesStack(CONTEXT *ctx)
     }
 }
 
-void os_stacktrace()
+void OL_OnTerminate(const char* message)
 {
     CONTEXT context;
     memset(&context, 0, sizeof(context));
     RtlCaptureContext(&context);
     
     printModulesStack(&context);
+
+    sdl_os_oncrash(str_format("Spacetime Terminated: %s\n(Reassembly crashed)\n",
+                              message).c_str());
 }
 
 static LONG WINAPI myExceptionHandler(EXCEPTION_POINTERS *info)

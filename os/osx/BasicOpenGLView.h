@@ -39,7 +39,6 @@ GLenum glReportError(void);
 - (void) drawRect:(NSRect)rect;
 
 - (void) prepareOpenGL;
-- (void) update;		// moved or resized
 
 - (BOOL) acceptsFirstResponder;
 - (BOOL) becomeFirstResponder;

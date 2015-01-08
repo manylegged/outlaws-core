@@ -3,7 +3,7 @@
 //  Outlaws
 //
 //  Created by Arthur Danskin on 10/21/12.
-//  Copyright (c) 2012-2014 Arthur Danskin. All rights reserved.
+//  Copyright (c) 2012-2015 Arthur Danskin. All rights reserved.
 //
 // This file defines the interface between the platform independant game code and the platform
 // specific parts.
@@ -109,7 +109,6 @@ int OLG_UploadLog(const char* logdata, int loglen);
 // these allocate and drain autorelease pools on Apple platforms
 void OL_ThreadBeginIteration(int i);
 void OL_ThreadEndIteration(int i);
-void OL_OnThreadInit(void);
 
 // return number of cpu cores
 int OL_GetCpuCount(void);
@@ -203,6 +202,8 @@ void OL_FontAdvancements(int font, float size, struct OLSize* advancements); // 
 // get height from one line to the next
 float OL_FontHeight(int fontName, float size);
 
+// print stacktrace to log, upload log, quit program, etc
+void OL_OnTerminate(const char* message);
 
 /////////// File IO
 // All functions take paths relative to main game directory

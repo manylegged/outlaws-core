@@ -105,9 +105,27 @@ void SetThreadName(DWORD dwThreadID, const char* threadName)
 
 #endif
 
+static void myTerminateHandler()
+{
+    ReportMessage("terminate handler called");
+    const char* message = "<no info>";
+    std::exception_ptr eptr = std::current_exception();
+    try {
+        if (eptr) {
+            std::rethrow_exception(eptr);
+        }
+    } catch(const std::exception& e) {
+        message = e.what();
+    }
+
+    ASSERT_FAILED("Terminate Handler", "Exception: %s", message);
+    OL_OnTerminate(message);
+    exit(1);
+}
+
 void thread_setup(const char* name)
 {
-    OL_OnThreadInit();
+    std::set_terminate(myTerminateHandler);
     // random number generator per-thread
     random_device() = new std::mt19937(random_seed());
 

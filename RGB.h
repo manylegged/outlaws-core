@@ -1,7 +1,7 @@
 //
 // RGB.h - color transformations
 // 
-// Copyright (c) 2014 Arthur Danskin
+// Copyright (c) 2014-2015 Arthur Danskin
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -24,7 +24,7 @@
 #ifndef RGB_H
 #define RGB_H
 
-inline uint ALPHA(uint X)   { return X << 24; }
+inline uint ALPHA(float X)  { return uint(clamp(X, 0.f, 1.f) * 255.f) << 24; }
 inline uint ALPHAF(float X) { return uint(clamp(X, 0.f, 1.f) * 255.f) << 24; }
 #define ALPHA_OPAQUE 0xff000000
 

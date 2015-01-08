@@ -7,6 +7,7 @@
 
 #include "sdl_inc.h"
 #include "Outlaws.h"
+#include "posix.h"
 
 BasicOpenGLView * gView = NULL;
 
@@ -137,7 +138,6 @@ void OL_DoQuit(void)
     LogMessage(@"DoQuit");
     gView->closing = 1;
 }
-
 
 #pragma mark ---- OpenGL Utils ----
 
@@ -433,19 +433,6 @@ void OL_SetSwapInterval(int interval)
 }
 // ---------------------------------
 
-// this can be a troublesome call to do anything heavyweight, as it is called on window moves, resizes, and display config changes.  So be
-// careful of doing too much here.
-- (void) update // window resizes, moves and display changes (resize, depth and display config change)
-{
-    [super update];
-    if (![self inLiveResize])  {// if not doing live resize
-        //[self updateInfoString]; // to get change in renderers will rebuld string every time (could test for early out)
-        //getCurrentCaps (); // this call checks to see if the current config changed in a reasonably lightweight way to prevent expensive re-allocations
-    }
-}
-
-// ---------------------------------
-
 -(id) initWithFrame: (NSRect) frameRect
 {
     NSOpenGLPixelFormat * pf = [BasicOpenGLView basicPixelFormat];
@@ -536,22 +523,6 @@ static void setupPresentationOptions(BOOL fullscreen)
     setupPresentationOptions(gView->fullscreen);
 }
 
-
-static void signalHandler()
-{
-    LogMessage(@"Caught SIGNAL! dumping stack");
-    fflush(NULL);
-
-    void* callstack[256];
-    int i, frames = backtrace(callstack, 256);
-    char** strs = backtrace_symbols(callstack, frames);
-    for (i = 0; i < frames; ++i) {
-        LogMessage([NSString stringWithFormat:@"%d. called from %p %s", i, callstack[i], strs[i]]);
-    }
-    free(strs);
-    exit(1);
-}
-
 - (void) awakeFromNib
 {
     // start animation timer
@@ -572,9 +543,8 @@ static void signalHandler()
                name:NSWindowDidBecomeKeyNotification
              object:nil ];
 
-    signal(SIGTERM, signalHandler);
-    signal(SIGINT, signalHandler);
-    signal(SIGSEGV, signalHandler);
+    if (!OLG_UseDevSavePath())
+        posix_set_signal_handler();
     
     gView = self;
     self->fullscreen = NO;

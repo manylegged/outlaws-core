@@ -5,7 +5,7 @@
 // - stl container convenience wrappers
 //
 
-// Copyright (c) 2013 Arthur Danskin
+// Copyright (c) 2013-2015 Arthur Danskin
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -34,13 +34,8 @@
 #include <algorithm>
 #include <type_traits>
 
-#if _MSC_VER == 1600
-// vs2010 specific syntax
-#define foreach(A, B) for each (A in (B))
-#else
-// c++11 syntax
 #define foreach(A, B) for (A : (B))
-#endif
+#define for_(A, B) for (auto &&A : (B))
 
 #if _MSC_VER
 #define NOEXCEPT _NOEXCEPT
@@ -835,11 +830,31 @@ inline bool vec_any(const T& v, const F& f)
     return false;
 }
 
+template <typename T>
+inline bool vec_any(const T& v)
+{
+    for_ (x, v) {
+        if (x)
+            return true;
+    }
+    return false;
+}
+
 template <typename T, typename F>
 inline bool vec_all(const T& v, const F& f)
 {
     foreach (auto &x, v) {
         if (!f(x))
+            return false;
+    }
+    return true;
+}
+
+template <typename T>
+inline bool vec_all(const T& v)
+{
+    for_ (x, v) {
+        if (!x)
             return false;
     }
     return true;
@@ -1193,7 +1208,6 @@ slist_iter_t<T> slist_iter(T *pt=NULL)
 
 
 ////////////////////////////////////////////////////////////////////////////////////
-
 
 typedef std::map<uint64, std::string> OL_ThreadNames;
 OL_ThreadNames &_thread_name_map();

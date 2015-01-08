@@ -5,7 +5,7 @@
 // create an FMOD like Event API on top of cAudio/OpenAL
 // centralize allocation of sources so we can avoid trying to play too many at once
 
-// Copyright (c) 2014 Arthur Danskin
+// Copyright (c) 2014-2015 Arthur Danskin
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -96,9 +96,9 @@ static string sourceToString(cAudio::IAudioSource *src)
 class AudioAllocator {
 
     struct SourceData {
-        cAudio::IAudioSource* source    = NULL;
-        int                   priority  = 0;
-        float                 gain      = 0.f;
+        cAudio::IAudioSource* source;
+        int                   priority;
+        float                 gain;
     };
     
     cAudio::IAudioManager                    *m_mgr = NULL;

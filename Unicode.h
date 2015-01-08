@@ -2,7 +2,7 @@
 // Unicode.h - utf8 / utf16 conversion routines
 
 // Some routines borrowd from SDL_ttf
-// everything else (c) 2014 Arthur Danskin
+// everything else (c) 2014-2015 Arthur Danskin
 
 #ifndef UNICODE_H
 #define UNICODE_H
