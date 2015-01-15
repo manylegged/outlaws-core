@@ -2,12 +2,10 @@
 // BasicOpenGLView.m - Outlaws.h platform view implementation for OSX
 
 #import "BasicOpenGLView.h"
-#include <sys/signal.h>
 #include <execinfo.h>
 
 #include "sdl_inc.h"
 #include "Outlaws.h"
-#include "posix.h"
 
 BasicOpenGLView * gView = NULL;
 
@@ -543,9 +541,6 @@ static void setupPresentationOptions(BOOL fullscreen)
                name:NSWindowDidBecomeKeyNotification
              object:nil ];
 
-    if (!OLG_UseDevSavePath())
-        posix_set_signal_handler();
-    
     gView = self;
     self->fullscreen = NO;
     self->closing = 0;

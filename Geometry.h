@@ -127,6 +127,7 @@ using glm::mat3;
 using glm::mat2;
 
 using std::sqrt;
+using std::log;
 
 #ifdef _MSC_VER
 #include <float.h>
@@ -188,14 +189,28 @@ inline float floor(float a, float v)
 
 inline int floor_int(float f)
 {
+    DASSERT(fabsf(f) < (2<<23));
     const int i = (int)f;
-    return (f < 0.0f && f != i ? i - 1 : i);
+    return (f < 0.0f && f != i) ? i - 1 : i;
 }
 
-inline int2 floor_int(float2 f)
+inline int ceil_int(float f)
 {
-    return int2(floor_int(f.x), floor_int(f.y));
+    DASSERT(fabsf(f) < (2<<23));
+    const int i = (int)f;
+    return (f >= 0.0f && f != i) ? i + 1 : i;
 }
+
+inline int round_int(float f)
+{
+    DASSERT(fabsf(f) < (2<<23));
+    const int i = (f >= 0.f) ? (f + 0.49999997f) : (f - 0.5f);
+    return i;
+}
+
+inline int2 floor_int(float2 f) { return int2(floor_int(f.x), floor_int(f.y)); }
+inline int2 ceil_int(float2 f)  { return int2(ceil_int(f.x),  ceil_int(f.y)); }
+inline int2 round_int(float2 f) { return int2(round_int(f.x), round_int(f.y)); }
 
 inline float2 angleToVector(float angle) { return float2(std::cos(angle), std::sin(angle)); }
 inline float vectorToAngle(float2 vec) { return std::atan2(vec.y, vec.x); }

@@ -35,6 +35,16 @@
 #include <utility>
 #include <cctype>
 
+#ifndef NOEXCEPT
+#if _MSC_VER
+#define NOEXCEPT _NOEXCEPT
+#else
+#define NOEXCEPT noexcept
+#endif
+#endif
+
+typedef unsigned long long uint64;
+
 // lexicon-ized string - basically a symbol
 // very fast to copy around, compare
 // can convert to const char* or std::string
@@ -62,10 +72,10 @@ private:
     const char* m_ptr = NULL;
 
 public:
-    lstring() {}
+    lstring() NOEXCEPT {}
     lstring(const std::string& str) : m_ptr(Lexicon::instance().intern(str)) { }
     lstring(const char* str)        : m_ptr(str ? Lexicon::instance().intern(str) : NULL) { }
-    lstring(const lstring& o)       : m_ptr(o.m_ptr) {}
+    lstring(const lstring& o) NOEXCEPT : m_ptr(o.m_ptr) {}
 
     std::string str()   const { return m_ptr ? std::string(m_ptr) : ""; }
     const char* c_str() const { return m_ptr; }
@@ -139,9 +149,9 @@ inline size_t str_find(const char* s, const char* v, size_t pos=0)
 }
 
 template <typename T>
-inline size_t str_find(const char* &s, const std::string& v, size_t pos=0)
+inline size_t str_rfind(const std::string &s, const T& v, size_t pos=0)
 {
-    return str_find(s, v.c_str(), pos);
+    return s.rfind(v, pos);
 }
 
 inline std::string str_substr(const std::string &st, size_t idx, size_t len=std::string::npos)
@@ -228,17 +238,27 @@ inline const char* str_tocstr(const char *v) { return v; }
 inline const char* str_tocstr(const std::string &v) { return v.c_str(); }
 inline const char* str_tocstr(const lstring &v) { return v.c_str(); }
 
+inline bool str_equals(const char* a, const char* b)
+{
+    return (!a && !b) || (a && b && strcmp(a, b) == 0);
+}
+
+inline bool str_equals(const std::string &a, const std::string &b)
+{
+    return a == b;
+}
+
 template <typename S1, typename S2>
 inline bool str_startswith(const S1& s1, const S2& s2)
 {
     return str_startswith(str_tocstr(s1), str_tocstr(s2));
 }
 
-inline bool str_endswith(const char* str_, const char* prefix_)
+inline bool str_endswith(const char* str, const char* pfx)
 {
-    std::string str = str_;
-    std::string pref = prefix_;
-    return str.size() >= pref.size() && str.substr(str.size()-pref.size()) == pref;
+    const size_t strlen = str_len(str);
+    const size_t pfxlen = str_len(pfx);
+    return strlen >= pfxlen && str_equals(str+(strlen-pfxlen), pfx);
 }
 
 std::string str_vformat(const char *format, va_list vl) __printflike(1, 0);
@@ -278,62 +298,74 @@ inline std::vector<std::string> str_split(const T &s, const U &delim)
     return elems;
 }
 
+std::vector<std::string> str_split_quoted(const std::string& line, char token);
+
 inline std::string str_tostr(float a) { return str_format("%f", a); }
 inline std::string str_tostr(int a)   { return str_format("%d", a); }
 inline std::string str_tostr(uint a)  { return a < 0xfffff ? str_format("%d", a) : str_format("%#x", a); }
+inline std::string str_tostr(uint64 a) { return a < 0xfffff ? str_format("%lld", a) : str_format("%#llx", a); }
+inline std::string str_tostr(unsigned long a) { return str_tostr((uint)a); }
 inline std::string str_tostr(char a)  { return str_format((a >= 0 && std::isprint(a)) ? "%c" : "\\%x", a); }
 inline std::string str_tostr(const char *a) { return a ? a : ""; }
 inline std::string str_tostr(lstring a) { return a.str(); }
 inline const std::string &str_tostr(const std::string &a) { return a; }
 inline std::string str_tostr(std::string &&a) { return std::move(a); }
 
-template <class A>
-std::string str_join( const std::string &sep, const A &cont)
+template <typename T>
+const char* str_tocstr(const T &v) 
 {
-    std::string result;
-    for (auto &it : cont)
-    {
-        if (!result.empty())
-            result.append(sep);
-        result.append(str_tostr(it));
-    }
-    return result;
+    static std::string s;
+    s = str_tostr(v);
+    return s.c_str(); 
 }
 
-template <class A>
-std::string str_join( const std::string &sep, const std::string &lsep, const A &cont)
+template <class S, class S1, class A>
+std::string str_join(const S &sep, const S1 &lsep, const A &cont)
 {
     std::string result;
     for (typename A::const_iterator it=cont.begin(), end=cont.end(); it!=end; ++it)
     {
         if (!result.empty())
-            result.append((it+1) == end ? lsep : sep);
+            ((it+1) == end) ? result += lsep : result += sep;
         result.append(str_tostr(*it));
     }
     return result;
 }
 
-template <class A>
-std::string str_join(const std::string &sep, const A &begin, const A &end)
+template <class S, class A>
+std::string str_join(const S &sep, const A &begin, const A &end)
 {
     std::string result;
-    for (A it=begin; it!=end; it++)
+    for (A it=begin; it!=end; ++it)
     {
         if (!result.empty())
-            result.append(sep);
+            result += sep;
         result.append(str_tostr(*it));
     }
     return result;
 }
 
-template <class A>
-std::string str_join_keys(const std::string &sep, const A &begin, const A &end)
+template <class S, class A>
+std::string str_join(const S &sep, A &&cont)
 {
     std::string result;
-    for (A it=begin; it!=end; it++)
+    for (auto &&it : cont)
     {
         if (!result.empty())
-            result.append(sep);
+            result += sep;
+        result.append(str_tostr(it));
+    }
+    return result;
+}
+
+template <class S, class A>
+std::string str_join_keys(const S &sep, const A &begin, const A &end)
+{
+    std::string result;
+    for (A it=begin; it!=end; ++it)
+    {
+        if (!result.empty())
+            result += sep;
         result.append(str_tostr(it->first));
     }
     return result;
@@ -397,6 +429,18 @@ template <typename T>
 bool str_contains(lstring str, const T& substr)
 {
     return str_contains(str.c_str(), substr);
+}
+
+template <typename T>
+std::string str_concat(T&& first)
+{
+    return str_tostr(std::forward<T>(first));
+}
+
+template <typename T, typename... Args>
+std::string str_concat(T&& first, Args... args)
+{
+    return str_tostr(std::forward<T>(first)) + str_concat(args...);
 }
 
 long chr_unshift(long chr);
@@ -476,6 +520,9 @@ std::string str_reltime_format(float seconds);
 std::string str_bytes_format(int bytes);
 
 std::string str_tohex(const char* digest, int size);
+
+// cpuid cpu brand string
+std::string str_cpuid();
 
 bool str_runtests();
 

@@ -179,8 +179,8 @@ struct TextInputBase : public WidgetBase {
     bool locked      = false;   // set to true to disable editing
     bool forceActive = false;   // set to true to enable editing regardless of mouse position
 
-    uint  defaultBGColor   = ALPHA(0x90)|COLOR_TEXT_BG;
-    uint  activeBGColor    = ALPHA(0xa0)|COLOR_BG_GRID;
+    uint  defaultBGColor   = ALPHA(0.5f)|COLOR_TEXT_BG;
+    uint  activeBGColor    = ALPHA(0.65)|COLOR_BG_GRID;
     uint  defaultLineColor = kGUIFg;
     uint  activeLineColor  = kGUIFgActive;
     uint  textColor        = kGUIText;
@@ -304,6 +304,7 @@ struct TextInputCommandLine : public TextInputBase {
     }
 
     bool doCommand(const string& line);
+    bool pushCommand(const string& line);
 
     bool HandleEvent(const Event* event, bool *textChanged=NULL);
 };
@@ -320,8 +321,8 @@ struct ContextMenuBase {
     int           selected;     // selected line or -1 for no selection
     bool          active;       // is it visible?
 
-    uint defaultBGColor    = ALPHA(0x90)|COLOR_TEXT_BG;
-    uint hoveredBGColor    = ALPHA(0xa0)|COLOR_BG_GRID;
+    uint defaultBGColor    = ALPHA(0.5f)|COLOR_TEXT_BG;
+    uint hoveredBGColor    = ALPHA(0.65f)|COLOR_BG_GRID;
     uint defaultLineColor  = kGUIFg;
     uint hoveredLineColor  = kGUIFgActive;
     uint textColor         = kGUIText;
@@ -457,7 +458,7 @@ struct OptionSlider : public WidgetBase {
 
     float2 getSizePoints() const { return size; }
     float  getValueFloat() const { return (float) value / (values-1); }
-    int    floatToValue(float v) const { return clamp((int)round(v * (values-1)), 0, values-1); }
+    int    floatToValue(float v) const { return clamp(round_int(v * (values-1)), 0, values-1); }
     void   setValueFloat(float v) { value = floatToValue(v); }
 
     bool HandleEvent(const Event* event, bool *valueChanged);
@@ -508,7 +509,7 @@ struct ITabInterface {
 
     virtual bool HandleEvent(const Event* event)=0;
     virtual void renderTab(float2 center, float2 size, float foreground, float introAnim)=0;
-    virtual void onSwapOut() {}
+    virtual bool onSwapOut() { return true; }
     virtual void onSwapIn() {}
     virtual void onStep() {}
     
@@ -622,7 +623,7 @@ struct ButtonLayout {
             float2 bsize;
             do {
                 buttonCount.x++;
-                buttonCount.y = ceil(float(count) / buttonCount.x);
+                buttonCount.y = ceil_int(float(count) / buttonCount.x);
                 bsize = tsize / float2(buttonCount);
             } while (bsize.x > 2.f * bsize.y);
         }
@@ -694,10 +695,12 @@ struct TextBox {
     
     const View* view = NULL;
     float2      rad;
+    float2      box;
     uint        fgColor = kGUIText;
     uint        bgColor = kGUIToolBg;
     int         font    = kMonoFont;
     float       tSize   = 12.f;
+    float       alpha   = 1.f;
     
     void Draw(const ShaderState& ss1, float2 point, const string& text) const;
 };

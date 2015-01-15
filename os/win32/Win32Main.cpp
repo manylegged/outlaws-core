@@ -121,16 +121,14 @@ static const std::wstring& getDataDir()
 
 static void ReportWin32Err1(const char *msg, DWORD dwLastError, const char* file, int line)
 {
-    wchar_t lpBuffer[256] = _T("?");
-    if (dwLastError != 0)    // Don't want to see a "operation done successfully" error ;-)
-        ::FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM,                // It's a system error
-                        NULL,                                      // No string to be formatted needed
-                        dwLastError,                               // Hey Windows: Please explain this error!
-                        MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), // Do it in the standard language
-                        lpBuffer,                                  // Put the message here
-                        (sizeof(lpBuffer)*sizeof(wchar_t)) - 1,      // Number of bytes to store the message
-                        NULL);
-    const std::string buf = ws2s(lpBuffer);
+    if (dwLastError == 0)
+        return;                 // Don't want to see a "operation done successfully" error ;-)
+    wchar_t lpBuffer[256] = L"?";
+    FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                  NULL, dwLastError,
+                  MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+                  lpBuffer, (sizeof(lpBuffer)/sizeof(wchar_t)) - 1, NULL);
+    const std::string buf = str_strip(ws2s(lpBuffer));
     ReportWin32("%s:%d:error: %s failed: %#x %s", file, line, msg, dwLastError, buf.c_str());
 }
 
@@ -257,7 +255,7 @@ static std::wstring getTildePath(const char* fname, const char* path, REFKNOWNFO
     std::wstring npath = getKnownPath(fid);
     if (npath.empty())
         return L"";
-    npath += L"\\" + s2ws(fname + strlen(path));
+    npath += s2ws(fname + strlen(path));
     return canonicalizePath(npath.c_str());
 }
 
@@ -334,20 +332,6 @@ const char** OL_ListDirectory(const char* path1)
     return &elements[0];
 }
 
-void os_errormessage1(const string &msg, SDL_SysWMinfo *info)
-{
-    ReportWin32("ErrorMessage: %s", msg.c_str());
-
-    // HINSTANCE hInstance = NULL;
-    // HWND hWnd = info->info.win.window;
-    // HWND hWndExample = CreateWindowEx(WS_EX_LEFT, L"EDIT", L"Text Goes Here", 
-    //                                   WS_VISIBLE | ES_LEFT, 
-    //                                   10,10,100,100,NULL,NULL,hInstance,NULL);
-
-    // while (1) {}
-    MessageBox(NULL, s2ws(msg).c_str(), s2ws(str_format("%s Error", OLG_GetName())).c_str(), MB_OK | MB_ICONERROR);
-}
-
 int os_create_parent_dirs(const char* path_)
 {
     const std::wstring path = s2ws(path_);
@@ -362,6 +346,36 @@ int os_create_parent_dirs(const char* path_)
         return 0;
     }
     return 1;
+}
+
+bool os_symlink_f(const char* source, const char* dest)
+{
+    std::wstring wdest = s2ws(dest);
+    std::wstring wsrc = s2ws(source);
+    
+    DeleteFile(wdest.c_str());
+
+#if 0
+    // requires stupid access privileges
+    typedef BOOLEAN (WINAPI *pfnCreateSymbolicLink)(
+        _In_  LPTSTR lpSymlinkFileName,
+        _In_  LPTSTR lpTargetFileName,
+        _In_  DWORD dwFlags);
+    static pfnCreateSymbolicLink pCreateSymbolicLink =
+        (pfnCreateSymbolicLink) GetModuleAddr(L"kernel32.dll", "CreateSymbolicLinkW");
+    if (!pCreateSymbolicLink)
+        return false;
+
+    BOOLEAN status = pCreateSymbolicLink(const_cast<LPTSTR>(wdest.c_str()),
+                                         const_cast<LPTSTR>(wsrc.c_str()), 0x0);
+    if (!status)
+        ReportWin32Err("CreateSymbolicLink", GetLastError());
+#else
+    BOOL status = CreateHardLink(wdest.c_str(), wsrc.c_str(), NULL);
+    if (!status)
+        ReportWin32Err("CreateHardLink", GetLastError());
+#endif
+    return status ? true : false;
 }
 
 int OL_SaveFile(const char *name, const char* data, int size)
@@ -564,7 +578,7 @@ static void printStack(HANDLE thread, CONTEXT &context)
     int i=0;
     while (StackWalk64(image, process, thread, &frame, &context, NULL, NULL, NULL, NULL))
     {
-        ReportWin32("%2d. called from 0x%p", i, frame.AddrPC.Offset);
+        ReportWin32("%2d. called from 0x%p", i, (void*)frame.AddrPC.Offset);
         i++;
     }
 }
@@ -618,7 +632,7 @@ void printModulesStack(CONTEXT *ctx)
                 {
                     if (str_contains(lname, str))
                     {
-                        ReportWin32("%2d. '%s' base address is 0x%p, size is 0x%x", 
+                        ReportWin32("%2d. '%s' base address is 0x%p, size is %#x", 
                                        i, name.c_str(), module_ptr, module_size);
                         break;
                     }
@@ -629,7 +643,7 @@ void printModulesStack(CONTEXT *ctx)
 
     const DWORD current_tid = GetCurrentThreadId();
 
-    ReportWin32("Dumping stack for current thread 0x%x, '%s'", 
+    ReportWin32("Dumping stack for current thread %#x, '%s'", 
                    current_tid, _thread_name_map()[current_tid].c_str());
 
     CONTEXT context = *ctx;
@@ -640,7 +654,7 @@ void printModulesStack(CONTEXT *ctx)
     {
         if (!x.first || x.first == current_tid)
             continue;
-        ReportWin32("Dumping stack for thread 0x%x, '%s'", x.first, x.second.c_str());
+        ReportWin32("Dumping stack for thread %#x, '%s'", x.first, x.second.c_str());
         HANDLE hthread = OpenThread(THREAD_GET_CONTEXT|THREAD_SUSPEND_RESUME|THREAD_QUERY_INFORMATION,
                                     FALSE, x.first);
         if (!hthread) {
@@ -671,8 +685,7 @@ void OL_OnTerminate(const char* message)
     
     printModulesStack(&context);
 
-    sdl_os_oncrash(str_format("Spacetime Terminated: %s\n(Reassembly crashed)\n",
-                              message).c_str());
+    sdl_os_oncrash(str_format("Spacetime Terminated: %s\n(Reassembly crashed)", message));
 }
 
 static LONG WINAPI myExceptionHandler(EXCEPTION_POINTERS *info)
@@ -681,21 +694,28 @@ static LONG WINAPI myExceptionHandler(EXCEPTION_POINTERS *info)
     ReportWin32("Unhandled Top Level Exception");
     const EXCEPTION_RECORD *rec = info->ExceptionRecord;
 
-    ReportWin32("Code: %s, Flags: 0x%x, PC: 0x%" PRIxPTR,
-                getExceptionCodeName(rec),
-                rec->ExceptionFlags, 
-                (uintptr_t)rec->ExceptionAddress);
+    string msg = str_format("Code: %s, Flags: %#x, PC: 0x%p",
+                            getExceptionCodeName(rec),
+                            rec->ExceptionFlags, 
+                            (void*)rec->ExceptionAddress);
+    ReportWin32("%s", msg.c_str());
     
-    if (rec->ExceptionCode == EXCEPTION_ACCESS_VIOLATION || rec->ExceptionCode == EXCEPTION_IN_PAGE_ERROR)
+    if (rec->ExceptionCode == EXCEPTION_ACCESS_VIOLATION ||
+        rec->ExceptionCode == EXCEPTION_IN_PAGE_ERROR)
     {
-        ULONG type = rec->ExceptionInformation[0];
-        ULONG addr = rec->ExceptionInformation[1];
-        ReportWin32("Invalid %s to 0x%x", type == 0 ? "Read" : type == 1 ? "Write" : type == 8 ? "Exec" : "Unknown", (uint) addr);
+        const ULONG_PTR type = rec->ExceptionInformation[0];
+        const ULONG_PTR addr = rec->ExceptionInformation[1];
+        const char *stype = type == 0 ? "Read" :
+                            type == 1 ? "Write" :
+                            type == 8 ? "Exec" : "Unknown";
+        const string msg2 = str_format("Invalid %s to 0x%p", stype, (void*)addr);
+        ReportWin32("%s", msg2.c_str());
+        msg += "\n" + msg2;
     }
 
     printModulesStack(info->ContextRecord);
 
-    sdl_os_oncrash("Spacetime Segmentation Fault Detected\n(Reassembly crashed)\n");
+    sdl_os_oncrash(str_format("Spacetime Segfault:\n%s", msg.c_str()));
 	SteamAPI_WriteMiniDump(rec->ExceptionCode, info, 0);
     return EXCEPTION_EXECUTE_HANDLER;
 }
@@ -756,7 +776,8 @@ string os_get_platform_info()
 
     int bitness = 32;
     typedef BOOL (WINAPI *LPFN_ISWOW64PROCESS) (HANDLE, PBOOL);
-    static LPFN_ISWOW64PROCESS fnIsWow64Process = (LPFN_ISWOW64PROCESS) GetModuleAddr(L"kernel32", "IsWow64Process");
+    static LPFN_ISWOW64PROCESS fnIsWow64Process =
+        (LPFN_ISWOW64PROCESS) GetModuleAddr(L"kernel32", "IsWow64Process");
     BOOL is64 = false;
     if (fnIsWow64Process && fnIsWow64Process(GetCurrentProcess(), &is64) && is64) {
         bitness = 64;
@@ -772,28 +793,9 @@ string os_get_platform_info()
         buf.resize(len - 1);
         locale = ws2s(buf);
     }
-
-    int CPUInfo[4] = {-1};
-    unsigned   nExIds, i =  0;
-    char CPUBrandString[0x40] = {};
-    // Get the information associated with each extended ID.
-    __cpuid(CPUInfo, 0x80000000);
-    nExIds = CPUInfo[0];
-    for (i=0x80000000; i<=nExIds; ++i)
-    {
-        __cpuid(CPUInfo, i);
-        // Interpret CPU brand string
-        if  (i == 0x80000002)
-            memcpy(CPUBrandString, CPUInfo, sizeof(CPUInfo));
-        else if  (i == 0x80000003)
-            memcpy(CPUBrandString + 16, CPUInfo, sizeof(CPUInfo));
-        else if  (i == 0x80000004)
-            memcpy(CPUBrandString + 32, CPUInfo, sizeof(CPUInfo));
-    }
     
-    return str_format("Windows %s %dbit (NT %d.%d build %d) %s %s", name, bitness,
-                      major, minor, osvi.dwBuildNumber, locale.c_str(),
-                      str_strip(CPUBrandString).c_str());
+    return str_format("Windows %s %dbit (NT %d.%d build %d) %s", name, bitness,
+                      major, minor, osvi.dwBuildNumber, locale.c_str());
 }
 
 int os_init()
@@ -819,14 +821,23 @@ int os_init()
         if (timeGetDevCaps(&tc, sizeof(TIMECAPS)) == TIMERR_NOERROR)
         {
             UINT wTimerRes = min(max(tc.wPeriodMin, TARGET_RESOLUTION), tc.wPeriodMax);
-            timeBeginPeriod(wTimerRes);
-            ReportWin32("Set timer resolution to %dms", wTimerRes);
+            MMRESULT res = timeBeginPeriod(wTimerRes);
+            ReportWin32("Set timer resolution to %dms: %s", wTimerRes, (res == TIMERR_NOERROR) ? "OK" : "FAILED");
         }
         else
         {
             ReportWin32("Error setting timer resolution");
         }
     }
+
+    if (OLG_UseDevSavePath())
+    {
+        AllocConsole();
+        freopen("conin$","r",stdin);
+        freopen("conout$","w",stdout);
+        freopen("conout$","w",stderr);
+    }
+
     return 1;
 }
 
@@ -840,7 +851,8 @@ int main(int argc, char* argv[])
         // this causes a link error on XP
         // SetProcessDPIAware();
         typedef BOOL (WINAPI *PSetProcessDPIAware)();
-        PSetProcessDPIAware pSetProcessDPIAware = (PSetProcessDPIAware) GetModuleAddr(L"user32.dll", "SetProcessDPIAware");
+        PSetProcessDPIAware pSetProcessDPIAware =
+            (PSetProcessDPIAware) GetModuleAddr(L"user32.dll", "SetProcessDPIAware");
         if (pSetProcessDPIAware)
             pSetProcessDPIAware();
     }

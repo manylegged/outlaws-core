@@ -8,23 +8,34 @@
 
 #import <Cocoa/Cocoa.h>
 #include "Outlaws.h"
+#include "posix.h"
 
 void LogMessage(NSString *str);
 
 int main(int argc, char *argv[])
 {
     const int mode = OLG_Init(argc, (const char**)argv);
+
+    if (OLG_EnableCrashHandler())
+        posix_set_signal_handler();
+
     if (mode == 0)
     {
-        static NSOpenGLPixelFormatAttribute glAttributes[] = {
+        NSOpenGLPixelFormatAttribute glAttributes[] = {
             NSOpenGLPFADepthSize, (NSOpenGLPixelFormatAttribute)16, // 16 bit depth buffer
+            (NSOpenGLPixelFormatAttribute)nil
         };
         NSOpenGLPixelFormat *pixelFormat = [[NSOpenGLPixelFormat alloc]
                                                initWithAttributes:glAttributes];
         NSOpenGLContext *ctx = [[NSOpenGLContext alloc]
                                 initWithFormat:pixelFormat shareContext:nil];
         [ctx makeCurrentContext];
+
+        OLG_InitGL();
+
         OLG_Draw();
+        
+        LogMessage(@"Goodbye!\n");
         return 0;
     }
     
@@ -36,6 +47,8 @@ int main(int argc, char *argv[])
     {
         LogMessage([NSString stringWithFormat: @"Uncaught exception: %@\nStack trace: %@",
                              exception.description, [exception callStackSymbols]]);
+        posix_oncrash([[NSString stringWithFormat: @"Uncaught exception: %@",
+                             exception.description] UTF8String]);
         return 0;
     }
 }

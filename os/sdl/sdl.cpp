@@ -23,6 +23,14 @@ static bool         g_openinglog = false;
 static int          g_supportsTearControl = -1;
 static bool         g_wantsLogUpload = false;
 
+static DEFINE_CVAR(bool, kOpenGLDebug, IS_DEVEL);
+
+#if OL_WINDOWS
+#define OL_ENDL "\r\n"
+#else
+#define OL_ENDL "\n"
+#endif
+
 void SetWindowResizable(SDL_Window *win, SDL_bool resizable)
 {
     SDL_SysWMinfo info;
@@ -30,7 +38,7 @@ void SetWindowResizable(SDL_Window *win, SDL_bool resizable)
     if (!SDL_GetWindowWMInfo(g_displayWindow, &info))
         return;
 
-#if WIN32
+#if OL_WINDOWS
     HWND hwnd = info.info.win.window;
     DWORD style = GetWindowLong(hwnd, GWL_STYLE);
     if (resizable)
@@ -39,14 +47,6 @@ void SetWindowResizable(SDL_Window *win, SDL_bool resizable)
         style &= ~WS_THICKFRAME;
     SetWindowLong(hwnd, GWL_STYLE, style);
 #endif
-}
-
-void os_errormessage(const string &str)
-{
-    SDL_SysWMinfo info;
-    SDL_VERSION(&info.version);
-    SDL_GetWindowWMInfo(g_displayWindow, &info);
-    return os_errormessage1(str, &info);
 }
 
 // don't go through ReportMessagef/ReportMessage!
@@ -61,16 +61,18 @@ static void ReportSDL(const char *format, ...)
 
 static const string loadFile(SDL_RWops *io, const char* name)
 {
-    if (!io)
+    if (!io) {
+        ReportSDL("error opening '%s': %s", name, SDL_GetError());
         return "";
+    }
     string buf;
     Sint64 size = SDL_RWsize(io);
     buf.resize(size);
-    if (SDL_RWread(io, (char*)buf.data(), buf.size(), sizeof(char)) <= 0) {
-        ReportSDL("error writing to %s: %s", name, SDL_GetError());
+    if (SDL_RWread(io, &buf[0], buf.size(), 1) <= 0) {
+        ReportSDL("error reading from '%s': %s", name, SDL_GetError());
     }
     if (SDL_RWclose(io) != 0) {
-        ReportSDL("error closing file %s: %s", name, SDL_GetError());
+        ReportSDL("error closing file '%s': %s", name, SDL_GetError());
     }
 
     return buf;
@@ -82,8 +84,9 @@ static bool readUploadLog(string& data)
     return data.size() ? OLG_UploadLog(data.c_str(), data.size()) : 0;
 }
 
-void sdl_os_oncrash(const char* message)
+void sdl_os_oncrash(const string &message)
 {
+    ReportSDL("%s\n", message.c_str());
     fflush(NULL);
     if (g_logfile)
     {
@@ -97,9 +100,11 @@ void sdl_os_oncrash(const char* message)
     bool success = readUploadLog(data);
     SteamAPI_SetMiniDumpComment(data.size() ? data.c_str() : "Error loading log");
 
+    static string errorm;
     if (success)
     {
-        os_errormessage(str_format("%s\nAnonymous log uploaded OK.\n\n%s", message, g_logpath));
+        errorm = str_format("%s\nAnonymous log uploaded OK.\n\n%s\n", message.c_str(), g_logpath);
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Reassembly Error", errorm.c_str(), NULL);
         return;
     }
     
@@ -107,16 +112,14 @@ void sdl_os_oncrash(const char* message)
     const std::time_t cstart = std::chrono::system_clock::to_time_t(start);
     char mbstr[100];
     std::strftime(mbstr, sizeof(mbstr), "%Y%m%d_%I.%M.%S.%p", std::localtime(&cstart));
-    string dest = OL_PathForFile(str_format("~/Desktop/%s_crashlog_%s.txt", OLG_GetName(), mbstr).c_str(), "w");
+    string dest = OL_PathForFile(str_format("~/Desktop/%s_crash_%s.txt", OLG_GetName(), mbstr).c_str(), "w");
     ReportSDL("Copying log from %s to %s", g_logpath, dest.c_str());
 
     OL_CopyFile(g_logpath, dest.c_str());
-    
-    os_errormessage(str_format(
-        "%s\n"
-        "Please email\n"
-        "%s\nto arthur@anisopteragames.com",
-        message, dest.c_str()).c_str());
+
+    errorm = str_format("%s\n\nPlease email\n%s\nto arthur@anisopteragames.com\n",
+                        message.c_str(), dest.c_str());
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Reassembly Error", errorm.c_str(), NULL);
 }
 
 void OL_ScheduleUploadLog(void)
@@ -174,24 +177,20 @@ void OL_ReportMessage(const char *str_)
                 return;
             g_logpath = lstring(path).c_str();
             g_openinglog = false;
-            if (g_logdata.size())
+            if (g_logdata.size()) {
+#if OL_WINDOWS
+                g_logdata = str_replace(g_logdata, "\n", OL_ENDL);
+#endif
                 SDL_RWwrite(g_logfile, g_logdata.c_str(), g_logdata.size(), 1);
+            }
             // call self recursively
             ReportSDL("Log file opened at %s", path);
             const char* latestpath = OL_PathForFile("data/log_latest.txt", "w");
-#if !OL_WINDOWS
-            int status = unlink(latestpath);
-            if (status && status != ENOENT) {
-                ReportSDL("Error unlink('%s'): %s", latestpath, strerror(errno));
-            }
-            if (symlink(g_logpath, latestpath)) {
-                ReportSDL("Error symlink('%s', '%s'): %s", g_logpath, latestpath, strerror(errno));
-            }
-#endif
+            os_symlink_f(g_logpath, latestpath);
         }
     }
 #if OL_WINDOWS
-    str = str_replace(str, "\n", "\r\n");
+    str = str_replace(str, "\n", OL_ENDL);
 #endif
     
     SDL_RWwrite(g_logfile, str.c_str(), str.size(), 1);
@@ -332,7 +331,7 @@ static int getSystemRam()
 const char* OL_GetPlatformDateInfo(void)
 {
     static string str;
-
+    
     str = os_get_platform_info();
 
     SDL_version compiled;
@@ -344,9 +343,9 @@ const char* OL_GetPlatformDateInfo(void)
     const int    rammb    = getSystemRam();
     const double ramGb    = rammb / 1024.0;
 
-    str += str_format(" SDL %d.%d.%d, %d cores %.1f GB, ",
+    str += str_format(" SDL %d.%d.%d, %s with %d cores %.1f GB, ",
                       linked.major, linked.minor, linked.patch,
-                      cpucount, ramGb);
+                      str_cpuid().c_str(), cpucount, ramGb);
 
     std::chrono::time_point<std::chrono::system_clock> start = std::chrono::system_clock::now();
     std::time_t cstart = std::chrono::system_clock::to_time_t(start);
@@ -543,7 +542,7 @@ TTF_Font* getFont(int fontName, float size)
 
     std::lock_guard<std::mutex> l(g_fontMutex);
 
-    const int   isize = int(round(size * g_scaling_factor));
+    const int   isize = round_int(size * g_scaling_factor);
     const uint  key   = (fontName<<16)|isize;
     TTF_Font*  &font  = g_fonts[key];
 
@@ -556,7 +555,7 @@ TTF_Font* getFont(int fontName, float size)
             ReportSDL("Loaded font '%s' at size %d", file, isize);
         } else {
             ReportSDL("Failed to load font '%s' at size '%d': %s",
-                           file, isize, TTF_GetError());
+                      file, isize, TTF_GetError());
         }
         ASSERT(font);
     }
@@ -1077,30 +1076,10 @@ const char* OL_ReadClipboard()
         return NULL;
     string str = ptr;
 #if OL_WINDOWS
-    str_replace(ptr, "\r\n", "\n");
+    str_replace(ptr, OL_ENDL, "\n");
 #endif
     SDL_free(ptr);
     return sdl_os_autorelease(str);
-}
-
-static void setupInitialResolution()
-{
-    g_windowSize.x = 960;
-    g_windowSize.y = 600;
-
-    const int displayCount = SDL_GetNumVideoDisplays();
-
-    for (int i=0; i<displayCount; i++)
-    {
-        SDL_DisplayMode mode;
-        SDL_GetDesktopDisplayMode(i, &mode);
-        ReportSDL("Display %d of %d is %dx%d@%dHz", i+1, displayCount, mode.w, mode.h, mode.refresh_rate);
-
-        if (i == 0)
-            g_windowSize = int2(mode.w, mode.h);
-        g_windowSize = min(g_windowSize, int2(0.9f * float2(mode.w, mode.h)));
-    }
-    ReportSDL("Initial window size is %dx%d", g_windowSize.x, g_windowSize.y);
 }
 
 #define COPY_GL_EXT_IMPL(X) if (!(X) && (X ## EXT)) { ReportSDL("Using " #X "EXT"); (X) = (X ## EXT); } else if (!(X)) { ReportSDL(#X " Not found!"); }
@@ -1108,12 +1087,14 @@ static void setupInitialResolution()
 
 static bool initGlew()
 {
+    ReportSDL("GLEW Version: %s", glewGetString(GLEW_VERSION));
+    
     glewExperimental = GL_TRUE;
     const GLenum err = glewInit();
     if (GLEW_OK != err)
     {
-        sdl_os_oncrash(str_format("Glew Error! %s", glewGetErrorString(err)).c_str());
-        return 0;
+        ReportSDL("glewInit() Failed: %s", glewGetErrorString(err));
+        // keep going to get as much log as possible
     }
     // GL_EXT_framebuffer_blit
     COPY_GL_EXT_IMPL(glBlitFramebuffer);
@@ -1153,7 +1134,7 @@ int sdl_os_main(int argc, const char **argv)
 {
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_GAMECONTROLLER ) < 0)
     {
-        sdl_os_oncrash(str_format("SDL Init failed: %s", SDL_GetError()).c_str());
+        sdl_os_oncrash(str_format("SDL_Init() failed: %s", SDL_GetError()));
         return 1;
     }
 
@@ -1164,6 +1145,9 @@ int sdl_os_main(int argc, const char **argv)
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 16);
 
     int mode = OLG_Init(argc, argv);
+
+    if (kOpenGLDebug)
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_DEBUG_FLAG);
 
     if (!os_init())
         return 1;
@@ -1186,14 +1170,40 @@ int sdl_os_main(int argc, const char **argv)
         return 0;
     }
 
-    setupInitialResolution();
+    {
+        g_windowSize.x = 960;
+        g_windowSize.y = 600;
+
+        const int displayCount = SDL_GetNumVideoDisplays();
+
+        for (int i=0; i<displayCount; i++)
+        {
+            SDL_DisplayMode mode;
+            SDL_GetDesktopDisplayMode(i, &mode);
+            ReportSDL("Display %d of %d is %dx%d@%dHz: %s", i+1, displayCount, mode.w, mode.h, mode.refresh_rate,
+                      SDL_GetDisplayName(i));
+
+            if (i == 0)
+                g_windowSize = int2(mode.w, mode.h);
+            g_windowSize = min(g_windowSize, int2(0.9f * float2(mode.w, mode.h)));
+        }
+        ReportSDL("Requesting initial window size of %dx%d", g_windowSize.x, g_windowSize.y);
+        ReportSDL("Current SDL video driver is '%s'", SDL_GetCurrentVideoDriver());
+    }
+ 
     g_displayWindow = SDL_CreateWindow(OLG_GetName(), 
                                        SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
                                        g_windowSize.x, g_windowSize.y,
                                        SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+    if (!g_displayWindow) {
+        ReportSDL("SDL_CreateWindow failed: %s", SDL_GetError());
+    }
 
     SDL_GetWindowPosition( g_displayWindow, &g_savedWindowPos.x, &g_savedWindowPos.y );
     SDL_GetWindowSize( g_displayWindow, &g_savedWindowPos.w, &g_savedWindowPos.h );
+
+    ReportSDL("Initial window size+position is %dx%d+%dx%d", g_savedWindowPos.w, g_savedWindowPos.h,
+              g_savedWindowPos.x, g_savedWindowPos.y);
 
 #if OL_LINUX
     const char* spath = OL_PathForFile("linux/reassembly_icon.png", "r");
@@ -1205,12 +1215,14 @@ int sdl_os_main(int argc, const char **argv)
     }
     else
     {
-        ReportSDL("Failed to load icon from %s", spath);
+        ReportSDL("Failed to load icon from '%s'", spath);
     }
 #endif
 
-    SDL_GLContext _glcontext = SDL_GL_CreateContext(g_displayWindow);
-    UNUSED(_glcontext);
+    SDL_GLContext glcontext = SDL_GL_CreateContext(g_displayWindow);
+    if (!glcontext) {
+        ReportSDL("SDL_GL_CreateContext failed: %s", SDL_GetError());
+    }
     
     if (!initGlew())
         return 1;
@@ -1218,7 +1230,7 @@ int sdl_os_main(int argc, const char **argv)
     SDL_ShowCursor(0);
     if (TTF_Init() != 0)
     {
-        sdl_os_oncrash(str_format("TTF_Init() failed: %s", TTF_GetError()).c_str());
+        sdl_os_oncrash(str_format("TTF_Init() failed: %s", TTF_GetError()));
         return 1;
     }
 
@@ -1231,7 +1243,7 @@ int sdl_os_main(int argc, const char **argv)
         OLG_Draw();
         const double frameTime = max(0.0, OL_GetCurrentTime() - start);
         if (frameTime < kFrameTime) {
-            std::this_thread::sleep_for(std::chrono::microseconds(int(round(1e6 * (kFrameTime - frameTime)))));
+            std::this_thread::sleep_for(std::chrono::microseconds(round_int(1e6 * (kFrameTime - frameTime))));
             // SDL_Delay((kFrameTime - frameTime) * 1000.0);
         }
     }
@@ -1240,7 +1252,7 @@ int sdl_os_main(int argc, const char **argv)
 
     if (g_logfile)
     {
-        SDL_RWwrite(g_logfile, "\n", 1, 1);
+        SDL_RWwrite(g_logfile, OL_ENDL, strlen(OL_ENDL), 1);
         SDL_RWclose(g_logfile);
         g_logfile = NULL;
 

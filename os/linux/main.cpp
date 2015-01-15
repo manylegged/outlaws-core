@@ -151,6 +151,19 @@ int os_create_parent_dirs(const char* path)
     return recursive_mkdir(str_dirname(path).c_str());
 }
 
+bool os_symlink_f(const char* source, const char* dest)
+{
+    int status = unlink(dest);
+    if (status && status != ENOENT) {
+        ReportLinux("Error unlink('%s'): %s", dest, strerror(errno));
+    }
+    if (symlink(source, dest)) {
+        ReportLinux("Error symlink('%s', '%s'): %s", source, dest, strerror(errno));
+        return false;
+    }
+    return true;
+}
+
 int OL_SaveFile(const char *name, const char* data, int size)
 {
     const char* fname = OL_PathForFile(name, "w");
@@ -223,11 +236,6 @@ const char** OL_ListDirectory(const char* path1)
     closedir(dir);
     elements.push_back(NULL);
     return &elements[0];
-}
-
-void os_errormessage1(const string& message, SDL_SysWMinfo *info)
-{
-    OL_ReportMessage(message.c_str());
 }
 
 string os_get_platform_info()

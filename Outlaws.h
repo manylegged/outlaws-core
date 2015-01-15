@@ -97,6 +97,9 @@ const char* OLG_GetName(void);
 // true if we should load / save data from the game directory instead of system save path
 int OLG_UseDevSavePath(void);
 
+// true to catch signals / print stack trace, etc
+int OLG_EnableCrashHandler(void);
+
 // return name of log file to open
 const char* OLG_GetLogFileName(void);
 

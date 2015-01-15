@@ -55,9 +55,9 @@ FontStats::FontStats(int ft, float sz) : font(ft), fontSize(sz)
 const FontStats & FontStats::get(int font, float size)
 {
     static std::map<pair<int, int>, FontStats> map;
-    FontStats &fs = map[make_pair(font, (int)ceil(size))];
+    FontStats &fs = map[make_pair(font, round_int(size))];
     if (fs.fontSize <= 0.f)
-        fs = FontStats(font, ceil(size));
+        fs = FontStats(font, round_int(size));
     return fs;
 }
 

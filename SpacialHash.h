@@ -195,7 +195,7 @@ public:
             return foundAny;
         }
 
-        m_currentQuery++;
+        const uint query = ++m_currentQuery;
 
         for (int x=s.x; x<=e.x; x++) {
             for (int y=s.y; y<=e.y; y++)
@@ -205,11 +205,11 @@ public:
                 foreach (const uint idx, bucket)
                 {
                     const value_type& el = m_elements[idx];
-                    if (el.first.query != m_currentQuery &&
+                    if (el.first.query != query &&
                         intersectCircleCircle(el.first.pos, el.first.radius, p, r))
                     {
                         foundAny = true;
-                        el.first.query = m_currentQuery;
+                        el.first.query = query;
                         if (fun(el))
                             return true;
                     }
@@ -248,7 +248,7 @@ public:
             return foundAny;
         }
 
-        m_currentQuery++;
+        const uint query = ++m_currentQuery;
 
         for (int x=s.x; x<=e.x; x++) {
             for (int y=s.y; y<=e.y; y++)
@@ -258,10 +258,10 @@ public:
                 foreach (const uint idx, bucket)
                 {
                     const value_type &el = m_elements[idx];
-                    if (el.first.query != m_currentQuery &&
+                    if (el.first.query != query &&
                         intersectCircleRectangle(el.first.pos, el.first.radius, p, r))
                     {
-                        el.first.query = m_currentQuery;
+                        el.first.query = query;
                         foundAny  = true;
                         if (fun(el))
                             return true;

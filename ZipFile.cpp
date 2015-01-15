@@ -124,7 +124,8 @@ static string loadCurrentFile(unzFile uf)
 
 static gzFile openGzip(const char* path, const char* mode)
 {
-    const char* abspath = OL_PathForFile(str_format("%s.gz", path).c_str(), mode);
+    const string gzp = str_endswith(path, ".gz") ? string(path) : str_concat(path, ".gz");
+    const char* abspath = OL_PathForFile(gzp.c_str(), mode);
     gzFile gzf = GZ_OPEN(abspath, mode);
     
     if (gzf) {
@@ -142,14 +143,13 @@ string ZF_LoadFile(const char* path)
         if (gzf)
         {
             string buf;
-            const int kChunkSize = 4 * 1024;
+            buf.resize(4 * 1024);
             int offset = 0;
             int read = 0;
-            buf.resize(kChunkSize);
-            while ((read = gzread(gzf, (void*)(offset + buf.data()), buf.size() - offset)) == kChunkSize)
+            while ((read = gzread(gzf, (void*)(offset + &buf[0]), buf.size() - offset)) == (buf.size() - offset))
             {
                 offset = buf.size();
-                buf.resize(offset + kChunkSize);
+                buf.resize(offset * 2);
             }
             if (read == -1) {
                 ReportMessagef("Error reading '%s': %s", path, gzerror(gzf, NULL));

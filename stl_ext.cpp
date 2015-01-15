@@ -215,9 +215,14 @@ MemoryPool::MemoryPool(size_t sz, size_t cnt) : element_size(sz), count(cnt)
         if (!pool)
             count /= 2;
     } while (count && !pool);
+
     first = (Chunk*) pool;
-    for (int i=0; i<count-1; i++) {
-        ((Chunk*) &pool[i * element_size])->next = (Chunk*) &pool[(i+1) * element_size];
+
+    if (count > 1)
+    {
+        for (int i=0; i<count-1; i++) {
+            ((Chunk*) &pool[i * element_size])->next = (Chunk*) &pool[(i+1) * element_size];
+        }
     }
 }
 
@@ -271,4 +276,3 @@ void MemoryPool::deallocate(void *ptr)
     first = chunk;
     used--;
 }
-

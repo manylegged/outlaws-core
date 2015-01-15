@@ -432,11 +432,19 @@ float snoise(vec2 v)
 
 bool mathRunTests()
 {
+    if (!IS_DEBUG)
+        return true;
     DASSERT(distanceRgb(0xff0000, 0xff0000) == 0.f);
     DASSERT(distanceRgb(0xff0000, 0x00ff00) > 0.7f);
     DASSERT(distanceRgb(0xff0000, 0xffffff) > 0.9f);
     DASSERT(distanceRgb(0xff0000, 0x000000) > 0.9f);
 
-    return 0;
+    for (float x=-10.f; x<10.f; x += 0.1f)
+    {
+        DASSERT(floor_int(x) == (int) floor(x));
+        DASSERT(ceil_int(x) == (int) ceil(x));
+    }
+    
+    return true;
 }
 

@@ -67,6 +67,7 @@ struct GLDisableAlphaTest : public GLDisableScope {
 };
 #endif
 
+void deleteBufferInMainThread(GLuint buffer);
 
 // RAII for opengl buffers
 template <typename Type, GLenum GLType>
@@ -94,11 +95,11 @@ public:
     uint size() const  { return m_size; }
     uint getElementSize() const { return sizeof(Type); }
     GLenum getType() const { return GLType; }
-
+    
     void clear()
     {
         if (m_id) {
-            glDeleteBuffers(1, &m_id);
+            deleteBufferInMainThread(m_id);
             m_id = 0;
             gpuMemoryUsed -= m_size * sizeof(Type);
         }
@@ -685,6 +686,7 @@ struct MeshBase : public Transform2D {
     typedef uint IndexType;
 
 };
+
 
 // aka VertexPusher
 // store a bunch of geometry

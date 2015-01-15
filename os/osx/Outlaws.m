@@ -5,6 +5,8 @@
 #import <OpenGL/OpenGL.h>
 #import <OpenGL/CGLContext.h>
 
+#include <cpuid.h>
+
 #import "BasicOpenGLView.h"
 #include "Outlaws.h"
 
@@ -588,6 +590,9 @@ int OL_GetCpuCount(void)
     return (int) [process processorCount];
 }
 
+// in Str.cpp
+const char* str_cpuid_(void);
+
 const char* OL_GetPlatformDateInfo(void)
 {
     static NSString *buf = nil;
@@ -599,13 +604,12 @@ const char* OL_GetPlatformDateInfo(void)
         [formatter setDateFormat:@"MM/dd/yyyy hh:mma"];
 
         NSProcessInfo *process = [NSProcessInfo processInfo];
-        unsigned long long memoryBytes = [process physicalMemory];
-        unsigned long long memoryGB = memoryBytes / (1024 * 1024 * 1024);
+        const unsigned long long memoryBytes = [process physicalMemory];
+        const double memoryGB = memoryBytes / (1024.0 * 1024.0 * 1024.0);
 
-        buf = [NSString stringWithFormat:@"OSX %@, %dGB Memory, %d Cores, Time is %@", 
+        buf = [NSString stringWithFormat:@"OSX %@, %s with %d cores %.1fGB, %@", 
                         [process operatingSystemVersionString],
-                        (int)memoryGB,
-                        (int)[process processorCount],
+                        str_cpuid_(), (int)[process processorCount], memoryGB,
                         [formatter stringFromDate:[NSDate date]]];
         [buf retain];
     }
@@ -678,6 +682,7 @@ void posix_oncrash(const char* msg)
 {
     if (!g_logpath || !g_logfile)
         return;
+    LogMessage([NSString stringWithFormat:@"%s", msg]);
     fclose(g_logfile);
     g_logfile = nil;
     NSString *contents = [NSString stringWithContentsOfFile:g_logpath encoding:NSUTF8StringEncoding error:nil];
@@ -685,4 +690,5 @@ void posix_oncrash(const char* msg)
         return;
     const char* buf = [contents UTF8String];
     OLG_UploadLog(buf, strlen(buf));
+    LogMessage(@"\nGoodbye!\n");
 }

@@ -96,8 +96,9 @@ bool ButtonBase::renderTooltip(const ShaderState &ss, const View& view, uint col
 
     TextBox dat;
     dat.tSize = 11.f;
-    dat.fgColor = MultAlphaAXXX(color, alpha);
-    dat.bgColor = MultAlphaAXXX(kGUIToolBg, alpha);
+    dat.alpha = alpha;
+    dat.fgColor = color;
+    dat.bgColor = kGUIToolBg;
     dat.font = kMonoFont;
     dat.view = &view;
     dat.rad = size / 2.f;
@@ -423,7 +424,7 @@ bool TextInputBase::HandleEvent(const Event* event, bool *textChanged)
     }
     else if (active && event->type == Event::SCROLL_WHEEL)
     {
-        startChars.y += ceil(-event->vel.y);
+        startChars.y += ceil_int(-event->vel.y);
         startChars.y = clamp(startChars.y, 0, max(0, (int)lines.size() - sizeChars.y));
         return true;
     }
@@ -615,43 +616,13 @@ void TextInputCommandLine::pushCmdOutput(const char *format, ...)
     scrollForInput();
 }
 
-static vector<string> split_ignoring_quoted(const string& line, char token)
-{
-    vector<string> vec;
-    bool quoted = false;
-    int instr = 0;
-    string last;
-    foreach (char c, line)
-    {
-        if (instr) {
-            if (quoted) {
-                quoted = false;
-            } else if (c == '\\') {
-                quoted = true;
-            } else if (c == instr) {
-                instr = false;
-            }
-        } else if (c == '\'' || c == '"') {
-            instr = c;
-        } else if (c == token) {
-            vec.push_back(last);
-            last = "";
-            continue;
-        }
-        last += c;
-    }
-    if (last.size())
-        vec.push_back(last);
-    return vec;
-}
-
 bool TextInputCommandLine::doCommand(const string& line)
 {
     pushHistory(line);
-    const vector<string> expressions = split_ignoring_quoted(line, ';');
+    const vector<string> expressions = str_split_quoted(line, ';');
     foreach (const string &expr, expressions)
     {
-        vector<string> args = split_ignoring_quoted(str_strip(expr), ' ');
+        vector<string> args = str_split_quoted(str_strip(expr), ' ');
         if (!args.size())
             return false;
         string cmd = str_tolower(args[0]);
@@ -691,6 +662,12 @@ bool TextInputCommandLine::doCommand(const string& line)
     }
     pushCmdOutput("");      // prompt
     return true;
+}
+
+bool TextInputCommandLine::pushCommand(const string& line)
+{
+    setLineText(line.c_str());
+    return doCommand(line);
 }
 
 const TextInputCommandLine::Command *TextInputCommandLine::getCommand(const string &abbrev) const
@@ -1135,11 +1112,12 @@ bool TabWindow::HandleEvent(const Event* event)
     {
         if (but.HandleEvent(event, &isActivate))
         {
-            if (isActivate) {
-                if (i != selected)
-                    buttons[selected].interface->onSwapOut();
+            if (isActivate && selected != i &&
+                buttons[selected].interface->onSwapOut())
+            {
                 selected = i;
                 buttons[selected].interface->onSwapIn();
+                globals.sound->OnButtonHover();
             }
             return true;
         }
@@ -1152,11 +1130,14 @@ bool TabWindow::HandleEvent(const Event* event)
 
     if (isLeft || isRight)
     {
-        int next = modulo(selected + (isLeft ? -1 : 1), buttons.size());
-        if (next != selected)
-            buttons[selected].interface->onSwapOut();
-        selected = next;
-        buttons[selected].interface->onSwapIn();
+        const int next = modulo(selected + (isLeft ? -1 : 1), buttons.size());
+        if (next != selected &&
+            buttons[selected].interface->onSwapOut())
+        {
+            selected = next;
+            buttons[selected].interface->onSwapIn();
+        }
+        globals.sound->OnButtonHover();
         return true;
     }
 
@@ -1342,12 +1323,12 @@ bool ColorPicker::HandleEvent(const Event* event, bool *valueChanged)
 
 void TextBox::Draw(const ShaderState& ss1, float2 point, const string& text) const
 {
-    if ((fgColor&ALPHA_OPAQUE) == 0)
+    if ((fgColor&ALPHA_OPAQUE) == 0 || alpha < epsilon)
         return;
 
     ShaderState ss = ss1;    
     const GLText* st = GLText::get(font, GLText::getScaledSize(tSize), text);
-    float2 boxSz = 5.f + 0.5f * st->getSize();
+    const float2 boxSz = max(5.f + 0.5f * st->getSize(), box);
 
     float2 center = point;
     
@@ -1367,9 +1348,9 @@ void TextBox::Draw(const ShaderState& ss1, float2 point, const string& text) con
     }
 
     ss.translate(center);
-    ss.color32(bgColor);
+    ss.color32(bgColor, alpha);
     ShaderUColor::instance().DrawRect(ss, boxSz);
-    ss.color32(fgColor);
+    ss.color32(fgColor, alpha);
     ShaderUColor::instance().DrawLineRect(ss, boxSz);
     ss.translate(round(-0.5f * st->getSize()));
     st->render(&ss);

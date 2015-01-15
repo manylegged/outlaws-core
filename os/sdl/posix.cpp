@@ -35,6 +35,11 @@ static void ReportPOSIX(const char *format, ...)
     va_end(vl);
 }
 
+static void ReportPOSIX(const string& str)
+{
+    ReportPOSIX("%s", str.c_str());
+}
+
 // from http://spin.atomicobject.com/2013/01/13/exceptions-stack-traces-c/
 static const char* signal_to_string(int sig, siginfo_t *siginfo)
 {
@@ -98,11 +103,35 @@ static void print_backtrace()
     memset(buffer, 0, sizeof(buffer));
     const int count = backtrace(buffer, maxbuf);
 
+    char **strings = backtrace_symbols(buffer, count);
+
     const uint64 current_tid = get_current_tid();
     ReportPOSIX("Dumping stack for thread %#llx '%s'", (uint64)current_tid,
                 map_get(_thread_name_map(), (uint64)current_tid).c_str());
-    for (int i=0; i<count; i++)
-        ReportPOSIX("%2d. Called from %p", i, buffer[i]);
+    for (int i=0; i<count; i++) {
+        if (strings && strings[i]) {
+            vector<string> fields = str_split(strings[i], ' ');
+            for (int j=0; j<fields.size(); ) {
+                if (fields[j].size() == 0)
+                    fields.erase(fields.begin() + j);
+                else
+                    j++;
+            }
+            if (fields.size() >= 3) {
+                string func = str_demangle(fields[3].c_str());
+                if (fields.size() > 4)
+                    func += " " + str_join(' ', fields.begin() + 4, fields.end());
+                func += str_format(" (%s)", fields[1].c_str());
+                ReportPOSIX("%2d. Called from %p %s", i, buffer[i], func.c_str());
+            } else {
+                ReportPOSIX("%2d. Called from %p %s", i, buffer[i], strings[i]);
+            }
+        } else {
+            ReportPOSIX("%2d. Called from %p", i, buffer[i]);
+        }
+    }
+
+    free(strings);
 }
 
 void posix_print_stacktrace()
@@ -154,7 +183,9 @@ static void posix_signal_handler(int sig, siginfo_t *siginfo, void *context)
     
     puts("\nsignal handler called");
     fflush(NULL);
-    ReportPOSIX("%s (signal %d)", signal_to_string(sig, siginfo), sig);
+
+    string message = str_format("%s (signal %d)", signal_to_string(sig, siginfo), sig);
+    ReportPOSIX(message);
 
     const ucontext_t *ctx = (ucontext_t*)context;
     const mcontext_t &mcontext = ctx->uc_mcontext;
@@ -166,26 +197,31 @@ static void posix_signal_handler(int sig, siginfo_t *siginfo, void *context)
 #else
         const greg_t ecode = mcontext.gregs[REG_ERR];
 #endif
-        ReportPOSIX("Invalid %s to %p", (ecode&4) ? "Exec" : (ecode&2) ? "Write" : "Read", siginfo->si_addr);
+        string msg0 = str_format("Invalid %s to %p", (ecode&4) ? "Exec" : (ecode&2) ? "Write" : "Read", siginfo->si_addr);
+        ReportPOSIX(msg0);
+        message += msg0 + "\n";
     }
 
+    string mmsg;
 #if __APPLE__
 #ifdef __LP64__
-    ReportPOSIX("PC/RIP: %#llx SP/RSP: %#llx, FP/RBP: %#llx",
-                mcontext->__ss.__rip, mcontext->__ss.__rsp, mcontext->__ss.__rbp);
+    mmsg = str_format("PC/RIP: %#llx SP/RSP: %#llx, FP/RBP: %#llx",
+                      mcontext->__ss.__rip, mcontext->__ss.__rsp, mcontext->__ss.__rbp);
 #else
-    ReportPOSIX("PC/EIP: %#x SP/ESP: %#x, FP/EBP: %#x",
-                mcontext->__ss.__eip, mcontext->__ss.__esp, mcontext->__ss.__ebp);
+    mmsg = str_format("PC/EIP: %#x SP/ESP: %#x, FP/EBP: %#x",
+                      mcontext->__ss.__eip, mcontext->__ss.__esp, mcontext->__ss.__ebp);
 #endif
 #else
 #ifdef __LP64__
-    ReportPOSIX("PC/RIP: %#llx SP/RSP: %#llx, FP/RBP: %#llx",
-                mcontext.gregs[REG_RIP], mcontext.gregs[REG_RSP], mcontext.gregs[REG_RBP]);
+    mmsg = str_format("PC/RIP: %#llx SP/RSP: %#llx, FP/RBP: %#llx",
+                      mcontext.gregs[REG_RIP], mcontext.gregs[REG_RSP], mcontext.gregs[REG_RBP]);
 #else
-    ReportPOSIX("PC/EIP: %#x SP/ESP: %#x, FP/EBP: %#x",
-                mcontext.gregs[REG_EIP], mcontext.gregs[REG_ESP], mcontext.gregs[REG_EBP]);
+    mmsg = str_format("PC/EIP: %#x SP/ESP: %#x, FP/EBP: %#x",
+                      mcontext.gregs[REG_EIP], mcontext.gregs[REG_ESP], mcontext.gregs[REG_EBP]);
 #endif
 #endif
+    ReportPOSIX(mmsg);
+    message += mmsg + "\n";
     
     if (sig == SIGTERM || sig == SIGINT)
     {
@@ -198,7 +234,7 @@ static void posix_signal_handler(int sig, siginfo_t *siginfo, void *context)
     posix_print_stacktrace();
     g_signaldepth--;
 
-    posix_oncrash("Spacetime Segmentation Fault Detected\n(Reassembly crashed)\n");
+    posix_oncrash(str_format("Reassembly Caught Signal\n%s", message.c_str()).c_str());
     exit(1);
 }
 
@@ -248,7 +284,7 @@ void posix_set_signal_handler()
 void OL_OnTerminate(const char* message)
 {
     posix_print_stacktrace();
-    posix_oncrash(str_format("Spacetime Terminated: %s\n(Reassembly crashed)\n",
-                             message).c_str());
+    posix_oncrash(str_format("Terminated: %s\n", message).c_str());
+    exit(1);
 }
 

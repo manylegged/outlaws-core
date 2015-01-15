@@ -48,6 +48,37 @@ std::string str_vformat(const char *format, va_list vl)
     return s;
 }
 
+vector<string> str_split_quoted(const string& line, char token)
+{
+    vector<string> vec;
+    bool quoted = false;
+    int instr = 0;
+    string last;
+    foreach (char c, line)
+    {
+        if (instr) {
+            if (quoted) {
+                quoted = false;
+            } else if (c == '\\') {
+                quoted = true;
+            } else if (c == instr) {
+                instr = false;
+            }
+        } else if (c == '\'' || c == '"') {
+            instr = c;
+        } else if (c == token) {
+            vec.push_back(last);
+            last = "";
+            continue;
+        }
+        last += c;
+    }
+    if (last.size())
+        vec.push_back(last);
+    return vec;
+}
+
+
 long chr_unshift(long chr)
 {
     chr = std::tolower(chr);
@@ -313,7 +344,7 @@ std::string str_capitalize(const char* str)
     return s;
 }
 
-#define assert_eql(A, B) ASSERTF(A == B, "'%s' != '%s'", str_tostr(A).c_str(), str_tostr(B).c_str())
+#define assert_eql(A, B) ASSERTF(A == B, "'%s' != '%s'", str_tocstr(A), str_tocstr(B))
 
 bool str_runtests()
 {
@@ -332,10 +363,21 @@ bool str_runtests()
     assert_eql(str_dirname("foo/"), ".");
     assert_eql(str_dirname("/foo/"), "/");
     assert_eql(str_dirname("foo/baz/bar///"), "foo/baz");
+    const char *url = "http://www.anisopteragames.com/forum/viewtopic.php?f=4&t=1136#$@#TW$#^$%*^({}[";
+    assert_eql(str_urldecode(str_urlencode(url)), url);
+    assert_eql(str_find(url, "?f"), str_find(std::string(url), "?f"));
+    assert_eql(str_find(url, "?f"), str_find(url, std::string("?f")));
+    assert_eql(str_rfind(url, "?f"), str_rfind(std::string(url), "?f"));
+    assert_eql(str_rfind(url, "?f"), str_rfind(url, std::string("?f")));
+    assert_eql(str_substr(url, 10, 5), str_substr(std::string(url), 10, 5));
     return 1;
 }
 
 #if _MSC_VER
+
+#include <intrin.h>
+#define cpuid(OUT, LEVEL) __cpuid(OUT, LEVEL)
+typedef int regtype_t;
 
 std::string str_demangle(const char *str)
 {
@@ -349,11 +391,20 @@ std::string str_demangle(const char *str)
 #else
 
 #include <cxxabi.h>
+#include <cpuid.h>
+typedef unsigned int regtype_t;
+#define cpuid(OUT, LEVEL) __get_cpuid(LEVEL, &(OUT)[0], &(OUT)[1], &(OUT)[2], &(OUT)[3])
 
 std::string str_demangle(const char *str)
 {
     int status;
     char* result = abi::__cxa_demangle(str, NULL, NULL, &status);
+    ASSERTF(status == 0, "__cxa_demangle:%d: %s", status,
+            ((status == -1) ? "memory allocation failed" :
+             (status == -2) ? "input not valid name under C++ ABI mangling rules" :
+             (status == -3) ? "invalid argument" : "unexpected error code"));
+    if (status != 0 || !result)
+        return str;
     string name = result;
     free(result);
     name = str_replace(name, "std::__1::", "std::");
@@ -362,6 +413,35 @@ std::string str_demangle(const char *str)
     return name;
 }
 
-
-
 #endif
+
+std::string str_cpuid()
+{
+    regtype_t CPUInfo[4] = {};
+    char CPUBrandString[0x40] = {};
+    // Get the information associated with each extended ID.
+    cpuid(CPUInfo, 0x80000000);
+    unsigned nExIds = CPUInfo[0];
+    for (unsigned i=0x80000000; i<=nExIds; ++i)
+    {
+        cpuid(CPUInfo, i);
+        // Interpret CPU brand string
+        if  (i == 0x80000002)
+            memcpy(CPUBrandString, CPUInfo, sizeof(CPUInfo));
+        else if  (i == 0x80000003)
+            memcpy(CPUBrandString + 16, CPUInfo, sizeof(CPUInfo));
+        else if  (i == 0x80000004)
+            memcpy(CPUBrandString + 32, CPUInfo, sizeof(CPUInfo));
+    }
+    return str_strip(CPUBrandString);
+}
+
+// for mac OS layer...
+extern "C" const char* str_cpuid_(void);
+
+const char* str_cpuid_(void)
+{
+    static std::string s = str_cpuid();
+    return s.c_str();
+}
+

@@ -48,6 +48,11 @@ bool isGLExtensionSupported(const char *name)
 uint graphicsDrawCount = 0;
 uint gpuMemoryUsed = 0;
 
+void deleteBufferInMainThread(GLuint buffer)
+{
+    globals.deleteGLBuffers(1, &buffer);
+}
+
 vector<GLRenderTexture*> GLRenderTexture::s_bound;
 
 GLRenderTexture* GLRenderTexture::getBound(int idx)
@@ -723,8 +728,8 @@ void ShaderPosBase::DrawGrid(const ShaderState &ss_, double width, double3 first
     ShaderState ss = ss_;
     ss.translateZ(first.z);
 
-    uint xCount = ceil((last.x - first.x) / width);
-    uint yCount = ceil((last.y - first.y) / width);
+    uint xCount = ceil_int((last.x - first.x) / width);
+    uint yCount = ceil_int((last.y - first.y) / width);
 
     float2 *v = new float2[2 * (xCount + yCount)];
     float2 *pv = v;

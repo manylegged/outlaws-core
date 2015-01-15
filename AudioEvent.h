@@ -45,8 +45,10 @@ using cAudio::cAudioMutexBasicLock;
 
 DEFINE_ENUM(uint, EnumAudioFlags, AUDIO_FLAGS);
 
-static const uint kStreamSources = 2;
-static const uint kSoundSources = 32 - kStreamSources;
+static const int kStreamSources = 2;
+static DEFINE_CVAR(int, kSoundSources, 32 - kStreamSources);
+static DEFINE_CVAR(float, kSpeedOfSound, 5000.f);
+static DEFINE_CVAR(float, kDopplerFactor, 1.f);
 
 inline cAudio::cVector3 c3(float2 v)
 {
@@ -93,7 +95,7 @@ static string sourceToString(cAudio::IAudioSource *src)
     return str;
 }
 
-class AudioAllocator {
+class AudioAllocator : public cAudio::ILogReceiver {
 
     struct SourceData {
         cAudio::IAudioSource* source;
@@ -107,6 +109,19 @@ class AudioAllocator {
     std::map<lstring, cAudio::IAudioBuffer*>  m_buffers;
     float2                                    m_lsnrPos;
     cAudioMutex                               m_dummy;
+
+    bool OnLogMessage(const char* sender, const char* message, cAudio::LogLevel level, float time)
+    {
+        if (level >= cAudio::ELL_ERROR) {
+            OLG_OnAssertFailed(__FILE__, __LINE__, "cAudio", message, "cAudio [%s]", sender);
+        } else if (level > cAudio::ELL_INFO) {
+            DPRINT(SOUND, ("[cAudio:%d]: %s", level, message));
+        } else {
+            DPRINT(CAUDIO, ("[cAudio:%d]: %s", level, message));
+        }
+        return true;
+    }
+
     
 public:
 
@@ -136,8 +151,8 @@ public:
         if (!m_mgr)
             return false;
 
-        m_mgr->setSpeedOfSound(5000.f);
-        m_mgr->setDopplerFactor(1.f);
+        m_mgr->setSpeedOfSound(kSpeedOfSound);
+        m_mgr->setDopplerFactor(kDopplerFactor);
         mutex = m_mgr->getMutex();
         return true;
     }
@@ -152,12 +167,15 @@ public:
     
     AudioAllocator()
     {
+        cAudio::getLogger()->registerLogReceiver(this, "outlaws");
+        cAudio::getLogger()->setLogLevel((globals.debugRender&DBG_CAUDIO) ? cAudio::ELL_DEBUG : cAudio::ELL_INFO);
         init();
     }
 
     ~AudioAllocator()
     {
         shutdown();
+        cAudio::getLogger()->unRegisterLogReceiver("outlaws");
     }
 
     cAudio::IAudioManager* getMgr() { return m_mgr; }
@@ -167,7 +185,7 @@ public:
         cAudio::IListener *lst = m_mgr->getListener();
         lst->setPosition(c3(pos));
         lst->setVelocity(c3(vel));
-        lst->setDirection(cAudio::cVector3(0.f, 0.f, 1.f));
+        // lst->setDirection(cAudio::cVector3(0.f, 0.f, 1.f));
         lst->setDirection(cAudio::cVector3(0.f, 1.f, 0.f));
         m_lsnrPos = pos;
     }

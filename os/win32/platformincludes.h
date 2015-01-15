@@ -36,7 +36,7 @@
 #include <tchar.h>
 
 // OpenGL headers
-#include "../../glew-1.9.0/include/GL/glew.h"
+#include "../win32/include/GL/glew.h"
 #include "SDL.h"
 #include "SDL_opengl.h"
 

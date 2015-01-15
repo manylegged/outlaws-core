@@ -105,8 +105,10 @@ void DPRINTVAR1(const char* name, const T& X)
 // special assertion only enabled in debug builds
 #if defined(DEBUG)
 #  define DASSERT(X) ASSERT(X)
+#  define IS_DEBUG (1)
 #else
 #  define DASSERT(X) do{(void) sizeof(X);}while(0)
+#  define IS_DEBUG (0)
 #endif
 
 

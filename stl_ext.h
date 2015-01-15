@@ -34,13 +34,18 @@
 #include <algorithm>
 #include <type_traits>
 
+// c++11 ranged for loop
 #define foreach(A, B) for (A : (B))
+
+// c++17 simplified ranged for loop
 #define for_(A, B) for (auto &&A : (B))
 
+#ifndef NOEXCEPT
 #if _MSC_VER
 #define NOEXCEPT _NOEXCEPT
 #else
 #define NOEXCEPT noexcept
+#endif
 #endif
 
 
@@ -176,18 +181,19 @@ class copy_ptr {
     T* m_ptr = NULL;
 
     template <typename U>
-    void assign1(U* v, typename std::enable_if<!std::is_const<U>::value>::type* = 0)
+    bool assign1(U* v, typename std::enable_if<!std::is_const<U>::value>::type* = 0)
     {
-        if (m_ptr && !copy_explicit_owner(m_ptr) && v && !copy_explicit_owner(v))
+        if (m_ptr && !copy_explicit_owner(m_ptr) && !copy_explicit_owner(v)) {
             *m_ptr = *v;
-        else
-            reset((v && copy_explicit_owner(v)) ? v : v ? new T(*v) : NULL);
+            return true;
+        }
+        return false;
     }
 
     template <typename U>
-    void assign1(U* v, typename std::enable_if<std::is_const<U>::value>::type* = 0)
+    bool assign1(U* v, typename std::enable_if<std::is_const<U>::value>::type* = 0)
     {
-        reset((v && copy_explicit_owner(v)) ? v : v ? new T(*v) : NULL);
+        return false;
     }
     
 public:
@@ -195,57 +201,59 @@ public:
     ~copy_ptr() { reset(); }
 
     // default construct to null
-    copy_ptr() { }
-    copy_ptr(std::nullptr_t) { }
+    copy_ptr() NOEXCEPT { }
+    copy_ptr(std::nullptr_t) NOEXCEPT { }
     //copy_ptr(int) { }
 
     // take ownership
     explicit copy_ptr(T* &&t) NOEXCEPT : m_ptr(t) { t = NULL; }
     copy_ptr& operator=(T* &&t) NOEXCEPT { reset(t); t = NULL; return *this; }
+    copy_ptr(copy_ptr&& o) NOEXCEPT : m_ptr(o.m_ptr) { o.m_ptr = NULL; }
+    copy_ptr& operator=(copy_ptr&& o) NOEXCEPT { reset(o.m_ptr); o.m_ptr = NULL; return *this; }
     copy_ptr& reset(T* v=NULL)
     {
         if (m_ptr == v)
             return *this;
-        if (m_ptr && !copy_explicit_owner(m_ptr)) {
+        else if (m_ptr && !copy_explicit_owner(m_ptr))
             delete m_ptr;
-        }
         m_ptr = v;
         return *this;
     }
 
     // copy data when assigning unless data has explicit owner
-    copy_ptr(const copy_ptr& other) { assign(other.m_ptr); }
-    copy_ptr(copy_ptr&& other) NOEXCEPT : m_ptr(other.m_ptr) { other.m_ptr = NULL; }
-    copy_ptr& operator=(copy_ptr&& other) NOEXCEPT { std::swap(m_ptr, other.m_ptr); return *this; }
-    copy_ptr& operator=(const copy_ptr& other) { return assign(other.m_ptr); }
+    copy_ptr(const copy_ptr& o) { assign(o.m_ptr); }
+    explicit copy_ptr(const T *t) { assign(t); }
+    copy_ptr& operator=(const copy_ptr& o) { return assign(o.m_ptr); }
     copy_ptr& assign(T* v)
     {
         if (m_ptr == v)
             return *this;
-        else
-            this->assign1(v);
+        else if (!v)
+            return reset();
+        else if (!this->assign1(v))
+            reset(copy_explicit_owner(v) ? v : new T(*v));
         return *this;
     }
     
     // forward assignment from pointee type - copy
-    copy_ptr& operator=(const T& other)
+    copy_ptr& operator=(const T& o)
     {
-        ASSERT(!copy_explicit_owner(&other)); // technically fine, but we should be setting by pointer
+        ASSERT(!copy_explicit_owner(&o)); // technically fine, but we should be setting by pointer
         if (m_ptr)
-            *m_ptr = other;
+            *m_ptr = o;
         else
-            m_ptr = new T(other);
+            m_ptr = new T(o);
         return *this;
     }
 
     // forward assignment from pointee type - move
-    copy_ptr& operator=(T&& other) NOEXCEPT
+    copy_ptr& operator=(T&& o) NOEXCEPT
     {
-        ASSERT(!copy_explicit_owner(&other)); // technically fine, but we should be setting by pointer
+        ASSERT(!copy_explicit_owner(&o)); // technically fine, but we should be setting by pointer
         if (m_ptr)
-            *m_ptr = std::move(other);
+            *m_ptr = std::move(o);
         else
-            m_ptr = new T(std::move(other));
+            m_ptr = new T(std::move(o));
         return *this;
     }
      
@@ -262,6 +270,13 @@ public:
 
     T*  get() const { return m_ptr; }
     T** getPtr()    { return &m_ptr; }
+
+    typename std::remove_const<T>::type** getWritablePtr()
+    {
+        if (m_ptr && copy_explicit_owner(m_ptr))
+            m_ptr = new T(*m_ptr);
+        return const_cast<typename std::remove_const<T>::type**>(&m_ptr);
+    }
 
     T* release()
     {
@@ -320,13 +335,13 @@ struct watch_ptr : public watch_ptr_base {
     }
 
     // default construct to null
-    watch_ptr() { }
-    watch_ptr(std::nullptr_t) { }
+    watch_ptr() NOEXCEPT { }
+    watch_ptr(std::nullptr_t) NOEXCEPT { }
 
-    explicit watch_ptr(T *t) { link(t); }
-    watch_ptr(const watch_ptr &t) { link(t.ptr); }
+    explicit watch_ptr(T *t) NOEXCEPT { link(t); }
+    watch_ptr(const watch_ptr &t) NOEXCEPT { link(t.ptr); }
     template <typename U>
-    watch_ptr(const watch_ptr<U> &t) { link(t.ptr); }
+    watch_ptr(const watch_ptr<U> &t) NOEXCEPT { link(t.ptr); }
 
     watch_ptr& operator=(T* t)
     {
@@ -335,10 +350,10 @@ struct watch_ptr : public watch_ptr_base {
         return *this;
     }
 
-    watch_ptr& operator=(const watch_ptr& other) 
+    watch_ptr& operator=(const watch_ptr& o) 
     {
         unlink();
-        link(other.ptr);
+        link(o.ptr);
         return *this;
     }
      
@@ -860,6 +875,16 @@ inline bool vec_all(const T& v)
     return true;
 }
 
+template <typename T>
+inline int vec_next(const T& vec, int index, int delta)
+{
+    if (!vec_any(vec))
+        return -1;
+    index += delta;
+    delta = (delta >= 0) ? 1 : -1;
+    for (; !vec_at(vec, index); index = modulo(index + delta, vec_size(vec)));
+    return index;
+}
 
 template <typename T, typename Fun>
 inline auto vec_map(const T &inv, const Fun &fun) -> std::vector<decltype(fun(*std::begin(inv)))>
@@ -1327,5 +1352,10 @@ size_t SizeOf(const T* ptr) { return ptr? SizeOf(*ptr) : 0; }
 template <typename T>
 size_t SizeOf(const std::vector<T> &vec) { return SizeOf(vec[0]) * vec.capacity(); }
 
+template <typename U, typename T>
+bool instanceof(const U* ptr)
+{
+    return dynamic_cast<T*>(ptr) != NULL;
+}
 
 #endif
