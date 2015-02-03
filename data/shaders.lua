@@ -1,6 +1,12 @@
 -- glsl shaders
 -- #version 120
 
+-- format is { COMMON_HEADER, VERTEX_SHADER, FRAGMENT_SHADER }
+
+-- implicit parameters:
+-- attribute vec4 Position;
+-- uniform mat4 Transform;
+
 {
    ShaderWormholeParticles = {
       "varying vec4 DestinationColor;"

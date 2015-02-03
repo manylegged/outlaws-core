@@ -6,6 +6,7 @@
 
 #include "sdl_inc.h"
 #include "Outlaws.h"
+#include "posix.h"
 
 BasicOpenGLView * gView = NULL;
 
@@ -86,7 +87,7 @@ static bool hasScaleMethod()
     return hasScaleMethod;
 }
 
-float OL_GetBackingScaleFactor()
+float getBackingScaleFactor(void)
 {
     CGFloat displayScale = 1.f;
     if (hasScaleMethod())
@@ -131,10 +132,12 @@ float OL_GetCurrentBackingScaleFactor(void)
     return displayScale;
 }
 
-void OL_DoQuit(void)
+int OL_DoQuit(void)
 {
     LogMessage(@"DoQuit");
+    int wasClosing = gView->closing;
     gView->closing = 1;
+    return wasClosing;
 }
 
 #pragma mark ---- OpenGL Utils ----
@@ -395,7 +398,18 @@ static NSCursor* invisibleCursor()
         NSRect rectView = [self convertRectToBacking:[self bounds]];
         glViewport (0, 0, rectView.size.width, rectView.size.height);
         // draw the whole game
-        OLG_Draw();
+
+        @try 
+        {
+            OLG_Draw();
+        } 
+        @catch (NSException* exception)
+        {
+            LogMessage([NSString stringWithFormat: @"Uncaught exception: %@\nStack trace: %@",
+                                 exception.description, [exception callStackSymbols]]);
+            posix_oncrash([[NSString stringWithFormat: @"Uncaught exception: %@",
+                                     exception.description] UTF8String]);
+        }
     }
 }
 
@@ -427,7 +441,7 @@ void OL_SetSwapInterval(int interval)
 {
     [self setWantsBestResolutionOpenGLSurface:YES];
 
-    OLG_InitGL();
+    OLG_InitGL(NULL);
 }
 // ---------------------------------
 
@@ -476,7 +490,7 @@ static void setupPresentationOptions(BOOL fullscreen)
     setupPresentationOptions(YES);
     if (!self->closing)
         OLG_SetFullscreenPref(1);
-    LogMessage(@"Will Enter Fullscreen");
+    LogMessage(@"Did Enter Fullscreen");
 }
 
 - (void)windowDidExitFullScreen:(NSNotification *)notification
@@ -486,7 +500,7 @@ static void setupPresentationOptions(BOOL fullscreen)
     
     if (!self->closing)
         OLG_SetFullscreenPref(0);
-    LogMessage(@"Will Exit Fullscreen");
+    LogMessage(@"Did Exit Fullscreen");
 }
 
 - (NSApplicationPresentationOptions)window:(NSWindow *)window

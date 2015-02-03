@@ -51,7 +51,8 @@ bool ButtonBase::HandleEvent(const Event* event, bool* isActivate, bool* isPress
     }
     else
     {
-        hovered = intersectPointRectangle(event->pos, position, sz);
+        if (event->isMouse())
+            hovered = intersectPointRectangle(event->pos, position, sz);
 
         handled = visible && hovered && ((event->type == Event::MOUSE_DOWN) ||
                                          (event->type == Event::MOUSE_UP));
@@ -117,7 +118,7 @@ void ButtonBase::renderSelected(const ShaderState &ss, uint bgcolor, uint lineco
     ShaderUColor::instance().DrawLineTri(s, p + float2(0, sz.y), p + float2(sz.y / 2, 0), p + float2(0, -sz.y));
 }
 
-void Button::render(const ShaderState &ss, bool selected)
+void ButtonBase::render(const ShaderState &ss, bool selected)
 {
     if (!visible)
         return;
@@ -174,7 +175,7 @@ void Button::renderButton(DMesh& mesh, bool selected)
     }
 }
 
-void Button::renderContents(const ShaderState &s_) const
+void Button::renderContents(const ShaderState &s_)
 {
     if (!visible)
         return;
@@ -321,6 +322,7 @@ bool TextInputBase::HandleEvent(const Event* event, bool *textChanged)
         case MOD_CTRL|'a': cursor.x = 0; break;
         case MOD_CTRL|'e': cursor.x = lines[cursor.y].size(); break;
         case MOD_CTRL|'k':
+            OL_WriteClipboard(lines[cursor.y].substr(cursor.x).c_str());
             if (cursor.x == lines[cursor.y].size() && cursor.y < lines.size()-1) {
                 lines[cursor.y].append(lines[cursor.y+1]);
                 lines.erase(lines.begin() + cursor.y + 1);
@@ -1013,8 +1015,73 @@ void OptionSlider::render(const ShaderState &s_)
     }
 }
 
+void OptionEditor::setValueFloat(float v)
+{
+    if (type == FLOAT)
+        *(float*) value = v;
+    else
+        *(int*) value = round_int(v);
+    txt = str_format("%s: %s", label, getTxt().c_str());
+}
 
-void TabWindow::TabButton::render(DMesh &mesh) const
+void OptionEditor::init(Type t, void *v, const char* lbl, const vector<const char*> &tt, float st, float mu, int states)
+{
+    type = t;
+    value = v;
+    start = st;
+    mult = mu;
+    slider.values = states;
+    label = lbl;
+    tooltip = tt;
+    updateSlider();
+}
+
+string OptionEditor::getTxt() const
+{
+    if (slider.values <= 4) {
+        const int val = getValueInt();
+        if (slider.values == tooltip.size()) {
+            return tooltip[clamp(val, 0, tooltip.size()-1)];
+        } else if (slider.values == 3) {
+            return (val == 0 ? "Off" : 
+                    val == 1 ? "Low" :  "Full");
+        } else if (slider.values == 4) {
+            return (val == 0 ? "Off" : 
+                    val == 1 ? "Low" : 
+                    val == 2 ? "Medium" : "Full");
+        } else {
+            return val ? "On" : "Off";
+        }
+    } else if (start != 0.f) {
+        return str_format("%d", getValueInt());
+    } else {
+        float val = 100.f * getValueFloat();
+        return (val < 1.f) ? "Off" : str_format("%.0f%%", val);
+    }
+}
+
+void OptionEditor::render(const ShaderState &ss, float alpha)
+{
+    slider.alpha = alpha;
+    slider.render(ss);
+    GLText::Put(ss, slider.position + justX(0.5f * slider.size.x + 2.f * kButtonPad.x),
+                    GLText::MID_LEFT, SetAlphaAXXX(kGUIText, alpha), 14, txt);
+}
+
+bool OptionEditor::HandleEvent(const Event* event, bool* valueChanged)
+{
+    bool changed = false;
+    bool handled = slider.HandleEvent(event, &changed);
+    if (handled && changed) {
+        setValueFloat(slider.getValueFloat() * mult + start);
+    }
+    if (valueChanged)
+        *valueChanged = changed;
+    return handled;
+}
+
+
+void TabWindow::TabButton::renderButton(DMesh &mesh, bool)
 {
     static const float o = 0.05f;
     const float2 r = size / 2.f;
@@ -1059,7 +1126,7 @@ void TabWindow::render(const ShaderState &ss)
             h.mp.line.color32(!but.active ? inactiveLineColor :
                               but.hovered ? hoveredLineColor : defaultLineColor, alpha);
             h.mp.tri.color32((selected == i) ? defaultBGColor : inactiveBGColor, alpha);
-            but.render(h.mp);
+            but.renderButton(h.mp);
             
             i++;
         }
@@ -1373,6 +1440,13 @@ bool OverlayMessage::setMessage(const string& msg, uint clr)
     return changed;
 }
 
+void OverlayMessage::setVisible(bool visible)
+{
+    if (visible)
+        startTime = globals.renderTime;
+    else
+        startTime = 0.f;
+}
 
 void OverlayMessage::render(const ShaderState &ss)
 {
@@ -1380,7 +1454,7 @@ void OverlayMessage::render(const ShaderState &ss)
     if (!isVisible())
         return;
     const float a = alpha * inv_lerp(startTime + totalTime, startTime, (float)globals.renderTime);
-    size = GLText::Put(ss, position, GLText::MID_CENTERED, SetAlphaAXXX(color, a), textSize, message);
+    size = GLText::Put(ss, position, align, SetAlphaAXXX(color, a), textSize, message);
 }
 
 bool HandleConfirmKey(const Event *event, int* slot, int selected, bool *sawUp,
@@ -1511,3 +1585,215 @@ bool ButtonHandleEvent(ButtonBase &button, const Event* event, bool* isActivate,
 
     return handled;
 }
+
+
+void ButtonText::renderText(const ShaderState &ss, float2 pos, float width,
+                GLText::Align align, uint color, float fmin, float fmax,
+                const string& text)
+{
+    if (fontSize <= 0.f)
+        fontSize = fmax;
+    float tw = GLText::Put(ss, pos, align, color, fontSize, text).x;
+    float ts = clamp(fontSize * ((width - 2.f * kButtonPad.x) / tw), fmin, fmax);
+    if (fabsf(fontSize - ts) >= 1.f)
+        fontSize = ts;
+}
+
+
+void Scrollbar::render(DMesh &mesh) const
+{
+    mesh.line.color(hovered ? kGUIFgActive : kGUIFg, alpha);
+    const float2 pos = steps ? position + justY(size.y/2.f * (1.f - (sfirst + min(sfirst + visible, (float)steps)) / steps)) : position;
+    const float2 rad = float2(size.x, steps ? (min(visible, steps) * size.y / steps) : size.y) / 2.f;
+    mesh.line.PushRect(pos, rad);
+    mesh.tri.color(pressed ? kGUIBgActive : kGUIBg, alpha);
+    mesh.tri.PushRect(pos, rad);
+}
+
+bool Scrollbar::HandleEvent(const Event *event)
+{
+    hovered = intersectPointRectangle(event->pos, position, size/2.f);
+    if (steps == 0) {
+        first = 0;
+        visible = 0;
+        hovered = false;
+        pressed = false;
+        sfirst = 0.f;
+        return false;
+    }
+    const int maxfirst = steps - min(visible, steps);
+    const bool parentHovered = (!parent || parent->hovered || hovered);
+    const int page = min(1, visible-1);
+
+    if (parentHovered)
+    {
+        if (event->type == Event::SCROLL_WHEEL &&
+            fabsf(event->vel.y) > epsilon)
+        {
+            first = clamp(first + ((event->vel.y > 0) ? -1 : 1), 0, maxfirst);
+            sfirst = first;
+            return true;
+        }
+
+        if (event->isKeyDown(NSPageUpFunctionKey)) {
+            first = clamp(first - page, 0, maxfirst);
+            sfirst = first;
+        } else if (event->isKeyDown(NSPageDownFunctionKey)) {
+            first = clamp(first + page, 0, maxfirst);
+            sfirst = first;
+        }
+    }
+        
+    if (!event->isMouse())
+        return false;
+
+    if (pressed)
+    {
+        if (event->type == Event::MOUSE_DRAGGED) {
+            sfirst = clamp(sfirst + steps * event->vel.y / size.y, 0.f, (float)maxfirst);
+            first = floor_int(sfirst);
+            return true;
+        } else {
+            pressed = false;
+            return true;
+        }
+    }
+    if (!(hovered && event->type == Event::MOUSE_DOWN))
+        return false;
+    const float2 pos = position + justY(size.y/2.f * (1.f - float(first + last()) / steps));
+    const float2 rad = float2(size.x, steps ? (min(visible, steps) * size.y / steps) : size.y) / 2.f;
+    if (intersectPointRectangle(event->pos, pos, rad)) {
+        pressed = true;         // start dragging thumb
+    } else {
+        // clicking in bar off of thumb pages up or down
+        first = clamp(first + ((event->pos.y > pos.y) ? -page : page), 0, maxfirst);
+        sfirst = first;
+    }
+    return true;
+}
+
+static DEFINE_CVAR(float, kScrollbarWidth, 25.f);
+
+void ButtonWindow::render(const ShaderState &ss)
+{
+    DMesh::Handle h(theDMesh());
+    h.mp.line.color(hovered ? kGUIFgActive : kGUIFg, alpha / 2.f);
+    h.mp.line.PushRect(position, size/2.f);
+    h.mp.tri.color(kGUIBg, alpha / 2.f);
+    h.mp.tri.PushRect(position, size/2.f);
+
+    const int    first = scrollbar.first * dims.x;
+    const int    last  = min(scrollbar.last() * dims.x, (int)buttons.size());
+    const bool   sbvis = (first != 0 || last != buttons.size());
+    const float  sw    = sbvis ? kScrollbarWidth : 0.f;
+    const float2 bsize = size - kButtonPad;
+
+    scrollbar.steps = (buttons.size() + (dims.x - 1)) / dims.x;
+    if (buttons.size())
+    {
+        const float2 bs = float2((bsize.x - sw), bsize.y) / float2(dims);
+        scrollbar.visible = dims.y;
+        float2 pos = position - flipY(bsize/2.f) + justX(bs.x / 2.f);
+        const float posx = pos.x;
+        for (int i=scrollbar.first; i<scrollbar.last(); i++)
+        {
+            pos.x = posx;
+            pos.y -= bs.y/2.f;
+            for (int j=0; j<dims.x; j++)
+            {
+                const int idx = i * dims.x + j;
+                if (idx >= buttons.size())
+                    break;
+                ButtonBase *bu = buttons[idx];
+                bu->position = pos;
+                bu->size = bs - 2.f * kButtonPad;
+                bu->alpha = alpha;
+                bu->renderButton(h.mp);
+                pos.x += bs.x;
+            }
+            pos.y -= bs.y/2.f;
+        }
+    }
+    
+    h.Draw(ss);
+    h.mp.clear();
+
+    for (int i=0; i<buttons.size(); i++)
+    {
+        buttons[i]->visible = (first <= i && i < last);
+        if (buttons[i]->visible)
+            buttons[i]->renderContents(ss);
+    }
+
+    if (sbvis)
+    {
+        // scrollbar
+        scrollbar.alpha = alpha;
+        scrollbar.position = position + justX(size/2.f - sw/2.f);
+        scrollbar.size = float2(sw, size.y) - 2.f * kButtonPad;
+        scrollbar.render(h.mp);
+        h.Draw(ss);
+    }
+}
+
+bool ButtonWindow::HandleEvent(const Event *event,
+                               ButtonBase **activated,
+                               ButtonBase **dragged,
+                               ButtonBase **dropped)
+{
+    if (scrollbar.HandleEvent(event))
+        return true;
+
+    if (event->isMouse())
+        hovered = intersectPointRectangle(event->pos, position, size/2.f);
+    if (!hovered)
+    {
+        foreach (ButtonBase *bu, buttons)
+            bu->hovered = false;
+        return false;
+    }
+
+    bool handled = false;
+    foreach (ButtonBase *bu, buttons)
+    {
+        bool isActivate = false;
+        bool isPress = false;
+        handled |= ButtonHandleEvent(*bu, event,
+                                     activated ? &isActivate : NULL,
+                                     dragged ? &isPress : NULL);
+        if (isActivate) {
+            *activated = bu;
+            handled = true;
+        }
+        if (dragged && bu->pressed && event->type == Event::MOUSE_DRAGGED) {
+            *dragged = bu;
+            handled = true;
+        }
+        if (dropped && bu->hovered && event->type == Event::MOUSE_UP) {
+            *dropped = bu;
+            handled = true;
+        }
+    }
+    
+    return handled || (dropped && event->type == Event::MOUSE_UP);
+}
+
+void ButtonWindow::computeDims(int2 mn, int2 mx)
+{
+    if (buttons.empty())
+        return;
+    
+    float2 bsize;
+    const float count = min(mx.x * mx.y, (int)buttons.size());
+    int2 ds;
+    do {
+        ds.x++;
+        ds.y = ceil_int(count / ds.x);
+        bsize = size / float2(ds);
+        ds = clamp(ds, mn, mx);
+    } while ((bsize.x > 2.f * bsize.y || ds.x * ds.y < count) &&
+             ds.x <= mx.x && ds.y >= mn.y);
+
+    dims = ds;
+}
+

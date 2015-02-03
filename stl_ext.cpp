@@ -59,8 +59,8 @@ void Watchable::nullReferencesTo()
 
 std::mutex& _thread_name_mutex()
 {
-    static std::mutex m;
-    return m;
+    static std::mutex *m = new std::mutex;
+    return *m;
 }
 
 
@@ -103,12 +103,15 @@ void SetThreadName(DWORD dwThreadID, const char* threadName)
     }
 }
 
+// Win32Main.cpp
+void ReportWin32Err1(const char *msg, DWORD dwLastError, const char* file, int line);
+
 #endif
 
 static void myTerminateHandler()
 {
     ReportMessage("terminate handler called");
-    const char* message = "<no info>";
+    string message = "<no info>";
     std::exception_ptr eptr = std::current_exception();
     try {
         if (eptr) {
@@ -118,8 +121,8 @@ static void myTerminateHandler()
         message = e.what();
     }
 
-    ASSERT_FAILED("Terminate Handler", "Exception: %s", message);
-    OL_OnTerminate(message);
+    ASSERT_FAILED("Terminate Handler", "Exception: %s", message.c_str());
+    OL_OnTerminate(message.c_str());
     exit(1);
 }
 
@@ -127,8 +130,9 @@ void thread_setup(const char* name)
 {
     std::set_terminate(myTerminateHandler);
     // random number generator per-thread
-    random_device() = new std::mt19937(random_seed());
-
+    my_random_device() = new std::mt19937(random_seed());
+    DEBUG_RAND(("create seed %d", random_seed()));
+    
     uint64 tid = 0;
 #if _WIN32
     tid = GetCurrentThreadId();
@@ -153,10 +157,24 @@ void thread_setup(const char* name)
     ReportMessagef("Thread %#llx is named '%s'", tid, name);
 }
 
+const char* thread_current_name()
+{
+    uint64 tid = 0;
+#if _WIN32
+    tid = GetCurrentThreadId();
+#elif __APPLE__
+    pthread_threadid_np(pthread_self(), &tid);
+#else // linux
+    tid = pthread_self();
+#endif
+    std::lock_guard<std::mutex> l(_thread_name_mutex());
+    return _thread_name_map()[tid].c_str();
+}
+
 
 #if OL_USE_PTHREADS
 
-pthread_t thread_create(void *(*start_routine)(void *), void *arg)
+OL_Thread thread_create(void *(*start_routine)(void *), void *arg)
 {
     int            err = 0;
     pthread_attr_t attr;
@@ -175,7 +193,7 @@ pthread_t thread_create(void *(*start_routine)(void *), void *arg)
 }
 
 
-void thread_join(pthread_t &thread)
+void thread_join(OL_Thread thread)
 {
     if (!thread)
         return;
@@ -185,17 +203,17 @@ void thread_join(pthread_t &thread)
 
 #else
 
-std::thread thread_create(void *(*start_routine)(void *), void *arg)
+OL_Thread thread_create(void *(*start_routine)(void *), void *arg)
 {
-    return std::thread(start_routine, arg);
+    return new std::thread(start_routine, arg);
 }
 
-void thread_join(std::thread& thread)
+void thread_join(OL_Thread thread)
 {
-    if (!thread.joinable())
+    if (!thread || !thread->joinable())
         return;
     try {
-        thread.join();
+        thread->join();
     } catch (std::exception &e) {
         ASSERT_FAILED("std::thread::join()", "%s", e.what());
     }
@@ -204,10 +222,23 @@ void thread_join(std::thread& thread)
 #endif
 
 
-MemoryPool::MemoryPool(size_t sz, size_t cnt) : element_size(sz), count(cnt)
+static DEFINE_CVAR(int, kMempoolMaxChain, 10);
+
+size_t MemoryPool::create(size_t cnt)
 {
+    if (pool)
+        return count;
+    count = cnt;
     do {
+#if _WIN32
+        pool = (char*)VirtualAlloc(NULL, count * element_size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        if (!pool)
+            ReportWin32Err1("VirtualAlloc", GetLastError(), __FILE__, __LINE__);
+#else
         pool = (char*)malloc(count * element_size);
+        if (!pool)
+            ReportMessagef("malloc(%#x) failed: %s", (int) (count * element_size), strerror(errno));
+#endif
         ReportMessagef("Allocating MemoryPool(%d, %d) %.1fMB: %s", 
                        (int)element_size, (int)count, 
                        (element_size * count) / (1024.0 * 1024.0),
@@ -216,29 +247,40 @@ MemoryPool::MemoryPool(size_t sz, size_t cnt) : element_size(sz), count(cnt)
             count /= 2;
     } while (count && !pool);
 
+    ASSERT(count);
+    if (!count)
+        return 0;
+
     first = (Chunk*) pool;
 
-    if (count > 1)
-    {
-        for (int i=0; i<count-1; i++) {
-            ((Chunk*) &pool[i * element_size])->next = (Chunk*) &pool[(i+1) * element_size];
-        }
+    for (int i=0; i<count-1; i++) {
+        ((Chunk*) &pool[i * element_size])->next = (Chunk*) &pool[(i+1) * element_size];
     }
+    ((Chunk*) &pool[(count-1) * element_size])->next = NULL;
+    
+    return count;
 }
 
 MemoryPool::~MemoryPool()
 {
+#if _WIN32
+    if (!VirtualFree(pool, 0, MEM_RELEASE))
+        ReportWin32Err1("VirtualFree", GetLastError(), __FILE__, __LINE__);
+#else
     free(pool);
+#endif
     delete next;
 }
 
 bool MemoryPool::isInPool(const void *pt) const
 {
+    if (!pool)
+        return false;
     const char *ptr = (char*) pt;
-    const size_t index = (ptr - pool) / element_size;
-    if (index >= count)
+    const size_t idx = (ptr - pool) / element_size;
+    if (idx >= count)
         return next ? next->isInPool(pt) : false;
-    ASSERT(pool + (index  * element_size) == ptr);
+    ASSERT(pool + (idx  * element_size) == ptr);
     return true;
 }
 
@@ -247,8 +289,20 @@ void* MemoryPool::allocate()
     std::lock_guard<std::mutex> l(mutex);
 
     if (!first) {
+        ASSERT(pool);
         if (!next) {
-            next = new MemoryPool(element_size, count);
+            if (index+1 >= kMempoolMaxChain) {
+                ASSERT_FAILED("Memory Pool", "%d/%d pools allocated! No memory available",
+                              index+1, kMempoolMaxChain);
+                throw std::bad_alloc();
+            }
+            next = new MemoryPool(element_size);
+            next->index = index+1;
+            if (!next->create(count)) {
+                delete next;
+                next = NULL;
+                throw std::bad_alloc();
+            }
         }
         return next->allocate();
     }

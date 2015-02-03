@@ -175,6 +175,25 @@ int convexHull(vector<float2> &points)
     return M+1;
 }
 
+float momentForPoly(float mass, int numVerts, const float2 *verts, float2 offset)
+{
+	double sum1 = 0.0f;
+	double sum2 = 0.0f;
+	for (int i=0; i<numVerts; i++)
+    {
+		double2 v1 = verts[i] + offset;
+		double2 v2 = verts[(i+1)%numVerts] + offset;
+		
+		double a = cross(v2, v1);
+		double b = dot(v1, v1) + dot(v1, v2) + dot(v2, v2);
+		
+		sum1 += a*b;
+		sum2 += a;
+	}
+	
+	return (mass*sum1)/(6.0f*sum2);
+}
+
 
 // modified from http://stackoverflow.com/questions/1073336/circle-line-collision-detection
 // ray is at point E in direction d

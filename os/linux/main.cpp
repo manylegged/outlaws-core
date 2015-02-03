@@ -14,6 +14,7 @@
 #include <link.h>
 
 #include "../sdl_os/posix.h"
+#include <X11/Xlib.h>
 
 #define MAX_PATH 256
 
@@ -296,8 +297,8 @@ struct SoCallbackData {
 static int so_callback(struct dl_phdr_info *info, size_t size, void *data)
 {
     static const char *patterns[] = {
-        "GL", "SDL", "openal", "libm", "libstd", "libc", "vorbis", "ogg", "pthread",
-        "drm", "gallium", "dri"
+        "GL", "SDL", "openal", "libm.", "libstd", "libc.", "libvorbis", "libogg", "pthread",
+        "drm", "gallium", "dri", "steam", "libz", "curl"
     };
 
     const char* name = info->dlpi_name;
@@ -343,8 +344,65 @@ void posix_oncrash(const char* msg)
     sdl_os_oncrash(msg);
 }
 
+static void* getSymbol(const char* module, const char* symbol)
+{
+    void *handle = dlopen(module, RTLD_NOW|RTLD_GLOBAL|RTLD_NOLOAD);
+    if (!handle) {
+        ReportLinux("Failed to access '%s': %s", module, dlerror());
+        return NULL;
+    }
+    void* sym = dlsym(handle, symbol);
+    char* error = NULL;
+    if ((error = dlerror())) {
+        ReportLinux("Failed to get symbol '%s' from '%s': %s", symbol, module, error);
+        return NULL;
+    }
+    return sym;
+}
+
+#define GET_SYMBOL(MOD, RET, NAME, ARGS)                               \
+    typedef RET (*fn ## NAME) ARGS;                                    \
+    static fn ## NAME pfn ## NAME = (fn ## NAME) getSymbol(MOD, #NAME) \
+
+static int X_error_handler(Display *d, XErrorEvent *e)
+{
+    char msg[256];
+    GET_SYMBOL("libX11.so", int, XGetErrorText, (Display *display, int code, char *buffer_return, int length));
+    if (pfnXGetErrorText)
+        pfnXGetErrorText(d, e->error_code, msg, sizeof(msg));
+    else
+        msg[0] = '\0';
+    ReportLinux("X11 Error %d (%s): request %d.%d", e->error_code, msg,
+                e->request_code, e->minor_code);
+    OL_ScheduleUploadLog("X11 Error");
+    return 0;                   // apparently ignored?
+}
+
+static int X_IO_error_handler(Display *d)
+{
+    sdl_os_oncrash("X11 IO Error");
+    exit(1);
+}
+
+int os_get_system_ram()
+{
+    // this call introduced in SDL 2.0.1 - backwards compatability
+    GET_SYMBOL("libSDL2-2.0.so.0", int, SDL_GetSystemRAM, (void));
+    return pfnSDL_GetSystemRAM ? pfnSDL_GetSystemRAM() : 0;
+}
+
 int os_init()
 {
+    GET_SYMBOL("libX11.so.6", XErrorHandler, XSetErrorHandler, (XErrorHandler));
+    GET_SYMBOL("libX11.so.6", XIOErrorHandler, XSetIOErrorHandler, (XIOErrorHandler));
+
+    ReportLinux("Setting XErrorHandler: %s", pfnXSetErrorHandler ? "OK" : "FAILED");
+    if (pfnXSetErrorHandler)
+        pfnXSetErrorHandler(X_error_handler);
+    ReportLinux("Setting XIOErrorHandler: %s", pfnXSetIOErrorHandler ? "OK" : "FAILED");
+    if (pfnXSetIOErrorHandler)
+        pfnXSetIOErrorHandler(X_IO_error_handler);
+    
     return 1;
 }
 

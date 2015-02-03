@@ -31,7 +31,7 @@ int main(int argc, char *argv[])
                                 initWithFormat:pixelFormat shareContext:nil];
         [ctx makeCurrentContext];
 
-        OLG_InitGL();
+        OLG_InitGL(NULL);
 
         OLG_Draw();
         

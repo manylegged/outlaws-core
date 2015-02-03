@@ -31,6 +31,8 @@ int os_create_parent_dirs(const char* path);
 
 string os_get_platform_info();
 
+int os_get_system_ram();
+
 void os_stacktrace();
 
 int os_init();

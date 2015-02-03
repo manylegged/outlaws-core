@@ -6,6 +6,7 @@
 
 void LogMessage(NSString *str);
 GLenum glReportError(void);
+float getBackingScaleFactor(void);
 
 @interface BasicOpenGLView : NSOpenGLView<NSWindowDelegate>
 {

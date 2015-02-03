@@ -172,6 +172,14 @@ enum : uint {
     Keypad8,
     Keypad9,
 
+    KeyVolumeDown,
+    KeyVolumeUp,
+    KeyAudioNext,
+    KeyAudioPrev,
+    KeyAudioPlay,
+    KeyAudioStop,
+    KeyAudioMute,
+
     EventKeyMax
 };
 

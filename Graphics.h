@@ -33,15 +33,12 @@
 
 extern uint graphicsDrawCount;
 extern uint gpuMemoryUsed;
-extern bool supports_ARB_Framebuffer_object;
 
 GLenum glReportError1(const char *file, uint line, const char *function);
-GLenum glReportFramebufferError1(const char *file, uint line, const char *function);
-void   glReportValidateShaderError1(const char* file, uint line, const char* function, GLuint program);
-
 #define glReportError() glReportError1(__FILE__, __LINE__, __func__)
-#define glReportFramebufferError() glReportFramebufferError1(__FILE__, __LINE__, __func__)
-#define glReportValidateShaderError(PROG) glReportValidateShaderError1(__FILE__, __LINE__, __func__, (PROG))
+
+void glReportValidateShaderError1(const char *file, uint line, const char *function, GLuint program, const char *name);
+#define glReportValidateShaderError(PROG, NAME) glReportValidateShaderError1(__FILE__, __LINE__, __func__, (PROG), (NAME))
 
 bool isGLExtensionSupported(const char *name);
 
@@ -161,10 +158,7 @@ template <typename T>
 struct VertexBuffer : public GLBuffer<T, GL_ARRAY_BUFFER> {
 };
 
-template <typename T>
-struct IndexBuffer : public GLBuffer<T, GL_ELEMENT_ARRAY_BUFFER>
-{
-};
+typedef GLBuffer<uint, GL_ELEMENT_ARRAY_BUFFER> IndexBuffer;
 
 class GLTexture;
 
@@ -309,11 +303,10 @@ struct ShaderState {
     void DrawElements(uint dt, size_t ic, const ushort* i) const;
     void DrawElements(uint dt, size_t ic, const uint* i) const;
 
-    template <typename T>
-    void DrawElements(uint dt, const IndexBuffer<T>& indices) const
+    void DrawElements(uint dt, const IndexBuffer& indices) const
     {
         indices.Bind();
-        DrawElements(dt, indices.size(), (T*)0);
+        DrawElements(dt, indices.size(), (uint*)0);
         indices.Unbind();
     }
 
@@ -681,36 +674,29 @@ inline float2 getCircleVertOffset(uint idx, uint verts)
 }
 
 
-struct MeshBase : public Transform2D {
-
-    typedef uint IndexType;
-
-};
-
-
 // aka VertexPusher
 // store a bunch of geometry
 // lots of routines for drawing shapes
 // tracks the current vertex and transform for stateful OpenGL style drawing
 template <typename Vtx>
-struct Mesh : public MeshBase {
+struct Mesh : public Transform2D {
 
 protected:
 
-    typedef std::vector<IndexType> IndexVector;
+    typedef std::vector<uint> IndexVector;
 
-    Vtx                    m_curVert;
-    VertexBuffer<Vtx>      m_vbo;
-    IndexBuffer<IndexType> m_ibo;
-    std::vector<Vtx>       m_vl;
-    IndexVector            m_il;
+    Vtx               m_curVert;
+    VertexBuffer<Vtx> m_vbo;
+    IndexBuffer       m_ibo;
+    std::vector<Vtx>  m_vl;
+    IndexVector       m_il;
 
 public:
 
     size_t getSizeof() const
     {
         return sizeof(Vtx) * m_vl.size() + 
-            sizeof(IndexType) * m_il.size() +
+            sizeof(uint) * m_il.size() +
             sizeof(*this);
     }
 
@@ -757,9 +743,9 @@ public:
         m_curVert.pos.z += z;
     }
 
-    void PushI(IndexType start, const IndexType *pidx, uint ic)
+    void PushI(uint start, const uint *pidx, uint ic)
     {
-        ASSERT(start + ic < std::numeric_limits<IndexType>::max());
+        ASSERT(start + ic < std::numeric_limits<uint>::max());
         for (uint i=0; i<ic; i++)
         {
             DASSERT(start + pidx[i] < m_vl.size());
@@ -768,37 +754,19 @@ public:
     }
 
     template <typename Vec>
-    IndexType Push(const Vec *pv, uint vc, const IndexType *pidx, uint ic)
+    uint Push(const Vec *pv, uint vc, const uint *pidx, uint ic)
     {
-        IndexType start = PushV(pv, vc);
+        uint start = PushV(pv, vc);
         PushI(start, pidx, ic);
         return start;
-    }
-
-    static bool checkOverflow(size_t val, ushort t)
-    {
-        if (val > std::numeric_limits<IndexType>::max()) {
-            ASSERT(false && "vertex overflow!");
-            return true;
-        }
-        return false;
-    }
-
-    static bool checkOverflow(size_t val, uint t)
-    {
-        return false;           // never happens for ints
     }
 
     Vtx& getVertex(uint idx) { return m_vl[idx]; }
     uint getVertexCount() const { return m_vl.size(); }
 
     template <typename T>
-    IndexType PushV(const T *pv, size_t vc)
+    uint PushV(const T *pv, size_t vc)
     {
-        const IndexType start = (IndexType) m_vl.size();
-        if (checkOverflow(m_vl.size() + vc, (IndexType) 0))
-            return start;
-
         Vtx v = m_curVert;
         for (uint i=0; i<vc; i++)
         {
@@ -806,15 +774,11 @@ public:
             apply(v.pos, pv[i]);
             m_vl.push_back(v);
         }
-        return start;
+        return m_vl.size()-vc;
     }
 
-    IndexType PushV(const Vtx *pv, size_t vc)
+    uint PushV(const Vtx *pv, size_t vc)
     {
-        const IndexType start = (IndexType) m_vl.size();
-        if (checkOverflow(m_vl.size() + vc, (IndexType) 0))
-            return start;
-
         Vtx v;
         for (uint i=0; i<vc; i++)
         {
@@ -823,16 +787,32 @@ public:
             apply(v.pos, pv[i].pos);
             m_vl.push_back(v);
         }
-        return start;
+        return m_vl.size()-vc;
+    }
+
+    uint PushV1(const Vtx &vtx)
+    {
+        Vtx v = vtx;
+        v.pos = m_curVert.pos;
+        apply(v.pos, vtx.pos);
+        m_vl.push_back(v);
+        return m_vl.size()-1;
+    }
+
+    template <typename T>
+    uint PushV1(const T &pos)
+    {
+        Vtx v = m_curVert;
+        apply(v.pos, pos);
+        m_vl.push_back(v);
+        return m_vl.size()-1;
     }
 
     // pre-transformed vertices
     template <typename T>
-    IndexType PushVTrans(const T *pv, size_t vc)
+    uint PushVTrans(const T *pv, size_t vc)
     {
-        const IndexType start = (IndexType) m_vl.size();
-        if (checkOverflow(m_vl.size() + vc, (IndexType) 0))
-            return start;
+        const uint start = (uint) m_vl.size();
 
         Vtx v = m_curVert;
         for (uint i=0; i<vc; i++)
@@ -843,12 +823,9 @@ public:
         return start;
     }
 
-    IndexType Push(const Mesh<Vtx> &pusher)
+    uint Push(const Mesh<Vtx> &pusher)
     {
-        const IndexType start = m_vl.size();
-        if (checkOverflow(start + pusher.m_vl.size(), (IndexType)0))
-            return start;
-
+        const uint start = m_vl.size();
         m_vl.reserve(m_vl.size() + pusher.m_vl.size());
         m_il.reserve(m_il.size() + pusher.m_il.size());
         
@@ -861,14 +838,14 @@ public:
             m_vl.push_back(v);
         }
 
-        foreach (IndexType idx, pusher.m_il)
+        foreach (uint idx, pusher.m_il)
         {
             m_il.push_back(start + idx);
         }
         return start;
     }
 
-    IndexType PushArrayIndexes(IndexType start, size_t vc)
+    uint PushArrayIndexes(uint start, size_t vc)
     {
         for (uint i=0; i<vc; i++) {
             m_il.push_back(start + i);
@@ -877,9 +854,9 @@ public:
     }
 
     template <typename Vec>
-    IndexType PushArray(const Vec *pv, size_t vc)
+    uint PushArray(const Vec *pv, size_t vc)
     {
-        IndexType start = PushV(pv, vc);
+        uint start = PushV(pv, vc);
         return PushArrayIndexes(start, vc);
     }
 
@@ -926,7 +903,7 @@ template <typename Vtx1, uint PrimSize>
 struct PrimMesh : public Mesh<Vtx1> {
 
     struct IndxPrim {
-        typename Mesh<Vtx1>::IndexType indxs[PrimSize];
+        uint indxs[PrimSize];
         friend bool operator==(const IndxPrim &a, const IndxPrim &b) {
             return !memcmp(a.indxs, b.indxs, sizeof(a.indxs));
         }
@@ -974,19 +951,19 @@ struct PrimMesh : public Mesh<Vtx1> {
 
         static const float kUnifyDist = 0.1f;
         std::set<uint> replacedIndices;
-        int maxIndex = 0;
-        spatial_hash<int> verthash(10.f, this->m_vl.size() * 5);
-        for (int i=0; i<this->m_il.size(); i++)
+        uint maxIndex = 0;
+        spatial_hash<uint> verthash(10.f, this->m_vl.size() * 5);
+        for (uint i=0; i<this->m_il.size(); i++)
         {
-            const typename Mesh<Vtx1>::IndexType index = this->m_il[i];
+            const uint index = this->m_il[i];
             const float3 vert = this->m_vl[index].pos;
             const float2 vert2(vert.x, vert.y);
             const uint   col  = this->m_vl[index].color;
 
             bool replaced = false;
-            vector<int> indices;
+            vector<uint> indices;
             verthash.intersectCircle(&indices, vert2, kUnifyDist);
-            foreach (int idx, indices)
+            foreach (uint idx, indices)
             {
                 if (idx != index && 
                     this->m_vl[idx].color == col && 
@@ -1001,7 +978,7 @@ struct PrimMesh : public Mesh<Vtx1> {
 
             if (!replaced) {
                 verthash.insertPoint(vert2, index);
-                maxIndex = max(maxIndex, (int) index);
+                maxIndex = max(maxIndex, (uint) index);
             }
         }
         
@@ -1038,16 +1015,14 @@ enum SpiralType {
 template <typename Vtx>
 struct PointMesh : public Mesh<Vtx> {
 
-    typedef typename Mesh<Vtx>::IndexType Index;
-
     void PushPoint(float2 pos)
     {
-        this->PushV(&pos, 1);
+        this->PushV1(pos);
     }
 
     void PushPoint(const Vtx &pos)
     {
-        this->PushV(&pos, 1);
+        this->PushV1(pos);
     }
 
     template <typename Prog>
@@ -1076,12 +1051,10 @@ struct PointMesh : public Mesh<Vtx> {
 template <typename Vtx>
 struct LineMesh : public PrimMesh<Vtx, 2> {
 
-    typedef typename Mesh<Vtx>::IndexType Index;
-
     template <typename Vec>
-    Index PushLoop(const Vec *pv, uint c)
+    uint PushLoop(const Vec *pv, uint c)
     {
-        Index start = this->PushV(pv, c);
+        uint start = this->PushV(pv, c);
         for (uint i=0; i<c; i++)
         {
             this->m_il.push_back(start + i);
@@ -1092,7 +1065,7 @@ struct LineMesh : public PrimMesh<Vtx, 2> {
 
     void PushStrip(const float2 *pv, uint c)
     {
-        Index start = this->PushV(pv, c);
+        uint start = this->PushV(pv, c);
         for (uint i=1; i<c; i++)
         {
             this->m_il.push_back(start + i - 1);
@@ -1100,28 +1073,28 @@ struct LineMesh : public PrimMesh<Vtx, 2> {
         }
     }
 
-    void PushLoopIndexes(Index start, uint vc, uint ls)
+    void PushLoopIndexes(uint start, uint vc, uint ls)
     {
         ASSERT(vc % ls == 0);
-        for (int i=0; i<vc; i++) {
+        for (uint i=0; i<vc; i++) {
             this->m_il.push_back(start + i);
             this->m_il.push_back(start + i + (((i+1) % ls == 0) ? 1 - ls : 1));
         }
     }
 
-    void PushLoopIndexes(Index start, const Index *il, uint ic, uint ls)
+    void PushLoopIndexes(uint start, const uint *il, uint ic, uint ls)
     {
         ASSERT(ic % ls == 0);
-        for (int i=1; i<=ic; i++) {
+        for (uint i=1; i<=ic; i++) {
             this->m_il.push_back(start + il[(i % ls == 0) ? i - ls : i]);
             this->m_il.push_back(start + il[i-1]);
         }
     }
 
     template <typename Vec>
-    void PushLoops(const Vec *pv, uint vc, const Index *il, uint ic, uint ls)
+    void PushLoops(const Vec *pv, uint vc, const uint *il, uint ic, uint ls)
     {
-        const Index start = this->PushV(pv, vc);
+        const uint start = this->PushV(pv, vc);
         PushLoopIndexes(start, il, ic, ls);
     }
 
@@ -1129,7 +1102,7 @@ struct LineMesh : public PrimMesh<Vtx, 2> {
     template <typename Vec>
     void PushLines(const Vec *pv, uint c)
     {
-        const Index start = this->PushV(pv, c);
+        const uint start = this->PushV(pv, c);
         for (uint i=1; i<c; i+=2)
         {
             this->m_il.push_back(start + i - 1);
@@ -1156,16 +1129,16 @@ struct LineMesh : public PrimMesh<Vtx, 2> {
     }
 
     void PushSpiral(const float2 &pos, SpiralType type, float maxTheta, float a, float b,
-                    int numVerts=32, float startAngle=0.f)
+                    uint numVerts=32, float startAngle=0.f)
     {
-        static const int maxVerts = 64;
+        static const uint maxVerts = 64;
         ASSERT(numVerts >= 3);
         numVerts = min(maxVerts, numVerts);
         float2 verts[maxVerts];
 
         const float angleIncr = maxTheta / (float) numVerts;
     
-        for (int i=0; i != numVerts; ++i)
+        for (uint i=0; i != numVerts; ++i)
         {
             const float theta = startAngle + i * angleIncr;
             float r = 0.f;
@@ -1183,19 +1156,18 @@ struct LineMesh : public PrimMesh<Vtx, 2> {
     }
 
     // widthRadians is on either side of angleStart
-    void PushArc(float2 pos, float radius, float angleStart, float widthRadians, int numVerts=32)
+    void PushArc(float2 pos, float radius, float angleStart, float widthRadians, uint numVerts=32)
     {
         ASSERT(numVerts >= 3);
 
-        Index start = this->m_vl.size();
+        const uint    start  = this->m_vl.size();
+        const float2 rot    = angleToVector(2.f * widthRadians / (float) (numVerts-1));
+        float2       offset = radius * angleToVector(angleStart - widthRadians);
 
-        for (int i=0; i < numVerts; ++i)
+        for (uint i=0; i < numVerts; ++i)
         {
-            const float angle = angleStart + 2.f * widthRadians * (-0.5f + (float) i / (float) (numVerts-1));
-            const uint  j     = (uint) this->m_vl.size();
-            float2      p     = pos + radius * angleToVector(angle);
-
-            this->PushV(&p, 1);
+            const uint j = this->PushV1(pos + offset);
+            offset = ::rotate(offset, rot);
             if (j > start) {
                 this->m_il.push_back(j-1);
                 this->m_il.push_back(j);
@@ -1203,61 +1175,36 @@ struct LineMesh : public PrimMesh<Vtx, 2> {
         }
     }
 
-    void PushCircle(float radius, int numVerts=32)
+    uint PushCircle(float radius, uint numVerts=32)
     {
-        this->PushCircle(float2(0), radius, numVerts);
+        return this->PushCircle(float2(0), radius, numVerts);
     }
 
-    void PushCircle(const float2 &pos, float radius, int numVerts=32, float startAngle=0.f)
+    uint PushCircle(const float2 &pos, float radius, uint numVerts=32, float startAngle=0.f)
     {
-        static const int maxVerts = 64;
+        static const uint maxVerts = 64;
         ASSERT(numVerts >= 3);
         numVerts = min(maxVerts, numVerts);
         float2 verts[maxVerts];
 
-        const float angleIncr = 2.f * M_PIf / (float) numVerts;
-    
-        for (int i=0; i != numVerts; ++i)
+        float2       offset = radius * angleToVector(startAngle);
+        const float2 rot    = angleToVector(2.f * M_PIf / (float) numVerts);
+        
+        for (uint i=0; i != numVerts; ++i)
         {
-            const float angle = startAngle + i * angleIncr;
-            verts[i].x = pos.x + radius * cos(angle);
-            verts[i].y = pos.y + radius * sin(angle);
+            verts[i] = pos + offset;
+            offset = ::rotate(offset, rot);
         }
 
-        PushLoop(verts, numVerts);
+        return PushLoop(verts, numVerts);
     }
 
-    void PushLineCylinder(const float2 &pos, float2 radius, int numVerts=32, float startAngle=0.f)
-    {
-        static const int maxVerts = 64;
-        ASSERT(numVerts >= 3);
-        numVerts = min(maxVerts, numVerts);
-        float3 verts[maxVerts];
-
-        const float angleIncr = 2.f * M_PIf / (float) numVerts;
-
-        for (uint j=0; j<2; j++) {
-            for (int i=0; i != numVerts; ++i)
-            {
-                const float angle = startAngle + i * angleIncr;
-                verts[i].x = pos.x + radius.x * cos(angle);
-                verts[i].y = pos.y + radius.x * sin(angle);
-                verts[i].z = (j == 0) ? radius.y : -radius.y;
-                if (j == 0) {
-                    float3 v2 = verts[i];
-                    v2.z = -v2.z;
-                    PushLine(verts[i], v2);
-                }
-            }
-            PushLoop(verts, numVerts);
-        }
-    }
-
-    void PushDashedLineCircle(const float2 &pos, float radius, int numVerts, float startAngle, int dashOn, int dashOff)
+    void PushDashedLineCircle(const float2 &pos, float radius, uint numVerts, float startAngle, int dashOn, int dashOff)
     {
         ASSERT(numVerts >= 3);
 
-        const float angleIncr = 2.f * M_PIf / (float) numVerts;
+        float2       offset = radius * angleToVector(startAngle);
+        const float2 rot    = angleToVector(2.f * M_PIf / (float) numVerts);
     
         float2 firstVert;
         float2 prevVert;
@@ -1265,11 +1212,10 @@ struct LineMesh : public PrimMesh<Vtx, 2> {
         int  dashIdx = 0;
         bool on      = true;
 
-        for (int i=0; i != numVerts; ++i)
+        for (uint i=0; i != numVerts; ++i)
         {
-            const float angle = startAngle + i * angleIncr;
-            float2 vert(pos.x + radius * cos(angle),
-                        pos.y + radius * sin(angle));
+            float2 vert = pos + offset;
+            offset = ::rotate(offset, rot);
             
             float2 overt;
             if (i > 0) {
@@ -1301,21 +1247,21 @@ struct LineMesh : public PrimMesh<Vtx, 2> {
         }
     }
 
-    void PushBox(float2 pos, float3 rad)
+    // Push a 3d prism of top radius RAD.X and bottom radius RAD.Y and depth RAD.Z
+    void PushPrism(float2 pos, float3 rad, uint sides, float startAngle=0.f)
     {
-        float3 pos3(pos, 0.f);
-        const float3 verts[] = { pos3 + float3(-rad.x, rad.y, rad.z), 
-                                 pos3 + float3(rad.x, rad.y, rad.z), 
-                                 pos3 + float3(rad.x, -rad.y, rad.z),
-                                 pos3 + float3(-rad.x, -rad.y, rad.z),
-                                 pos3 + float3(-rad.x, rad.y, -rad.z), 
-                                 pos3 + float3(rad.x, rad.y, -rad.z), 
-                                 pos3 + float3(rad.x, -rad.y, -rad.z),
-                                 pos3 + float3(-rad.x, -rad.y, -rad.z) };
-        const Index idxs[] = { 0,1, 1,2, 2,3, 3,0,
-                                                       0,4, 1,5, 2,6, 3,7,
-                                                       4,5, 5,6, 6,7, 7,4 };
-        this->Push(verts, arraySize(verts), idxs, arraySize(idxs));
+        const float saveZ = this->m_curVert.pos.z;
+        this->m_curVert.pos.z += rad.z;
+        const uint first = PushCircle(pos, rad.x, sides, startAngle);
+        this->m_curVert.pos.z -= 2.f * rad.z;
+        const uint second = PushCircle(pos, rad.y, sides, startAngle);
+        this->m_curVert.pos.z = saveZ;
+
+        for (uint i=0; i<sides; i++)
+        {
+            this->m_il.push_back(first + i);
+            this->m_il.push_back(second + i);
+        }
     }
 
     void PushTri(float2 a, float2 b, float2 c)
@@ -1339,13 +1285,13 @@ struct LineMesh : public PrimMesh<Vtx, 2> {
         PushLoop(v, arraySize(v));
     }
 
-    Index PushRect(float2 r)
+    uint PushRect(float2 r)
     {
         const float2 verts[4] = { -r, float2(-r.x, r.y), r, float2(r.x, -r.y) };
         return PushLoop(verts, arraySize(verts));
     }
 
-    Index PushRect(float2 p, float2 r)
+    uint PushRect(float2 p, float2 r)
     {
         const float2 verts[4] = { p-r, p + float2(-r.x, r.y), p + r, p + float2(r.x, -r.y) };
         return PushLoop(verts, arraySize(verts));
@@ -1363,7 +1309,7 @@ struct LineMesh : public PrimMesh<Vtx, 2> {
     void PushLine(const Vec &a, const Vec &b)
     {
         const Vec x[] = {a, b};
-        const Index i[] = {0, 1};
+        const uint i[] = {0, 1};
         this->Push(x, 2, i, 2);
     }
     
@@ -1377,9 +1323,9 @@ struct LineMesh : public PrimMesh<Vtx, 2> {
     {
         const float3 x[] = { float3(a, d), float3(b, d), float3(c, d),
                              float3(a, -d), float3(b, -d), float3(c, -d) };
-        const Index il0[] = { 0,1,2, 3,4,5 };
-        const Index il1[] = { 0,3, 1,4, 2,5 };
-        const Index start = this->PushV(x, arraySize(x));
+        const uint il0[] = { 0,1,2, 3,4,5 };
+        const uint il1[] = { 0,3, 1,4, 2,5 };
+        const uint start = this->PushV(x, arraySize(x));
         PushLoopIndexes(start, il0, 6, 3);
         PushLoopIndexes(start, il1, 6, 2);
     }
@@ -1395,8 +1341,6 @@ struct LineMesh : public PrimMesh<Vtx, 2> {
 template <typename Vtx>
 struct TriMesh : public PrimMesh<Vtx, 3> {
 
-    typedef typename Mesh<Vtx>::IndexType Index;
-
     void PushPoly(const float2* verts, uint vc)
     {
         ASSERT(vc > 2);
@@ -1410,26 +1354,26 @@ struct TriMesh : public PrimMesh<Vtx, 3> {
 
     // a b
     // c d
-    Index PushQuad(float2 a, float2 b, float2 c, float2 d)
+    uint PushQuad(float2 a, float2 b, float2 c, float2 d)
     {
         const float2 v[] = { a, b, c, d };
         return this->PushQuadV(v);
     }
 
     template <typename Vec>
-    Index PushQuadV(const Vec *v)
+    uint PushQuadV(const Vec *v)
     {
-        static const Index i[] = {0, 1, 2, 1, 3, 2};
+        static const uint i[] = {0, 1, 2, 1, 3, 2};
         return this->Push(v, 4, i, arraySize(i));
     }
 
-    Index PushRect(float2 p, float2 r)
+    uint PushRect(float2 p, float2 r)
     {
         return PushQuad(p + float2(-r.x, r.y), p + r, 
                         p-r, p + float2(r.x, -r.y));
     }
 
-    Index PushRect(float3 p, float2 r)
+    uint PushRect(float3 p, float2 r)
     {
         const float3 v[] = { p + float3(-r.x,  r.y, 0),
                              p + float3( r.x,  r.y, 0),
@@ -1449,33 +1393,32 @@ struct TriMesh : public PrimMesh<Vtx, 3> {
     void PushTri(float2 a, float2 b, float2 c)
     {
         float2 x[] = {a, b, c};
-        Index i[] = {0, 1, 2};
+        uint i[] = {0, 1, 2};
         this->Push(x, 3, i, 3);
     }
 
-    Index PushCircle(float radius, int numVerts=32) 
+    uint PushCircle(float radius, uint numVerts=32) 
     {
         return PushCircle(float2(0), radius, numVerts); 
     }
 
-    Index PushCircle(float2 pos, float radius, const View& view) 
+    uint PushCircle(float2 pos, float radius, const View& view) 
     {
         return PushCircle(pos, radius, view.getCircleVerts(radius));
     }
 
-    Index PushCircle(float2 pos, float radius, int numVerts=32)
+    uint PushCircle(float2 pos, float radius, uint numVerts=32)
     {
         ASSERT(numVerts >= 3);
 
-        Index start = this->m_vl.size();
+        uint        start  = this->m_vl.size();
+        float2       offset = justX(radius);
+        const float2 rot    = angleToVector(M_TAOf / (float) numVerts);
 
-        for (int i=0; i < numVerts; ++i)
+        for (uint i=0; i < numVerts; ++i)
         {
-            const float angle = (float) i * (M_TAOf / (float) numVerts);
-            const uint  j     = (uint) this->m_vl.size();
-            float2      p     = pos + radius * angleToVector(angle);
-
-            this->PushV(&p, 1);
+            const uint j = this->PushV1(pos + offset);
+            offset = rotate(offset, rot);
 
             if (j - start > 1)
             {
@@ -1488,23 +1431,19 @@ struct TriMesh : public PrimMesh<Vtx, 3> {
     }
 
     // widthRadians is on either side of angleStart
-    void PushSector(float2 pos, float radius, float angleStart, float widthRadians, int numVerts=32)
+    void PushSector(float2 pos, float radius, float angleStart, float widthRadians, uint numVerts=32)
     {
         ASSERT(numVerts >= 3);
 
-        Index start = this->m_vl.size();
-        this->PushV(&pos, 1);
+        const uint    start  = this->PushV1(pos);
+        const float2 rot    = angleToVector(2.f * widthRadians / (float) (numVerts-1));
+        float2       offset = radius * angleToVector(angleStart - widthRadians);
 
-        for (int i=0; i < numVerts; ++i)
+        for (uint i=0; i < numVerts; ++i)
         {
-            const float angle = angleStart + 2.f * widthRadians * (-0.5f + (float) i / (float) (numVerts-1));
-            const uint  j     = (uint) this->m_vl.size();
-            float2      p     = pos + radius * angleToVector(angle);
-
-            this->PushV(&p, 1);
-
-            if (j - start > 0)
-            {
+            const uint j = this->PushV1(pos + offset);
+            offset = ::rotate(offset, rot);
+            if (j - start > 0) {
                 this->m_il.push_back(start);
                 this->m_il.push_back(j-1);
                 this->m_il.push_back(j);
@@ -1512,23 +1451,19 @@ struct TriMesh : public PrimMesh<Vtx, 3> {
         }
     }
 
-    Index PushCircleCenterVert(float2 pos, float radius, int numVerts=32)
+    uint PushCircleCenterVert(float2 pos, float radius, uint numVerts=32)
     {
         ASSERT(numVerts >= 3);
 
-        Index start = this->m_vl.size();
-        this->PushV(&pos, 1);
+        const uint    start  = this->PushV1(pos);
+        const float2 rot    = angleToVector(M_TAOf / (float) numVerts);
+        float2       offset = justX(radius);
 
-        for (int i=0; i < numVerts; ++i)
+        for (uint i=0; i < numVerts; ++i)
         {
-            const float  angle = M_TAOf * (float) i / (float) numVerts;
-            const uint   j     = (uint) this->m_vl.size();
-            const float2 p     = pos + radius * angleToVector(angle);
-
-            this->PushV(&p, 1);
-
-            if (j - start > 0)
-            {
+            const uint j = this->PushV1(pos + offset);
+            offset = ::rotate(offset, rot);
+            if (j - start > 0) {
                 this->m_il.push_back(start);
                 this->m_il.push_back(j-1);
                 this->m_il.push_back(j);
@@ -1541,24 +1476,20 @@ struct TriMesh : public PrimMesh<Vtx, 3> {
         return start;
     }
     
-    Index PushCircleCenterVert(float radius, int numVerts=32)
+    uint PushCircleCenterVert(float radius, uint numVerts=32)
     {
         return PushCircleCenterVert(float2(0.f), radius, numVerts);
     }
 
-    Index PushPolyCenterVert(float2 pos, float scale, float2* verts, int numVerts)
+    uint PushPolyCenterVert(float2 pos, float scale, float2* verts, uint numVerts)
     {
         ASSERT(numVerts >= 3);
 
-        Index start = this->m_vl.size();
-        this->PushV(&pos, 1);
+        const uint start = this->PushV1(pos);
 
-        for (int i=0; i < numVerts; ++i)
+        for (uint i=0; i < numVerts; ++i)
         {
-            const uint   j = (uint) this->m_vl.size();
-            const float2 p = pos + scale * verts[i];
-
-            this->PushV(&p, 1);
+            const uint j = this->PushV1(pos + scale * verts[i]);
 
             if (j - start > 0)
             {

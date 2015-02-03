@@ -76,7 +76,12 @@ struct ButtonBase : public WidgetBase {
 
     ButtonBase() { }
     ButtonBase(const char* ks) { setKeys(ks); }
+    virtual ~ButtonBase() {}
 
+    void render(const ShaderState &s_, bool selected=false);
+    virtual void renderButton(DMesh& mesh, bool selected=false)=0;
+    virtual void renderContents(const ShaderState &s_) {};
+    
     bool HandleEvent(const Event* event, bool* isActivate, bool* isPress=NULL);
     
     bool renderTooltip(const ShaderState &ss, const View& view, uint color, bool force=false) const;
@@ -122,7 +127,7 @@ struct Button : public ButtonBase
     float2 padding           = float2(4.f * kPadDist, 4.f * kPadDist);
 
     Button() {}
-    Button(const string& str, const char* keys, int ky=0) : ButtonBase(keys), text(str) { ident = ky; }
+    Button(const string& str, const char* keys=NULL, int ky=0) : ButtonBase(keys), text(str) { ident = ky; }
 
     void setColors(uint txt, uint defBg, uint pressBg, uint defLine, uint hovLine)
     {
@@ -140,9 +145,8 @@ struct Button : public ButtonBase
     uint getFGColor(bool selected) const { return ((!active) ? inactiveLineColor :
                                                    (hovered||selected) ? hoveredLineColor : defaultLineColor); }
     float2 getTextSize() const;
-    void render(const ShaderState &s_, bool selected=false);
-    void renderButton(DMesh& mesh, bool selected=false);
-    void renderContents(const ShaderState &s_) const;
+    virtual void renderButton(DMesh& mesh, bool selected=false);
+    virtual void renderContents(const ShaderState &s_);
     
     void setEscapeKeys() { setKeys({ EscapeCharacter, GamepadB });
                            subtext = KeyState::instance().stringNo(); }
@@ -473,6 +477,58 @@ struct OptionSlider : public WidgetBase {
 };
 
 
+// edit a float or int type, with a label
+struct OptionEditor {
+
+    enum Type { FLOAT, INT };
+
+    OptionSlider slider;
+    const char*  label   = NULL;
+    vector<const char*> tooltip;
+    Type         type;
+    void*        value = NULL;
+    float        start;
+    float        mult;
+    string       txt;
+
+    float getValueFloat() const
+    {
+        return ((type == FLOAT) ? *(float*) value : ((float) *(int*) value));
+    }
+
+    void setValueFloat(float v);
+    int getValueInt() const { return *(int*) value; }
+
+    void updateSlider()
+    {
+        slider.setValueFloat((getValueFloat() - start) / mult);
+        txt = str_format("%s: %s", label, getTxt().c_str());
+    }
+
+    void init(Type t, void *v, const char* lbl, const vector<const char*> &tt, float st, float mu, int states);
+    
+    OptionEditor(float *f, const char* lbl, const vector<const char*> tt) 
+    {
+        init(FLOAT, (void*) f, lbl, tt, 0.f, 2.f, 100);
+    }
+
+    OptionEditor(int *u, const char* lbl, int states, const vector<const char*> tt)
+    {
+        init(INT, (void*) u, lbl, tt, 0.f, (float) states-1, states);
+    } 
+
+    OptionEditor(int *u, const char* lbl, int low, int increment, int states, const vector<const char*> tt)
+    {
+        init(INT, (void*) u, lbl, tt, low, increment * states, states + 1);
+    }
+
+    string getTxt() const;
+    void render(const ShaderState &ss, float alpha);
+    bool HandleEvent(const Event* event, bool* valueChanged);
+};
+
+
+
 struct ColorPicker : public WidgetBase {
 
     OptionSlider hueSlider;
@@ -525,7 +581,7 @@ struct TabWindow : public WidgetBase {
         ITabInterface *interface = NULL;
         int            ident     = -1;
 
-        void render(DMesh &mesh) const;
+        void renderButton(DMesh &mesh, bool selected=false);
     };
     
     float textSize          = 16.f;
@@ -674,23 +730,6 @@ struct MessageBoxWidget : public WidgetBase {
     bool HandleEvent(const Event* event);
 };
 
-struct ConfirmWidget : public WidgetBase {
-    
-    string title;
-    string message;
-    int    messageFont = kDefaultFont;
-    Button buttons[2];
-    int    selected = 0;
-
-    ConfirmWidget()
-    {
-        buttons[0].text = "OK";
-        buttons[0].setYesKeys();
-        buttons[1].text = "Cancel";
-        buttons[1].setNoKeys();
-    }
-};
-
 struct TextBox {
     
     const View* view = NULL;
@@ -712,9 +751,11 @@ struct OverlayMessage : public WidgetBase {
     float      totalTime = 1.;
     uint       color     = kGUIText;
     float      textSize  = 14.f;
+    GLText::Align align = GLText::MID_CENTERED;
     
     bool isVisible() const;
     bool setMessage(const string& msg, uint clr=0); // return true if changed
+    void setVisible(bool visible=true);
     void render(const ShaderState &ss);
     
     void reset()
@@ -736,6 +777,52 @@ bool HandleEventSelected(int* selected, ButtonBase &current, int count, int rows
 bool ButtonHandleEvent(ButtonBase &button, const Event* event, bool* isActivate,
                        bool* isPress=NULL, int* selected=NULL);
 
+// auto-resizing text
+struct ButtonText {
+    float fontSize = -1.f;
+    
+    void renderText(const ShaderState &ss, float2 pos, float width,
+                    GLText::Align align, uint color, float fmin, float fmax,
+                    const string& text);
+};
+
+struct Scrollbar : public WidgetBase {
+
+    int  first   = 0;           // first visible item
+    int  visible = 0;           // number of visible items
+    int  steps   = 0;           // total items
+    bool pressed = false;       // is actively dragging thumb?
+    float sfirst = 0.f;         // float version of first for scrolling
+    WidgetBase *parent = NULL;
+
+    int last() const { return min(first + visible, steps); }
+    void render(DMesh &mesh) const;
+    bool HandleEvent(const Event *event);
+};
+
+// scrolling button container
+struct ButtonWindow : public WidgetBase {
+
+    vector<ButtonBase *> buttons;
+    Scrollbar            scrollbar;
+    int2                 dims = int2(2, 8);
+
+    ButtonWindow()
+    {
+        scrollbar.parent = this;
+    }
+
+    ~ButtonWindow()
+    {
+        vec_clear_deep(buttons);
+    }
+    
+    void render(const ShaderState &ss);
+    bool HandleEvent(const Event *event, ButtonBase **activated=NULL,
+                     ButtonBase **dragged=NULL, ButtonBase **dropped=NULL);
+
+    void computeDims(int2 mn, int2 mx);
+};
 
 
 #endif

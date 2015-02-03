@@ -109,6 +109,7 @@ static void print_backtrace()
     ReportPOSIX("Dumping stack for thread %#llx '%s'", (uint64)current_tid,
                 map_get(_thread_name_map(), (uint64)current_tid).c_str());
     for (int i=0; i<count; i++) {
+        string func;
         if (strings && strings[i]) {
             vector<string> fields = str_split(strings[i], ' ');
             for (int j=0; j<fields.size(); ) {
@@ -117,18 +118,23 @@ static void print_backtrace()
                 else
                     j++;
             }
-            if (fields.size() >= 3) {
-                string func = str_demangle(fields[3].c_str());
+            if (fields.size() == 2) {
+                // Linux / GCC
+                const int start = fields[0].find('(') + 1;
+                const int end = fields[0].find('+', start);
+                if (start > 0 && end > start)
+                    func = str_demangle(fields[0].substr(start, end - start).c_str());
+            } else if (fields.size() >= 3) {
+                // OSX/ Clang
+                func = (i == 1) ? fields[3] : str_demangle(fields[3].c_str());
                 if (fields.size() > 4)
                     func += " " + str_join(' ', fields.begin() + 4, fields.end());
                 func += str_format(" (%s)", fields[1].c_str());
-                ReportPOSIX("%2d. Called from %p %s", i, buffer[i], func.c_str());
             } else {
-                ReportPOSIX("%2d. Called from %p %s", i, buffer[i], strings[i]);
+                func = strings[i];
             }
-        } else {
-            ReportPOSIX("%2d. Called from %p", i, buffer[i]);
         }
+        ReportPOSIX("%2d. Called from %p %s", i, buffer[i], func.c_str());
     }
 
     free(strings);
@@ -225,8 +231,10 @@ static void posix_signal_handler(int sig, siginfo_t *siginfo, void *context)
     
     if (sig == SIGTERM || sig == SIGINT)
     {
-        OLG_OnClose();
-        OL_DoQuit();
+        if (OLG_OnClose()) {
+            ReportPOSIX("Caught Control-C and already closing - Calling exit()");
+            exit(1);
+        }
         g_signaldepth--;
         return;
     }

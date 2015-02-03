@@ -120,11 +120,12 @@ void sdl_os_oncrash(const string &message)
     errorm = str_format("%s\n\nPlease email\n%s\nto arthur@anisopteragames.com\n",
                         message.c_str(), dest.c_str());
     SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Reassembly Error", errorm.c_str(), NULL);
+    ReportSDL("Crash reporting complete\n");
 }
 
-void OL_ScheduleUploadLog(void)
+void OL_ScheduleUploadLog(const char* reason)
 {
-    ReportSDL("Log upload scheduled");
+    ReportSDL("Log upload scheduled: %s", reason);
     g_wantsLogUpload = true;
 }
 
@@ -291,43 +292,6 @@ double OL_GetCurrentTime()
     return (double) rel / frequency;
 }
 
-
-#if OL_LINUX
-
-static void* getSymbol(const char* module, const char* symbol)
-{
-    void *handle = dlopen(module, RTLD_NOW|RTLD_GLOBAL|RTLD_NOLOAD);
-    if (!handle) {
-        ReportSDL("Failed to access '%s': %s", module, dlerror());
-        return NULL;
-    }
-    void* sym = dlsym(handle, symbol);
-    char* error = NULL;
-    if ((error = dlerror())) {
-        ReportSDL("Failed to get symbol '%s' from '%s': %s", symbol, module, error);
-        return NULL;
-    }
-    return sym;
-}
-
-static int getSystemRam()
-{
-    // this call introduced in SDL 2.0.1 - backwards compatability
-    typedef int SDLCALL (*PSDL_GetSystemRam)(void);
-    PSDL_GetSystemRam pSDL_GetSystemRam = (PSDL_GetSystemRam) getSymbol("libSDL2-2.0.so.0", "SDL_GetSystemRAM");
-    return pSDL_GetSystemRam ? pSDL_GetSystemRam() : 0;
-}
-
-#else
-
-static int getSystemRam()
-{
-    return SDL_GetSystemRAM();
-}
-
-#endif
-
-
 const char* OL_GetPlatformDateInfo(void)
 {
     static string str;
@@ -340,7 +304,7 @@ const char* OL_GetPlatformDateInfo(void)
     SDL_GetVersion(&linked);
 
     const int    cpucount = SDL_GetCPUCount();
-    const int    rammb    = getSystemRam();
+    const int    rammb    = os_get_system_ram();
     const double ramGb    = rammb / 1024.0;
 
     str += str_format(" SDL %d.%d.%d, %s with %d cores %.1f GB, ",
@@ -360,9 +324,11 @@ int OL_GetCpuCount()
     return SDL_GetCPUCount();
 }
 
-void OL_DoQuit()
+int OL_DoQuit()
 {
+    int was = g_quitting;
     g_quitting = true;
+    return was;
 }
 
 void sdl_set_scaling_factor(float factor)
@@ -388,11 +354,12 @@ void OL_SetWindowSizePoints(int w, int h)
 
 void OL_SetSwapInterval(int interval)
 {
-    int error = SDL_GL_SetSwapInterval(interval);
+    const int error = SDL_GL_SetSwapInterval(interval);
     if (interval < 0) {
         const int supports = error ? 0 : 1;
         if (supports != g_supportsTearControl) {
-            ReportSDL("Tear Control %s Supported", supports ? "is" : "is NOT");
+            ReportSDL("Tear Control %s Supported: %s", supports ? "is" : "is NOT",
+                      error ? SDL_GetError() : "OK");
             g_supportsTearControl = supports;
         }
     }
@@ -401,11 +368,6 @@ void OL_SetSwapInterval(int interval)
 int OL_HasTearControl(void)
 {
     return g_supportsTearControl;
-}
-
-float OL_GetBackingScaleFactor() 
-{
-    return g_scaling_factor;
 }
 
 float OL_GetCurrentBackingScaleFactor(void)
@@ -530,17 +492,20 @@ int OL_SaveTexture(const OutlawTexture *tex, const char* fname)
     return success;
 }
 
-
-static lstring                   g_fontNames[10];
+static const int                 kMaxFonts = 10;
+static lstring                   g_fontFiles[kMaxFonts];
+static lstring                   g_fontNames[kMaxFonts];
 static std::map<uint, TTF_Font*> g_fonts;
 static std::mutex                g_fontMutex;
 
 TTF_Font* getFont(int fontName, float size)
 {
-    if (!g_fontNames[fontName])
-        return NULL;
-
     std::lock_guard<std::mutex> l(g_fontMutex);
+    if (0 > fontName || fontName > kMaxFonts)
+        return NULL;
+    lstring file = g_fontFiles[fontName];
+    if (!file)
+        return NULL;
 
     const int   isize = round_int(size * g_scaling_factor);
     const uint  key   = (fontName<<16)|isize;
@@ -548,14 +513,13 @@ TTF_Font* getFont(int fontName, float size)
 
     if (!font)
     {
-        const char* file = g_fontNames[fontName].c_str();
-        ASSERT(file);
-        font = TTF_OpenFont(file, isize);
+        font = TTF_OpenFont(file.c_str(), isize);
+        lstring name = g_fontNames[fontName];
         if (font) {
-            ReportSDL("Loaded font '%s' at size %d", file, isize);
+            ReportSDL("Loaded font '%s' at size %d", name.c_str(), isize);
         } else {
             ReportSDL("Failed to load font '%s' at size '%d': %s",
-                      file, isize, TTF_GetError());
+                      name.c_str(), isize, TTF_GetError());
         }
         ASSERT(font);
     }
@@ -565,12 +529,24 @@ TTF_Font* getFont(int fontName, float size)
 void OL_SetFont(int index, const char* file, const char* name)
 {
     std::lock_guard<std::mutex> l(g_fontMutex);
-    g_fontNames[index] = lstring(OL_PathForFile(file, "r"));
+    const char* fname = OL_PathForFile(file, "r");
+    g_fontNames[index] = lstring(name);
+    if (fname && OL_FileDirectoryPathExists(fname))
+    {
+        g_fontFiles[index] = lstring(fname);
+        ReportSDL("Found font %d '%s' at '%s'", index, name, fname);
+    }
+    else
+    {
+        ReportSDL("Unable to find font %d '%s'", index, name);
+    }
 }
 
 void OL_FontAdvancements(int fontName, float size, struct OLSize* advancements)
 {
     TTF_Font* font = getFont(fontName, size);
+    if (!font)
+        return;
     for (uint i=0; i<128; i++)
     {
         int minx,maxx,miny,maxy,advance;
@@ -590,7 +566,7 @@ void OL_FontAdvancements(int fontName, float size, struct OLSize* advancements)
 float OL_FontHeight(int fontName, float size)
 {
     const TTF_Font* font = getFont(fontName, size);
-    return TTF_FontLineSkip(font) / g_scaling_factor;
+    return font ? TTF_FontLineSkip(font) / g_scaling_factor : 0.f;
 }
 
 
@@ -849,6 +825,14 @@ static int keysymToKey(const SDL_Keysym &keysym)
     case SDLK_RGUI:     return OControlKey;
     case SDLK_BACKSPACE: return NSBackspaceCharacter;
     case SDLK_DELETE:   return NSDeleteFunctionKey;
+    case SDLK_VOLUMEUP: return KeyVolumeUp;
+    case SDLK_VOLUMEDOWN: return KeyVolumeDown;
+    case SDLK_AUDIONEXT: return KeyAudioNext;
+    case SDLK_AUDIOPREV: return KeyAudioPrev;
+    case SDLK_AUDIOPLAY: return KeyAudioPlay;
+    case SDLK_AUDIOSTOP: return KeyAudioStop;
+    case SDLK_AUDIOMUTE: return KeyAudioMute;
+        
     default:
         ASSERTF(sym < 0xffff, "%#x", sym);
         return sym;
@@ -998,6 +982,7 @@ static void HandleEvents()
             break;
         }
         case SDL_QUIT:
+            ReportSDL("SDL_QUIT received");
             OLG_OnClose();
             g_quitting = true;
             break;
@@ -1082,6 +1067,16 @@ const char* OL_ReadClipboard()
     return sdl_os_autorelease(str);
 }
 
+void OL_WriteClipboard(const char* txt)
+{
+#if OL_WINDOWS
+    string str = str_replace(txt, "\n", OL_ENDL);
+    SDL_SetClipboardText(str.c_str());
+#else
+    SDL_SetClipboardText(txt);
+#endif
+}
+
 #define COPY_GL_EXT_IMPL(X) if (!(X) && (X ## EXT)) { ReportSDL("Using " #X "EXT"); (X) = (X ## EXT); } else if (!(X)) { ReportSDL(#X " Not found!"); }
 #define ASSERT_EXT_EQL(X) static_assert(X == X ## _EXT, #X "EXT mismatch")
 
@@ -1121,21 +1116,28 @@ static bool initGlew()
     COPY_GL_EXT_IMPL(glRenderbufferStorage);
 
     // make sure we print the gl version no matter what!
-    const char* error = OLG_InitGL();
+    const char* error = NULL;
+    const int status = OLG_InitGL(&error);
     if (error)
     {
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, "OpenGL Error", error, NULL);
     }
-    return 1;
+    return status == 1 ? true : false;
 }
 
 
 int sdl_os_main(int argc, const char **argv)
 {
+    int mode = OLG_Init(argc, argv);
+
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_GAMECONTROLLER ) < 0)
     {
-        sdl_os_oncrash(str_format("SDL_Init() failed: %s", SDL_GetError()));
-        return 1;
+        ReportSDL("SDL_Init Failed (retrying without gamepad): %s", SDL_GetError());
+        if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) < 0)
+        {
+            sdl_os_oncrash(str_format("SDL_Init() failed: %s", SDL_GetError()));
+            return 1;
+        }
     }
 
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
@@ -1143,8 +1145,6 @@ int sdl_os_main(int argc, const char **argv)
     SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, 8);
     SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE, 8);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 16);
-
-    int mode = OLG_Init(argc, argv);
 
     if (kOpenGLDebug)
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_DEBUG_FLAG);
@@ -1158,7 +1158,7 @@ int sdl_os_main(int argc, const char **argv)
         if (window) {
             SDL_GLContext context = SDL_GL_CreateContext(window);
             if (context) {
-                if (initGlew() != 0)
+                if (!initGlew())
                     return 1;
 
                 OLG_Draw();
@@ -1167,6 +1167,7 @@ int sdl_os_main(int argc, const char **argv)
             }
             SDL_DestroyWindow(window);
         }
+        ReportSDL("Goodbye!\n");
         return 0;
     }
 
@@ -1196,7 +1197,7 @@ int sdl_os_main(int argc, const char **argv)
                                        g_windowSize.x, g_windowSize.y,
                                        SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
     if (!g_displayWindow) {
-        ReportSDL("SDL_CreateWindow failed: %s", SDL_GetError());
+        sdl_os_oncrash(str_format("SDL_CreateWindow failed: %s\nIs your desktop set to 32 bit color?", SDL_GetError()).c_str());
     }
 
     SDL_GetWindowPosition( g_displayWindow, &g_savedWindowPos.x, &g_savedWindowPos.y );
@@ -1252,6 +1253,9 @@ int sdl_os_main(int argc, const char **argv)
 
     if (g_logfile)
     {
+        if (g_wantsLogUpload)
+            ReportSDL("Log upload requested");
+        ReportSDL("Closing log for shutdown");
         SDL_RWwrite(g_logfile, OL_ENDL, strlen(OL_ENDL), 1);
         SDL_RWclose(g_logfile);
         g_logfile = NULL;

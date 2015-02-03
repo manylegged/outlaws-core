@@ -28,13 +28,17 @@
 
 #include <random>
 
+const char* thread_current_name();
+// #define DEBUG_RAND(X) ReportMessagef X
+#define DEBUG_RAND(X)
+
 inline int& random_seed()
 {
     static int seed = 0;
     return seed;
 }
 
-inline std::mt19937 *&random_device()
+inline std::mt19937 *&my_random_device()
 {
     // static std::default_random_engine e1;
     static THREAD_LOCAL std::mt19937 *e1 = NULL;
@@ -42,31 +46,31 @@ inline std::mt19937 *&random_device()
 }
 
 template <typename T>
-inline uint randrange()
+inline T randrange()
 {
     std::uniform_int_distribution<T> uniform_dist(std::numeric_limits<T>::min(), 
                                                   std::numeric_limits<T>::max());
-    return uniform_dist(*random_device());
+    T result = uniform_dist(*my_random_device());
+    DEBUG_RAND(("[%s] randrange<%s> %d", thread_current_name(), TYPE_NAME(T), result));
+    return result;
 }
 
 // return a random number from [start-end)
 inline int randrange(int start, int end)
 {
-    ASSERT(start <= end);
-    if (start == end)
+    ASSERT(start < end);
+    if (start >= end-1)
         return start;
     std::uniform_int_distribution<int> uniform_dist(start, end-1);
-    return uniform_dist(*random_device());
+    int result = uniform_dist(*my_random_device());
+    DEBUG_RAND(("[%s] randrange(%d, %d) %d", thread_current_name(), start, end, result));
+    return result;
 }
 
 // return a random number from [0-end)
 inline int randrange(int end)
 {
-    ASSERT(end >= 0);
-    if (0 == end)
-        return 0;
-    std::uniform_int_distribution<int> uniform_dist(0, end-1);
-    return uniform_dist(*random_device());
+    return randrange(0, end);
 }
 
 inline bool randbool() { return randrange(0, 2); }
@@ -74,34 +78,47 @@ inline bool randbool() { return randrange(0, 2); }
 inline float randsign() { return randbool() ? 1.f : -1.f; }
 
 template <typename T>
-inline const T &randselect(std::initializer_list<T> l)
+const T &randselect(std::initializer_list<T> l)
 {
     return *(l.begin() + randrange(0, l.size()));
 }
 
-template <typename Vec>
-inline auto randselect(const Vec& vec) -> decltype(*std::begin(vec))
+template <typename T>
+T _randselect_dummy()
 {
-    const size_t size = std::distance(std::begin(vec), std::end(vec));
-    if (size == 0) {
-        static decltype(*std::begin(vec)) dummy{};
-        return dummy;
-    } else if (size == 1) {
-        return *std::begin(vec);
-    } else {
-        return *(std::begin(vec) + randrange(0, size));
-    }
+    static T dummy{};
+    return dummy;
 }
 
+template <typename Vec>
+auto randselect(const Vec& vec) -> decltype(*std::begin(vec))
+{
+    const size_t size = std::distance(std::begin(vec), std::end(vec));
+    if (size == 0)
+        return _randselect_dummy<decltype(*std::begin(vec))>();
+    return *(std::begin(vec) + randrange(0, size));
+}
 
+template <typename Vec>
+typename Vec::value_type randselect_pop(Vec& vec)
+{
+    if (vec.empty())
+        return _randselect_dummy<typename Vec::value_type>();
+    const int index = randrange(0, vec.size());
+    typename Vec::value_type val = std::move(vec[index]);
+    vec_pop(vec, index);
+    return val;
+}
+    
 inline float randrange(float start, float end)
 {
     ASSERT(start <= end);
     if (start == end)
         return start;
     std::uniform_real_distribution<float> uniform_dist(start, end);
-    return uniform_dist(*random_device());
-    //return float(start + ((end - start) * float(rand())) / float(RAND_MAX));
+    float result = uniform_dist(*my_random_device());
+    DEBUG_RAND(("[%s] randrange(%g, %g) %g", thread_current_name(), start, end, result));
+    return result;
 }
 
 inline float2 randrange(float2 start, float2 end)
@@ -114,8 +131,9 @@ inline float3 randrange(float3 start, float3 end)
     return float3(randrange(start.x, end.x), randrange(start.y, end.y), randrange(start.z, end.z));
 }
 
+inline float randnorm() { return randrange(0.f, 1.f); }
 inline float randangle() { return randrange(0.f, M_TAOf); }
-inline float2 randpolar(float minradius, float maxradius) 
+inline float2 randpolar(float minradius, float maxradius)
 {
     return randrange(minradius, maxradius) * angleToVector(randangle());
 }

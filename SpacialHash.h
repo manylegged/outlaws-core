@@ -79,6 +79,8 @@ public:
         return sz;
     }
 
+    const std::vector<value_type> &getElements() const { return m_elements; }
+
     // change size of hash
     void reset(float cell_size, uint cells)
     {
@@ -113,7 +115,7 @@ public:
         ASSERT(acceptElement());
         if (!acceptElement())
             return;
-        const int      cell = hash(scale(p));
+        const int cell = hash(scale(p));
         m_elements.push_back(make_pair(key_type(p, 0.f), v));
         m_cells[cell].push_back(m_elements.size()-1);
     }
@@ -123,8 +125,8 @@ public:
         ASSERT(acceptElement());
         if (!acceptElement())
             return;
-        const int2       s   = scale(p - float2(r));
-        const int2       e   = scale(p + float2(r));
+        const int2 s = scale(p - float2(r));
+        const int2 e = scale(p + float2(r));
         m_elements.push_back(make_pair(key_type(p, r), v));
         for (int x=s.x; x<=e.x; x++)
         {

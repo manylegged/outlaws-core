@@ -9,6 +9,13 @@
 #ifndef Outlaws_PlatformIncludes_h
 #define Outlaws_PlatformIncludes_h
 
+#if defined(DEBUG) || defined(DEVELOP)
+#ifdef _LIBCPP_INLINE_VISIBILITY
+#undef _LIBCPP_INLINE_VISIBILITY
+#endif
+#define _LIBCPP_INLINE_VISIBILITY
+#endif
+
 #import <OpenGL/gl.h>
 #import <OpenGL/glext.h>
 #import <OpenGL/glu.h>

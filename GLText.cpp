@@ -77,7 +77,8 @@ void GLText::load(const string& str, int font_, float size, float pointSize)
 
         if (chars.size())
         {
-            int status = OL_StringTexture(&texture, chars.c_str(), fontSize, font, -1.f, -1.f);
+            int status = OL_StringTexture(&texture, chars.c_str(), fontSize, font,
+                                          globals.windowSizePoints.x, globals.windowSizePoints.y);
             if (status && texture.width > 0 && texture.height > 0)
             {
                 texChars     = chars;
@@ -118,14 +119,20 @@ float2 GLText::Draw(const ShaderState &s_, float2 p, Align align, int font, uint
         return float2(0.f);
     const GLText* st = get(font, sizeUnscaled, str);
 
+#if __APPLE__
+    const float mid_y = 0.5f;
+#else
+    const float mid_y = 0.55f;
+#endif
+
     float2 scale;
     switch (align) {
     case LEFT:          scale = float2(0.f,  0.f); break;
     case CENTERED:      scale = float2(0.5f, 0.f); break;
     case RIGHT:         scale = float2(1.f,  0.f); break;
-    case MID_LEFT:      scale = float2(0.f,  0.5f); break;
-    case MID_CENTERED:  scale = float2(0.5f, 0.5f); break;
-    case MID_RIGHT:     scale = float2(1.f,  0.5f); break;
+    case MID_LEFT:      scale = float2(0.f,  mid_y); break;
+    case MID_CENTERED:  scale = float2(0.5f, mid_y); break;
+    case MID_RIGHT:     scale = float2(1.f,  mid_y); break;
     case DOWN_LEFT:     scale = float2(0.f,  1.f); break;
     case DOWN_CENTERED: scale = float2(0.5f, 1.f); break;
     case DOWN_RIGHT:    scale = float2(1.f,  1.f); break;
@@ -186,6 +193,7 @@ const GLText* GLText::get(int font, float size, const string& s)
         }
     }
 
+    // ReportMessagef("RAND %d (gltext)", randrange(1, 101));
     const int i = randrange(0, cacheSize);
     cache[i].load(s, font, size, pointSize);
     return &cache[i];

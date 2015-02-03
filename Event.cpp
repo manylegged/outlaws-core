@@ -283,6 +283,13 @@ static string rawKeyToString(int key)
     case Keypad7:                  return "Keypad 7";
     case Keypad8:                  return "Keypad 8";
     case Keypad9:                  return "Keypad 9";
+    case KeyVolumeDown:            return "Volume Down";
+    case KeyVolumeUp:              return "Volume Up";
+    case KeyAudioNext:             return "Play Next";
+    case KeyAudioPrev:             return "Play Prev";
+    case KeyAudioPlay:             return "Play";
+    case KeyAudioStop:             return "Stop";
+    case KeyAudioMute:             return "Mute";
     case 0:                        return " ";
     default:                       return or_(keyToUTF8(key), str_format("%#x", key));
     }

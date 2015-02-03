@@ -53,6 +53,105 @@ void deleteBufferInMainThread(GLuint buffer)
     globals.deleteGLBuffers(1, &buffer);
 }
 
+
+GLenum glReportError1(const char *file, uint line, const char *function)
+{
+    ASSERT_MAIN_THREAD();
+
+    if (!(globals.debugRender&DBG_GLERROR) && globals.frameStep > kDebugFrames)
+        return GL_NO_ERROR;
+
+	GLenum err = GL_NO_ERROR;
+	while (GL_NO_ERROR != (err = glGetError()))
+    {
+        const char* msg = (const char *)gluErrorString(err);
+        OLG_OnAssertFailed(file, line, function, "glGetError", "%s", msg);
+    }
+    
+	return err;
+}
+
+
+static string getGLFrameBufferStatusString(GLenum err)
+{
+    switch(err) {
+        case 0: return "Error checking framebuffer status";
+        CASE_STR(GL_FRAMEBUFFER_COMPLETE);
+        CASE_STR(GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT);
+        CASE_STR(GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT);
+        CASE_STR(GL_FRAMEBUFFER_UNSUPPORTED);
+#if OPENGL_ES
+        CASE_STR(GL_FRAMEBUFFER_INCOMPLETE_DIMENSIONS);
+#else
+        CASE_STR(GL_FRAMEBUFFER_INCOMPLETE_DIMENSIONS_EXT);
+        CASE_STR(GL_FRAMEBUFFER_UNDEFINED);
+        CASE_STR(GL_FRAMEBUFFER_INCOMPLETE_DRAW_BUFFER);
+        CASE_STR(GL_FRAMEBUFFER_INCOMPLETE_READ_BUFFER);
+        CASE_STR(GL_FRAMEBUFFER_INCOMPLETE_MULTISAMPLE);
+        CASE_STR(GL_FRAMEBUFFER_INCOMPLETE_LAYER_TARGETS_EXT);
+        CASE_STR(GL_FRAMEBUFFER_INCOMPLETE_LAYER_COUNT_EXT);
+#endif
+        default: return str_format("0x%0x", err);
+    }
+}
+
+static GLenum glReportFramebufferError1(const char *file, uint line, const char *function)
+{
+    ASSERT_MAIN_THREAD();
+
+    if (!(globals.debugRender&DBG_GLERROR) && globals.frameStep > kDebugFrames)
+        return GL_NO_ERROR;
+
+	GLenum err = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+	if (GL_FRAMEBUFFER_COMPLETE != err)
+    {
+        OLG_OnAssertFailed(file, line, function, "glCheckFramebufferStatus", "%s", getGLFrameBufferStatusString(err).c_str());
+    }
+    
+	return err;
+}
+
+#define glReportFramebufferError() glReportFramebufferError1(__FILE__, __LINE__, __func__)
+
+static bool ignoreShaderLog(const char* buf)
+{
+    // damnit ATI driver
+    static string kNoErrors = "No errors.\n";
+    return (buf == kNoErrors ||
+            str_contains(buf, "Validation successful") ||
+            str_contains(buf, "successfully compiled") ||
+            str_contains(buf, "shader(s) linked."));
+}
+
+static void checkProgramInfoLog(GLuint prog, const char* name)
+{
+    const uint bufsize = 2048;
+    char buf[bufsize];
+    GLsizei length = 0;
+    glGetProgramInfoLog(prog, bufsize, &length, buf);
+    if (length && !ignoreShaderLog(buf))
+    {
+        ASSERT(length < bufsize);
+        OLG_OnAssertFailed(name, -1, "", "", "GL Program Info log for '%s': %s", name, buf);
+    }
+}
+
+void glReportValidateShaderError1(const char *file, uint line, const char *function, GLuint program, const char *name)
+{
+    ASSERT_MAIN_THREAD();
+
+    if (!(globals.debugRender&DBG_GLERROR) && globals.frameStep > kDebugFrames)
+        return;
+
+    glValidateProgram(program);
+    GLint status = 0;
+    glGetProgramiv(program, GL_VALIDATE_STATUS, &status);
+    checkProgramInfoLog(program, "validate");
+    glReportError1(file, line, function);
+    ASSERT_(status == GL_TRUE, file, line, function, "%s", name);
+}
+
+
 vector<GLRenderTexture*> GLRenderTexture::s_bound;
 
 GLRenderTexture* GLRenderTexture::getBound(int idx)
@@ -60,8 +159,6 @@ GLRenderTexture* GLRenderTexture::getBound(int idx)
     return vec_at(s_bound, -idx - 1);
 }
 
-
-#define CASE_STR(X) case X: return #X
 static const char* textureFormatToString(GLint fmt)
 {
     switch (fmt) {
@@ -183,17 +280,14 @@ void GLRenderTexture::Generate(ZFlags zflags)
 void GLRenderTexture::clear()
 {
     if (m_fbname)
-        glDeleteFramebuffers(1, &m_fbname);
+        globals.deleteGLFramebuffers(1, &m_fbname);
     if (m_texname) {
         gpuMemoryUsed -= m_size.x * m_size.y * textureFormatBytesPerPixel(m_format);
-        glDeleteTextures(1, &m_texname);
+        globals.deleteGLTextures(1, &m_texname);
     }
     if (m_zrbname) {
         gpuMemoryUsed -= m_size.x * m_size.y * 2;
-        glDeleteRenderbuffers(1, &m_zrbname);
-    }
-    if (m_fbname || m_texname || m_zrbname) {
-        glReportError();
+        globals.deleteGLRenderbuffers(1, &m_zrbname);
     }
     m_size = float2(0.f);
     m_texsize = float2(0.f);
@@ -292,7 +386,7 @@ void GLTexture::clear()
     if (m_texname)
     {
         gpuMemoryUsed -= m_texsize.x * m_texsize.y * textureFormatBytesPerPixel(m_format);
-        glDeleteTextures(1, &m_texname);
+        globals.deleteGLTextures(1, &m_texname);
     }
     m_texname = 0;
 }
@@ -412,30 +506,6 @@ GLTexture PixImage::uploadTexture() const
     return tex;
 }
 
-static bool ignoreShaderLog(const char* buf)
-{
-    // damnit ATI driver
-    static string kNoErrors = "No errors.\n";
-    return (buf == kNoErrors ||
-            str_contains(buf, "Validation successful") ||
-            str_contains(buf, "successfully compiled") ||
-            str_contains(buf, "shader(s) linked."));
-}
-
-static void checkProgramInfoLog(GLuint prog, const char* name)
-{
-    const uint bufsize = 2048;
-    char buf[bufsize];
-    GLsizei length = 0;
-    glGetProgramInfoLog(prog, bufsize, &length, buf);
-    if (length && !ignoreShaderLog(buf))
-    {
-        ASSERT(length < bufsize);
-        OLG_OnAssertFailed(name, -1, "", "", "GL Program Info log for '%s': %s", name, buf);
-    }
-}
-
-
 ShaderProgramBase::ShaderProgramBase()
 {
 }
@@ -466,79 +536,6 @@ GLuint ShaderProgramBase::createShader(const char* txt, GLenum type) const
     }
     
     return idx;
-}
-
-GLenum glReportError1(const char *file, uint line, const char *function)
-{
-    ASSERT_MAIN_THREAD();
-
-    if (!(globals.debugRender&DBG_GLERROR) && globals.frameStep > kDebugFrames)
-        return GL_NO_ERROR;
-
-	GLenum err = GL_NO_ERROR;
-	while (GL_NO_ERROR != (err = glGetError()))
-    {
-        const char* msg = (const char *)gluErrorString(err);
-        OLG_OnAssertFailed(file, line, function, "glGetError", "%s", msg);
-    }
-    
-	return err;
-}
-
-
-static string getGLFrameBufferStatusString(GLenum err)
-{
-    switch(err) {
-        case 0: return "Error checking framebuffer status";
-        CASE_STR(GL_FRAMEBUFFER_COMPLETE);
-        CASE_STR(GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT);
-        CASE_STR(GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT);
-        CASE_STR(GL_FRAMEBUFFER_UNSUPPORTED);
-#if OPENGL_ES
-        CASE_STR(GL_FRAMEBUFFER_INCOMPLETE_DIMENSIONS);
-#else
-        CASE_STR(GL_FRAMEBUFFER_INCOMPLETE_DIMENSIONS_EXT);
-        CASE_STR(GL_FRAMEBUFFER_UNDEFINED);
-        CASE_STR(GL_FRAMEBUFFER_INCOMPLETE_DRAW_BUFFER);
-        CASE_STR(GL_FRAMEBUFFER_INCOMPLETE_READ_BUFFER);
-        CASE_STR(GL_FRAMEBUFFER_INCOMPLETE_MULTISAMPLE);
-        CASE_STR(GL_FRAMEBUFFER_INCOMPLETE_LAYER_TARGETS_EXT);
-        CASE_STR(GL_FRAMEBUFFER_INCOMPLETE_LAYER_COUNT_EXT);
-#endif
-        default: return str_format("0x%0x", err);
-    }
-}
-
-GLenum glReportFramebufferError1(const char *file, uint line, const char *function)
-{
-    ASSERT_MAIN_THREAD();
-
-    if (!(globals.debugRender&DBG_GLERROR) && globals.frameStep > kDebugFrames)
-        return GL_NO_ERROR;
-
-	GLenum err = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-	if (GL_FRAMEBUFFER_COMPLETE != err)
-    {
-        OLG_OnAssertFailed(file, line, function, "glCheckFramebufferStatus", "%s", getGLFrameBufferStatusString(err).c_str());
-    }
-    
-	return err;
-}
-
-void glReportValidateShaderError1(const char *file, uint line, const char *function, GLuint program)
-{
-    ASSERT_MAIN_THREAD();
-
-    if (!(globals.debugRender&DBG_GLERROR) && globals.frameStep > kDebugFrames)
-        return;
-
-    glValidateProgram(program);
-    GLint status = 0;
-    glGetProgramiv(program, GL_VALIDATE_STATUS, &status);
-    checkProgramInfoLog(program, "validate");
-    glReportError();
-
-    ASSERT(status == GL_TRUE);
 }
 
 GLint ShaderProgramBase::getAttribLocation(const char *name) const
@@ -668,7 +665,7 @@ void ShaderProgramBase::UseProgramBase(const ShaderState& ss, uint size, const f
 void ShaderProgramBase::UseProgramBase(const ShaderState& ss) const
 {
     ASSERT_MAIN_THREAD();
-    ASSERT(isLoaded());
+    ASSERTF(isLoaded(), "%s", m_name.c_str());
     glReportError();
     glUseProgram(m_programHandle);
     glUniformMatrix4fv(m_transformUniform, 1, GL_FALSE, &ss.uTransform[0][0]);
@@ -678,7 +675,7 @@ void ShaderProgramBase::UseProgramBase(const ShaderState& ss) const
 void ShaderProgramBase::UnuseProgram() const
 {
     ASSERT_MAIN_THREAD();
-    glReportValidateShaderError(m_programHandle);
+    glReportValidateShaderError(m_programHandle, m_name.c_str());
     if (m_positionSlot >= 0) {
         glDisableVertexAttribArray(m_positionSlot);
     }

@@ -344,8 +344,6 @@ std::string str_capitalize(const char* str)
     return s;
 }
 
-#define assert_eql(A, B) ASSERTF(A == B, "'%s' != '%s'", str_tocstr(A), str_tocstr(B))
-
 bool str_runtests()
 {
     assert_eql(str_path_standardize("~/Foo//Bar.lua"), "~/Foo/Bar.lua");

@@ -429,7 +429,7 @@ int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int fontNa
     // Regardless of the current monitor.
     // Higher res tex looks bad on lower res monitors, because the pixels don't line up
     // Apparently there is no way to tell it not to do that, but we can lie about the text size...
-    const float scale = OL_GetCurrentBackingScaleFactor() / OL_GetBackingScaleFactor();
+    const float scale = OL_GetCurrentBackingScaleFactor() / getBackingScaleFactor();
     size *= scale;
         
     NSFont* font = getFont(fontName, size);
@@ -607,8 +607,9 @@ const char* OL_GetPlatformDateInfo(void)
         const unsigned long long memoryBytes = [process physicalMemory];
         const double memoryGB = memoryBytes / (1024.0 * 1024.0 * 1024.0);
 
-        buf = [NSString stringWithFormat:@"OSX %@, %s with %d cores %.1fGB, %@", 
+        buf = [NSString stringWithFormat:@"OSX %@ %@, %s with %d cores %.1fGB, %@",
                         [process operatingSystemVersionString],
+                        [[NSLocale currentLocale] localeIdentifier],
                         str_cpuid_(), (int)[process processorCount], memoryGB,
                         [formatter stringFromDate:[NSDate date]]];
         [buf retain];
@@ -633,6 +634,14 @@ const char* OL_ReadClipboard()
 
     NSString *data = [copiedItems firstObject];
     return [data UTF8String];
+}
+
+void OL_WriteClipboard(const char* txt)
+{
+    NSPasteboard *pasteboard = [NSPasteboard generalPasteboard];
+    NSString *str = [NSString stringWithUTF8String:txt];
+    [pasteboard clearContents];
+    [pasteboard writeObjects:[NSArray arrayWithObject:str]];
 }
 
 const char* OL_GetUserName(void)
@@ -668,7 +677,7 @@ int OL_HasTearControl(void)
     return 0;
 }
 
-void OL_ScheduleUploadLog(void)
+void OL_ScheduleUploadLog(const char* reason)
 {
     // nothing to do
 }

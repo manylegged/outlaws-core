@@ -186,19 +186,38 @@ inline std::string str_indent(T&& s, int amount)
 
 std::string str_align(const std::string& input, char token);
 
-template <typename T>
-inline std::string str_strip(const T& s)
+template <typename T, typename Fun>
+inline std::string str_strip(T &&s, Fun func)
 {
     const int sz = str_len(s);
     int st=0;
-    while (st < sz && isspace(s[st])) {
+    while (st < sz && func(s[st])) {
         st++;
     }
     int ed=sz-1;
-    while (ed >= st && isspace(s[ed])) {
+    while (ed >= st && func(s[ed])) {
         ed--;
     }
     return str_substr(s, st, ed-st+1);
+}
+
+template <typename T>
+inline std::string str_strip(T &&s)
+{
+    return str_strip(std::forward<T>(s), isspace);
+}
+
+template <typename T>
+inline std::string str_strip(const std::string &s)
+{
+    return str_strip(s, isspace);
+}
+
+typedef std::string (*str_strip_t)(const std::string &s);
+
+inline bool isspacequote(char c)
+{
+    return isspace(c) || strchr("\"'", c);
 }
 
 inline std::string str_chomp(const std::string &s)
@@ -474,11 +493,10 @@ std::string str_basename(const std::string &str);
 std::string str_dirname(const std::string &str);
 std::string str_path_standardize(const std::string &str);
 
-template <typename T, typename S>
-inline std::string str_path_join(T &&a, const S &b)
+template <typename S>
+inline std::string str_path_join(std::string r, const S &b)
 {
-    std::string r(std::forward<T>(a));
-    if (r.back() == '/')
+    if (r.size() && r.back() == '/')
         r.pop_back();
     if (str_len(b)) {
         if (b[0] != '/')
@@ -496,14 +514,13 @@ inline std::string str_path_join(T &&a, const S1 &b, const S2 &c)
 
 
 template <typename Fun>
-inline std::string str_interpolate_variables(const std::string &str_, const Fun& fun)
+inline std::string str_interpolate_variables(std::string str, const Fun& fun)
 {
-    std::string str = str_;
     for (size_t idx = str.find("$"); idx != std::string::npos; idx=str.find("$", idx))
     {
         int len=1;
         for (; idx+len<str.size() && issym(str[idx+len]); len++);
-        const std::string fname = str.substr(idx+1, len-1);
+        std::string fname = str.substr(idx+1, len-1);
         str.replace(idx, len, fun(fname));
     }
     return str;

@@ -165,6 +165,9 @@ inline float2 round(float2 a, float v) { return float2(round(a.x, v), round(a.y,
 inline double round(double a, double v) { return v * round(a / v); }
 inline double2 round(double2 a, double v) { return double2(round(a.x, v), round(a.y, v)); }
 
+inline int roundUp(int num, int mult) { return ((num + mult - 1) / mult) * mult; }
+inline int roundDown(int num, int mult) { return (num / mult) * mult; }
+
 inline uint roundUpPower2(uint v)
 {
     uint i=1;
@@ -204,7 +207,7 @@ inline int ceil_int(float f)
 inline int round_int(float f)
 {
     DASSERT(fabsf(f) < (2<<23));
-    const int i = (f >= 0.f) ? (f + 0.49999997f) : (f - 0.5f);
+    const int i = (f >= 0.f) ? (f + 0.49999997f) : (f - 0.50000003f);
     return i;
 }
 
@@ -789,6 +792,9 @@ inline float areaForPoly(const int numVerts, const float2 *verts)
 	
 	return -area/2.0;
 }
+
+// moment of intertia of polygon
+float momentForPoly(float mass, int numVerts, const float2 *verts, float2 offset);
 
 
 // ported into c++ from python source at http://doswa.com/blog/2009/07/13/circle-segment-intersectioncollision/

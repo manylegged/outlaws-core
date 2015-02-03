@@ -358,22 +358,19 @@ struct watch_ptr : public watch_ptr_base {
     }
      
     // it's a smart pointer
-    T& operator*()  const { return *get(); }
-    T* operator->() const { return get(); }
+    T& operator*()                      const { return *get(); }
+    T* operator->()                     const { return get(); }
     bool operator==(const watch_ptr &o) const { return ptr == o.ptr; }
+    bool operator==(const T* o)         const { return ptr == o; }
     bool operator<(const watch_ptr &o)  const { return ptr < o.ptr; }
+    bool operator<(const T* o)          const { return ptr < o; }
     explicit operator bool()            const { return ptr != NULL; }
 
-    T*  get() const { return (T*) ptr; }
+    T* get() const { return (T*) ptr; }
 };
 
-template <typename T>
-watch_ptr<T> make_watch_compare(const T* v)
-{
-    watch_ptr<T> p;
-    p.ptr = v;
-    return p;
-}
+template <typename T> bool operator!=(const watch_ptr<T> &a, T* b) { return !(a == b); }
+template <typename T> bool operator!=(T* a, const watch_ptr<T> &b) { return !(b == a); }
 
 template <typename T>
 watch_ptr<T> make_watch(T* v)
@@ -388,8 +385,11 @@ watch_ptr<T> make_watch(T* v)
 template <typename V, typename T>
 inline bool vec_contains(const V &v, const T& t)
 {
-    auto end = std::end(v);
-    return std::find(std::begin(v), end, t) != end;
+    for (const auto &x : v) {
+        if (x == t)
+            return true;
+    }
+    return false;
 }
 
 template <typename T>
@@ -537,35 +537,6 @@ inline void vec_set_index_deep(std::vector<T*> &v, uint i, T* t)
         v.push_back(t);
 }
 
-// remove first occurrence of t in v, return true if found
-// swap from end to fill - does not maintain order!
-template <typename V, typename T>
-inline bool vec_remove_one(V &v, const T& t)
-{
-    typename V::iterator it = std::find(std::begin(v), std::end(v), t);
-    if (it != std::end(v)) {
-        std::swap(*it, v.back());
-        v.pop_back();
-        return true;
-    }
-    return false;
-}
-
-// remove and delete first occurrence of t in v, return true if found
-// swap from end to fill - does not maintain order!
-template <typename V, typename T>
-inline bool vec_remove_one_deep(V &v, const T& t)
-{
-    typename V::iterator it = std::find(std::begin(v), std::end(v), t);
-    if (it != std::end(v)) {
-        std::swap(*it, v.back());
-        delete v.back();
-        v.pop_back();
-        return true;
-    }
-    return false;
-}
-
 // remove v[i], return true if i < v.size()
 // swap from end to fill - does not maintain order!
 template <typename V>
@@ -577,6 +548,16 @@ inline bool vec_pop(V &v, typename V::size_type i)
         return true;
     }
     return false;
+}
+
+// remove v[i], return true
+// swap from end to fill - does not maintain order!
+template <typename V>
+inline bool vec_pop(V &v, typename V::iterator it)
+{
+    std::swap(*it, v.back());
+    v.pop_back();
+    return true;
 }
 
 // remove v[i], return true if i < v.size()
@@ -598,7 +579,7 @@ inline bool vec_pop_increment(V& v, I &idx, bool test)
     if (test) {
         return vec_pop(v, idx);
     } else {
-        idx++;
+        ++idx;
         return false;
     }
 }
@@ -610,9 +591,37 @@ inline bool vec_pop_increment_deep(V& v, I &idx, bool test)
     if (test) {
         return vec_pop_deep(v, idx);
     } else {
-        idx++;
+        ++idx;
         return false;
     }
+}
+
+// remove first occurrence of t in v, return true if found
+// swap from end to fill - does not maintain order!
+template <typename V, typename T>
+inline bool vec_remove_one(V &v, const T& t)
+{
+    for (auto &&x : v) {
+        if (x == t) {
+            std::swap(x, v.back());
+            v.pop_back();
+            return true;
+        }
+    }
+    return false;
+}
+
+// remove and delete first occurrence of t in v, return true if found
+// swap from end to fill - does not maintain order!
+template <typename V, typename T>
+inline bool vec_remove_one_deep(V &v, const T& t)
+{
+    auto end=std::end(v);
+    for (auto it=std::begin(v); it != end;) {
+        if (vec_pop_increment_deep(v, it, *it == t))
+            return true;
+    }
+    return false;
 }
 
 // remove and delete v[i], return true if i < v.size()
@@ -629,6 +638,18 @@ inline bool vec_pop_deep(V &v, typename V::size_type i)
         return true;
     }
     return false;
+}
+
+    // remove and delete v[i], return true if i < v.size()
+// swap from end to fill - does not maintain order!
+template <typename V>
+inline bool vec_pop_deep(V &v, typename V::iterator it)
+{
+    auto elt = *it;
+    std::swap(*it, v.back());
+    v.pop_back();
+    delete elt;             // destructor might add to this vector, so do this last!
+    return true;
 }
 
 // clear and deallocate storage for t
@@ -689,17 +710,6 @@ inline void vec_copy_deep(std::vector<const T*> &v, const std::vector<U*> &o)
     }
 }
 
-template <typename K>
-struct key_comparator {
-    K m_key;
-    key_comparator(K k): m_key(k) {}
-    template <typename T>
-    bool operator()(const T& a, const T& b) { return m_key(a) < m_key(b); }
-};
-
-template <typename K>
-key_comparator<K> make_key_comparator(K k) { return key_comparator<K>(k); }
-
 // sort entire vector using supplied comparator
 template <typename T, typename F>
 inline void vec_sort(T& col, const F& comp) { std::sort(col.begin(), col.end(), comp); }
@@ -709,20 +719,23 @@ inline void vec_sort(T& col) { std::sort(col.begin(), col.end()); }
 
 // sort entire vector, using supplied function to get comparison key
 template <typename T, typename F>
-inline void vec_sort_key(T& col, const F& gkey) { std::sort(col.begin(), col.end(), make_key_comparator(gkey)); }
+inline void vec_sort_key(T& col, const F& gkey)
+{
+    std::sort(col.begin(), col.end(), [&](const typename T::value_type &a,
+                                          const typename T::value_type &b) {
+                  return gkey(a) < gkey(b); });
+}
 
 template <typename T, typename F>
-inline T vec_sorted(const T& col, const F& comp)
+inline T vec_sorted(T vec, const F& comp)
 {
-    T vec = col;
     std::sort(vec.begin(), vec.end(), comp);
     return vec;
 }
 
 template <typename T>
-inline T vec_sorted(const T& col)
+inline T vec_sorted(T vec)
 {
-    T vec = col;
     std::sort(vec.begin(), vec.end());
     return vec;
 }
@@ -730,8 +743,37 @@ inline T vec_sorted(const T& col)
 template <typename T>
 void vec_unique(T& vec)
 {
-    typename T::iterator it = std::unique(vec.begin(), vec.end());
-    vec.resize(std::distance(vec.begin(), it));
+    vec.erase(std::unique(vec.begin(), vec.end()), vec.end());
+}
+
+template <typename T, typename Fun>
+void vec_unique(T& vec, Fun fun)
+{
+    vec.erase(std::unique(vec.begin(), vec.end(), fun), vec.end());
+}
+
+template <typename T, typename Fun>
+void vec_unique_key(T& vec, Fun fun)
+{
+    vec.erase(std::unique(vec.begin(), vec.end(), ([&](const typename T::value_type &a,
+                                                       const typename T::value_type &b)
+                                                   { return fun(a) == fun(b); })),
+              vec.end());
+}
+
+template <typename T>
+void vec_sort_unique(T& vec)
+{
+    vec_sort(vec);
+    vec_unique(vec);
+}
+
+template <typename T, typename Fun>
+void vec_sort_unique_key(T& vec, Fun fun)
+{
+    typedef typename T::value_type Val;
+    vec_sort(vec,       [&](const Val &a, const Val &b) { return fun(a) < fun(b); });
+    vec_unique_key(vec, [&](const Val &a, const Val &b) { return fun(a) == fun(b); });
 }
 
 // selection sort the first COUNT elements of VEC, using FUN as a key for comparison
@@ -775,8 +817,8 @@ inline void vec_selection_sort(T& vec, size_t count, const F& comp)
 template <typename T, typename F>
 inline size_t vec_min_idx_by_key(T& col, const F& fkey)
 {
-    float minV   = std::numeric_limits<float>::max();
-    size_t  minIdx = 0;
+    float minV = std::numeric_limits<float>::max();
+    size_t minIdx = ~0;
     for (size_t i=0; i<col.size(); i++) {
         float v = fkey(col[i]);
         if (v < minV) {
@@ -788,17 +830,17 @@ inline size_t vec_min_idx_by_key(T& col, const F& fkey)
 }
 
 template <typename T, typename F>
-inline typename T::value_type &vec_min_element_by_key(T& col, const F& fkey)
+inline typename T::value_type vec_min_element_by_key(T& col, const F& fkey)
 {
-    size_t minIdx = vec_min_element_key_idx(col, fkey);
-    return col[minIdx];
+    size_t minIdx = vec_min_idx_by_key(col, fkey);
+    return (minIdx == ~0) ? typename T::value_type() : col[minIdx];
 }
 
 template <typename T, typename F>
 inline size_t vec_max_idx_by_key(T& col, const F& fkey)
 {
-    float maxV   = std::numeric_limits<float>::min();
-    size_t  maxIdx = 0;
+    float maxV   = std::numeric_limits<float>::lowest();
+    size_t  maxIdx = ~0;
     for (size_t i=0; i<col.size(); i++) {
         float v = fkey(col[i]);
         if (v > maxV) {
@@ -810,10 +852,10 @@ inline size_t vec_max_idx_by_key(T& col, const F& fkey)
 }
 
 template <typename T, typename F>
-inline typename T::value_type &vec_max_element_by_key(T& col, const F& fkey)
+inline typename T::value_type vec_max_element_by_key(T& col, const F& fkey)
 {
     size_t maxIdx = vec_max_idx_by_key(col, fkey);
-    return col[maxIdx];
+    return (maxIdx == ~0) ? typename T::value_type() : col[maxIdx];
 }
 
 template <typename Vec, typename F>
@@ -897,6 +939,17 @@ inline auto vec_map(const T &inv, const Fun &fun) -> std::vector<decltype(fun(*s
     return outs;
 }
 
+template <typename R, typename T, typename Fun>
+inline std::vector<R> vec_map(const T &inv, const Fun &fun)
+{
+    std::vector<R> outs;
+    foreach (const auto &x, inv)
+    {
+        outs.push_back(fun(x));
+    }
+    return outs;
+}
+
 template <typename R, typename T>
 inline std::vector<R> vec_map(const T &inv)
 {
@@ -956,10 +1009,15 @@ inline int vec_pop_if_not(T &vec)
 
 
 // swap from end to fill - does not maintain order!
-template <typename Vec>
-inline int vec_remove(Vec &v, const typename Vec::value_type& t)
+template <typename Vec, typename T>
+inline int vec_remove(Vec &v, const T &t)
 {
-    return vec_pop_if(v, lambda((const typename Vec::value_type &e), e == t));
+    int count = 0;
+    for (int i=0; i<v.size();) {
+        if (vec_pop_increment(v, i, v[i] == t))
+            count++;
+    }
+    return count;
 }
 
 template <typename T, typename F>
@@ -1236,7 +1294,7 @@ slist_iter_t<T> slist_iter(T *pt=NULL)
 
 typedef std::map<uint64, std::string> OL_ThreadNames;
 OL_ThreadNames &_thread_name_map();
- std::mutex& _thread_name_mutex();
+std::mutex& _thread_name_mutex();
 
 // set thread name, random seed, terminate handler, etc.
 void thread_setup(const char* name);
@@ -1246,14 +1304,14 @@ typedef pthread_t OL_Thread;
 #define THREAD_IS_SELF(B) (pthread_self() == (B))
 #define THREAD_ALIVE(B) (B)
 #else
-typedef std::thread OL_Thread;
+typedef std::thread* OL_Thread;
 #define THREAD_IS_SELF(B) (std::this_thread::get_id() == (B).get_id())
 #define THREAD_ALIVE(B) ((B).joinable())
 #endif
 
 OL_Thread thread_create(void *(*start_routine)(void *), void *arg);
-void thread_join(OL_Thread &thread);
-
+void thread_join(OL_Thread thread);
+const char* thread_current_name();
 
 // adapted from boost::reverse_lock
 template<typename Lock>
@@ -1293,18 +1351,20 @@ class MemoryPool {
 
     std::mutex    mutex;
     const size_t  element_size;
-    size_t        count;
+    size_t        count = 0;
     size_t        used  = 0;
     char         *pool  = NULL;
     Chunk        *first = NULL;
     MemoryPool   *next  = NULL; // next pool
+    int           index = 0;    // index in pool chain
 
 public:
 
-    // allocate a pool containing CNT elements of SZ bytes each
-    MemoryPool(size_t sz, size_t cnt);
-    
+    MemoryPool(size_t sz) : element_size(sz) {}
     ~MemoryPool();
+
+    // allocate a pool containing CNT elements
+    size_t create(size_t cnt);
 
     size_t getCount() const { return count; }
     size_t getUsed() const { return used; }

@@ -119,7 +119,7 @@ static const std::wstring& getDataDir()
     return str;
 }
 
-static void ReportWin32Err1(const char *msg, DWORD dwLastError, const char* file, int line)
+void ReportWin32Err1(const char *msg, DWORD dwLastError, const char* file, int line)
 {
     if (dwLastError == 0)
         return;                 // Don't want to see a "operation done successfully" error ;-)
@@ -163,16 +163,36 @@ static FARPROC GetModuleAddr(LPCTSTR modName, LPCSTR procName)
     return proc;
 }
 
+#define IF_STR(ARG, NAME) if (ARG == NAME) return #NAME
+
+const char* knownFolderIdToString(REFKNOWNFOLDERID fid)
+{
+    IF_STR(fid, FOLDERID_Desktop);
+    else IF_STR(fid, FOLDERID_Downloads);
+    else IF_STR(fid, FOLDERID_SavedGames);
+    else return "FOLDERID_Unknown";
+}
+
+const char* csidlToString(int fid)
+{
+    switch (fid)
+    {
+        CASE_STR(CSIDL_PERSONAL);
+        CASE_STR(CSIDL_DESKTOPDIRECTORY);
+    }
+    return "CSIDL_Unknown";
+}
+
 std::wstring getKnownPath(REFKNOWNFOLDERID fid)
 {
-    typedef HRESULT (WINAPI *pfnSHGetKnownFolderPath)(
+    typedef HRESULT (WINAPI *fnSHGetKnownFolderPath)(
         _In_      REFKNOWNFOLDERID rfid,
         _In_      DWORD dwFlags,
         _In_opt_  HANDLE hToken,
         _Out_     PWSTR *ppszPath);
 
-    static pfnSHGetKnownFolderPath pSHGetKnownFolderPath = 
-        (pfnSHGetKnownFolderPath) GetModuleAddr(L"shell32.dll", "SHGetKnownFolderPath");
+    static fnSHGetKnownFolderPath pSHGetKnownFolderPath = 
+        (fnSHGetKnownFolderPath) GetModuleAddr(L"shell32.dll", "SHGetKnownFolderPath");
 
     if (pSHGetKnownFolderPath)
     {
@@ -180,10 +200,14 @@ std::wstring getKnownPath(REFKNOWNFOLDERID fid)
         if (pSHGetKnownFolderPath(fid, 0, NULL, &path) == S_OK)
             return path;
         else
-            ReportWin32Err("SHGetKnownFolderPath", GetLastError());
+            ReportWin32Err(str_format("SHGetKnownFolderPath(%s)", knownFolderIdToString(fid)).c_str(),
+                           GetLastError());
+    }
+    else
+    {
+        ReportWin32("SHGetKnownFolderPath not found, falling back on SHGetFolderPath");
     }
     
-    ReportWin32("SHGetKnownFolderPath not found, falling back on SHGetFolderPath");
     int csidl = CSIDL_PERSONAL;
     if (fid == FOLDERID_Downloads || fid == FOLDERID_Desktop)
         csidl = CSIDL_DESKTOPDIRECTORY;
@@ -193,7 +217,7 @@ std::wstring getKnownPath(REFKNOWNFOLDERID fid)
     if (SUCCEEDED(res))
         return szPath;
 
-    ReportWin32Err("SHGetFolderPath", res);
+    ReportWin32Err(str_format("SHGetFolderPath(%s)", csidlToString(csidl)).c_str(), res);
     return std::wstring();
 }
 
@@ -623,7 +647,7 @@ void printModulesStack(CONTEXT *ctx)
                     "ntdll", "kernel", "shell32", "dbghelp",
                     "msvc",
                     "opengl", "glew", "glu", "ddraw",
-                    "sdl2", "openal", "zlib",
+                    "sdl2", "openal", "zlib", "freetype", "curl",
                     "ogl", // nvoglv32.dll and atioglxx.dll
                     "igd", // intel drivers
                     "steam",
@@ -796,6 +820,11 @@ string os_get_platform_info()
     
     return str_format("Windows %s %dbit (NT %d.%d build %d) %s", name, bitness,
                       major, minor, osvi.dwBuildNumber, locale.c_str());
+}
+
+int os_get_system_ram()
+{
+    return SDL_GetSystemRAM();
 }
 
 int os_init()

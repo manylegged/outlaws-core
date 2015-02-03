@@ -68,13 +68,14 @@ void OLG_OnEvent(const struct OLEvent* event);
 void OLG_OnQuit(void);
 
 // called when the application window is closed - like OnQuit but more gracefull
-void OLG_OnClose(void);
+// return 1 if already closing, 0 if just started
+int OLG_OnClose(void);
 
 // init, process args. Return 1 if create window and interactive, 0 if headless mode
 int OLG_Init(int argc, const char** argv);
 
-// init opengl, return NULL if supported or error message if not
-const char* OLG_InitGL(void);
+// init opengl, return 1 if initialized, 0 if failed.
+int OLG_InitGL(const char **error);
 
 // called when window manager changes full screen state
 void OLG_SetFullscreenPref(int enabled);
@@ -131,14 +132,17 @@ const char* OL_GetPlatformDateInfo(void);
 // open default web browser to selected url
 int OL_OpenWebBrowser(const char* url);
 
-// quit gracefully
-void OL_DoQuit(void);
+// quit gracefully, return 1 if already trying to quit
+int OL_DoQuit(void);
 
 // request that log be uploaded when game is shutdown
-void OL_ScheduleUploadLog(void);
+void OL_ScheduleUploadLog(const char* reason);
 
 // read string from clipboard (may return null)
 const char* OL_ReadClipboard(void);
+
+// write string to clipboard
+void OL_WriteClipboard(const char* txt);
 
 // move cursor
 void OL_WarpCursorPosition(float x, float y);
@@ -151,11 +155,7 @@ void OL_Present(void);
 // get window size is pixels and points (for retina displays)
 void OL_GetWindowSize(float *pixelWidth, float *pixelHeight, float *pointWidth, float *pointHeight);
 
-// get scale factor of windowing system
-float OL_GetBackingScaleFactor(void);
-
-// get scale factor of game window (may be different than GetBackingScaleFactor if game window is
-// on a non-retina display attached to a retina laptop, for example)
+// get scale factor of game window
 float OL_GetCurrentBackingScaleFactor(void);
 
 // toggle fullscreeen mode

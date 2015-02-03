@@ -78,6 +78,11 @@ inline void ReportMessagef(const char *format, ...)
 #define ASSERT_FAILED(X, Y, ...) OLG_OnAssertFailed(__FILE__, __LINE__, __func__, (X), (Y), ## __VA_ARGS__)
 #define ASSERT(X) (__builtin_expect(!(X), 0) ? ASSERT_FAILED(#X, "") : 0)
 #define ASSERTF(X, Y, ...) (__builtin_expect(!(X), 0) ? ASSERT_FAILED(#X, Y, __VA_ARGS__) : 0)
+#define ASSERT_(X, FL, LN, FN, Y, ...) (__builtin_expect(!(X), 0) ? OLG_OnAssertFailed(FL, LN, FN, #X, (Y), ## __VA_ARGS__) : 0)
+
+#define assert_eql(A, B) ASSERTF(A == B, "'%s' != '%s'", str_tocstr(A), str_tocstr(B))
+
+#define CASE_STR(X) case X: return #X
 
 #if defined(DEBUG) || defined(DEVELOP)
 #  define WARN(X) ReportMessagef X

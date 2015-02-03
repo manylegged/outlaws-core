@@ -55,7 +55,7 @@ private:
     friend struct ShaderParticles;
 
     vector<Particle>        m_vertices;
-    IndexBuffer<uint>       m_ibo;
+    IndexBuffer             m_ibo;
     VertexBuffer<Particle>  m_vbo;
     int                     m_addFirst = 0;
     int                     m_addPos = 0;
