@@ -29,6 +29,10 @@
 
 #include "Shaders.h"
 #include "Unicode.h"
+#include "Sound.h"
+
+static DEFINE_CVAR(float, kScrollbarWidth, 25.f);
+DEFINE_CVAR(float2, kButtonPad, float2(4.f));
 
 bool ButtonBase::HandleEvent(const Event* event, bool* isActivate, bool* isPress)
 {
@@ -75,17 +79,6 @@ bool ButtonBase::HandleEvent(const Event* event, bool* isActivate, bool* isPress
         {
             pressed = false;
         }
-    }
-    return handled;
-}
-
-bool ToggleButton::HandleEvent(const Event* event)
-{
-    bool isActivate = false;
-    bool handled = ButtonBase::HandleEvent(event, &isActivate);
-    if (handled && isActivate)
-    {
-        enabled = !enabled;
     }
     return handled;
 }
@@ -218,6 +211,15 @@ void TextInputBase::setText(const char* text, bool setSize)
     {
         sizeChars = int2(longestLine + 1, lines.size());
     }
+}
+
+void TextInputBase::setLines(const vector<string> &lns)
+{
+    std::lock_guard<std::recursive_mutex> l(mutex);
+    lines.clear();
+    vec_extend(lines, lns);
+
+    cursor = int2(lines[lines.size()-1].size(), lines.size()-1);
 }
 
 static void cursor_move_utf8(const string& line, int2& cursor, int adjust)
@@ -450,7 +452,7 @@ void TextInputBase::popText(int chars)
 
 void TextInputBase::pushText(const char *txt, int linesback)
 {
-    vector<string> nlines = str_split(str_word_wrap(txt, sizeChars.x), '\n');
+    vector<string> nlines = str_split('\n', str_word_wrap(txt, sizeChars.x));
     
     std::lock_guard<std::recursive_mutex> l(mutex);
 
@@ -467,7 +469,7 @@ void TextInputBase::insertText(const char *txt)
 {
     if (!txt)
         return;
-    vector<string> nlines = str_split(txt, '\n');
+    vector<string> nlines = str_split('\n', txt);
     if (nlines.size() == 0)
         return;
 
@@ -479,6 +481,12 @@ void TextInputBase::insertText(const char *txt)
     cursor.y += nlines.size()-1;
     
     scrollForInput();
+}
+
+float2 TextInputBase::getCharSize() const
+{
+    float2 size = FontStats::get(kMonoFont, GLText::getScaledSize(textSize)).charMaxSize;
+    return size;
 }
 
 
@@ -503,7 +511,7 @@ void TextInputBase::render(const ShaderState &s_)
             longestChars     = lines[i].size();
         }
     }
-    const float charHeight = FontStats::get(kMonoFont, GLText::getScaledSize(textSize)).charMaxSize.y;
+    const float charHeight = getCharSize().y;
     sizeChars.x = max(sizeChars.x, (int)longestChars + 1);
         
     //sizePoints.x = max(sizePoints.x, 2.f * kPadDist + longestPointSize.x);
@@ -511,13 +519,35 @@ void TextInputBase::render(const ShaderState &s_)
 
     const float2 sz = 0.5f * size;
 
+    {
+        DMesh::Handle h(theDMesh());
+        h.mp.tri.color32(active ? activeBGColor : defaultBGColor, alpha);
+        if (h.mp.tri.cur().color&ALPHA_OPAQUE)
+            h.mp.tri.PushRect(position, sz);
+
+        h.mp.line.color32(active ? activeLineColor : defaultLineColor, alpha);
+        if (h.mp.line.cur().color&ALPHA_OPAQUE)
+            h.mp.line.PushRect(position, sz);
+
+        if (lines.size() > sizeChars.y && defaultLineColor)
+        {
+            scrollbar.size = float2(kScrollbarWidth, size.y - kButtonPad.y);
+            scrollbar.position = position + justX(size/2.f) - justX(scrollbar.size.x/2.f + kButtonPad.x);
+            scrollbar.alpha = alpha;
+            scrollbar.first = startChars.y;
+            scrollbar.sfirst = scrollbar.first;
+            scrollbar.lines = sizeChars.y;
+            scrollbar.steps = lines.size();
+            scrollbar.defaultBGColor = defaultBGColor;
+            scrollbar.hoveredFGColor = activeLineColor;
+            scrollbar.defaultFGColor = defaultLineColor;
+            scrollbar.render(h.mp);
+        }
+
+        h.Draw(s);
+    }
+
     s.translate(position);
-
-    const uint bgColor = MultAlphaAXXX(active ? activeBGColor : defaultBGColor, alpha);
-    ShaderUColor::instance().DrawColorRect(s, bgColor, sz);
-
-    const uint lineColor = MultAlphaAXXX(active ? activeLineColor : defaultLineColor, alpha);
-    ShaderUColor::instance().DrawColorLineRect(s, lineColor, sz);
 
     s.translate(float2(-sz.x + kPadDist, sz.y - charHeight - kPadDist));
     s.color32(textColor, alpha);
@@ -568,7 +598,7 @@ void TextInputCommandLine::loadHistory(const char *fname)
 #if WIN32
         sdat = str_replace(sdat, "\r", "");
 #endif
-        commandHistory = str_split(sdat, '\n');
+        commandHistory = str_split('\n', sdat);
     }
     historyIndex = commandHistory.size();
 }
@@ -607,7 +637,7 @@ void TextInputCommandLine::pushCmdOutput(const char *format, ...)
     va_start(vl, format);
     string txt = str_vformat(format, vl);
     va_end(vl);
-    vector<string> nlines = str_split(str_word_wrap(txt, sizeChars.x), '\n');
+    vector<string> nlines = str_split('\n', str_word_wrap(txt, sizeChars.x));
 
     std::lock_guard<std::recursive_mutex> l(mutex);
     lines.insert(lines.end(), nlines.begin(), nlines.end());
@@ -621,10 +651,10 @@ void TextInputCommandLine::pushCmdOutput(const char *format, ...)
 bool TextInputCommandLine::doCommand(const string& line)
 {
     pushHistory(line);
-    const vector<string> expressions = str_split_quoted(line, ';');
+    const vector<string> expressions = str_split_quoted(';', line);
     foreach (const string &expr, expressions)
     {
-        vector<string> args = str_split_quoted(str_strip(expr), ' ');
+        vector<string> args = str_split_quoted(' ', str_strip(expr));
         if (!args.size())
             return false;
         string cmd = str_tolower(args[0]);
@@ -659,7 +689,7 @@ bool TextInputCommandLine::doCommand(const string& line)
 
         DPRINT(CONSOLE, ("-> '%s'", ot.c_str()));
         
-        const vector<string> nlines = str_split(str_word_wrap(ot, sizeChars.x), '\n');
+        const vector<string> nlines = str_split('\n', str_word_wrap(ot, sizeChars.x));
         lines.insert(lines.end(), nlines.begin(), nlines.end());
     }
     pushCmdOutput("");      // prompt
@@ -756,7 +786,7 @@ bool TextInputCommandLine::HandleEvent(const Event* event, bool *textChanged)
             vector<string> options;
             if (start > 0)
             {
-                vector<string> args = str_split(str_strip(line), ' ');
+                vector<string> args = str_split(' ', str_strip(line));
                 if (args.size() >= 1)
                 {
                     const Command *cmd = getCommand(args[0]);
@@ -965,17 +995,23 @@ void OptionButtons::render(ShaderState *s_, const View& view)
 bool OptionSlider::HandleEvent(const Event* event, bool *valueChanged)
 {
     const float2 sz = 0.5f*size;
-    hovered = pressed || intersectPointRectangle(event->pos, position, sz);
+    hovered = pressed || (event->isMouse() && intersectPointRectangle(event->pos, position, sz));
     pressed = (hovered && event->type == Event::MOUSE_DOWN) ||
               (!isDiscrete() && pressed && event->type == Event::MOUSE_DRAGGED);
     
-    bool handled = pressed || (hovered && event->isMouse());
+    const bool handled = pressed || (hovered && event->isMouse());
 
+    const int lasthval = hoveredValue;
     hoveredValue = hovered ? floatToValue(((event->pos.x - position.x) / size.x) + 0.5f) : -1;
+    if (isDiscrete() && lasthval != hoveredValue)
+        globals.sound->OnButtonHover();
 
     if (pressed) {
-        if (valueChanged && (value != hoveredValue))
+        if (valueChanged && (value != hoveredValue)) {
+            if (isDiscrete())
+                globals.sound->OnButtonPress();
             *valueChanged = true;
+        }
         value = hoveredValue;
     }
 
@@ -995,12 +1031,12 @@ void OptionSlider::render(const ShaderState &s_)
         float2 pos = position - justX(sz.x - w);
         for (int i=0; i<values; i++)
         {
-            PushButton(&h.mp.tri, &h.mp.line, pos, float2(w, sz.y) - kButtonPad,
-                       (i == value) ? bg : 0x0,
-                       (i == hoveredValue) ? hoveredLineColor : defaultLineColor,
-                       alpha);
+            const float2 bs = float2(w, sz.y) - kButtonPad;
+            const uint bgc = (i == value) ? bg : 0x0;
+            const uint fgc = (i == hoveredValue) ? hoveredLineColor : defaultLineColor;
+            PushButton(&h.mp.tri, &h.mp.line, pos, bs, bgc, fgc, alpha);
             if (i == value)
-                GLText::Put(s_, pos, GLText::MID_CENTERED, MultAlphaAXXX(kGUIText, alpha), 12, "X");
+                PushButton(&h.mp.tri, &h.mp.line, pos, max(float2(2.f), bs - kButtonPad), fgc, fgc, alpha);
             pos.x += 2.f * w;
         }
         h.Draw(s_);
@@ -1060,12 +1096,12 @@ string OptionEditor::getTxt() const
     }
 }
 
-void OptionEditor::render(const ShaderState &ss, float alpha)
+float2 OptionEditor::render(const ShaderState &ss, float alpha)
 {
     slider.alpha = alpha;
     slider.render(ss);
-    GLText::Put(ss, slider.position + justX(0.5f * slider.size.x + 2.f * kButtonPad.x),
-                    GLText::MID_LEFT, SetAlphaAXXX(kGUIText, alpha), 14, txt);
+    return GLText::Put(ss, slider.position + justX(0.5f * slider.size.x + 2.f * kButtonPad.x),
+                       GLText::MID_LEFT, SetAlphaAXXX(kGUIText, alpha), 14, txt);
 }
 
 bool OptionEditor::HandleEvent(const Event* event, bool* valueChanged)
@@ -1483,6 +1519,7 @@ bool HandleConfirmKey(const Event *event, int* slot, int selected, bool *sawUp,
         *sawUp = false;
         *isConfirm = true;
     }
+    globals.sound->OnButtonPress();
     return true;
 }
 
@@ -1602,11 +1639,12 @@ void ButtonText::renderText(const ShaderState &ss, float2 pos, float width,
 
 void Scrollbar::render(DMesh &mesh) const
 {
-    mesh.line.color(hovered ? kGUIFgActive : kGUIFg, alpha);
-    const float2 pos = steps ? position + justY(size.y/2.f * (1.f - (sfirst + min(sfirst + visible, (float)steps)) / steps)) : position;
-    const float2 rad = float2(size.x, steps ? (min(visible, steps) * size.y / steps) : size.y) / 2.f;
+    mesh.line.color(hovered ? hoveredFGColor : defaultFGColor, alpha);
+    const float2 pos = steps ? position + justY(size.y/2.f * (1.f - (sfirst + min(sfirst + lines, (float)steps)) / steps)) : position;
+    const float2 rad = float2(size.x, max(kScrollbarWidth/2.f,
+                                          steps ? (min(lines, steps) * size.y / steps) : size.y)) / 2.f;
     mesh.line.PushRect(pos, rad);
-    mesh.tri.color(pressed ? kGUIBgActive : kGUIBg, alpha);
+    mesh.tri.color(pressed ? pressedBGColor : defaultBGColor, alpha);
     mesh.tri.PushRect(pos, rad);
 }
 
@@ -1615,15 +1653,15 @@ bool Scrollbar::HandleEvent(const Event *event)
     hovered = intersectPointRectangle(event->pos, position, size/2.f);
     if (steps == 0) {
         first = 0;
-        visible = 0;
+        lines = 0;
         hovered = false;
         pressed = false;
         sfirst = 0.f;
         return false;
     }
-    const int maxfirst = steps - min(visible, steps);
+    const int maxfirst = steps - min(lines, steps);
     const bool parentHovered = (!parent || parent->hovered || hovered);
-    const int page = min(1, visible-1);
+    const int page = min(1, lines-1);
 
     if (parentHovered)
     {
@@ -1661,7 +1699,7 @@ bool Scrollbar::HandleEvent(const Event *event)
     if (!(hovered && event->type == Event::MOUSE_DOWN))
         return false;
     const float2 pos = position + justY(size.y/2.f * (1.f - float(first + last()) / steps));
-    const float2 rad = float2(size.x, steps ? (min(visible, steps) * size.y / steps) : size.y) / 2.f;
+    const float2 rad = float2(size.x, steps ? (min(lines, steps) * size.y / steps) : size.y) / 2.f;
     if (intersectPointRectangle(event->pos, pos, rad)) {
         pressed = true;         // start dragging thumb
     } else {
@@ -1672,8 +1710,6 @@ bool Scrollbar::HandleEvent(const Event *event)
     return true;
 }
 
-static DEFINE_CVAR(float, kScrollbarWidth, 25.f);
-
 void ButtonWindow::render(const ShaderState &ss)
 {
     DMesh::Handle h(theDMesh());
@@ -1682,17 +1718,20 @@ void ButtonWindow::render(const ShaderState &ss)
     h.mp.tri.color(kGUIBg, alpha / 2.f);
     h.mp.tri.PushRect(position, size/2.f);
 
+    scrollbar.steps = (buttons.size() + (dims.x - 1)) / dims.x;
+    scrollbar.lines = dims.y;
+    if (scrollbar.first >= scrollbar.steps)
+        scrollbar.first = 0;
+    
     const int    first = scrollbar.first * dims.x;
     const int    last  = min(scrollbar.last() * dims.x, (int)buttons.size());
     const bool   sbvis = (first != 0 || last != buttons.size());
     const float  sw    = sbvis ? kScrollbarWidth : 0.f;
     const float2 bsize = size - kButtonPad;
 
-    scrollbar.steps = (buttons.size() + (dims.x - 1)) / dims.x;
     if (buttons.size())
     {
         const float2 bs = float2((bsize.x - sw), bsize.y) / float2(dims);
-        scrollbar.visible = dims.y;
         float2 pos = position - flipY(bsize/2.f) + justX(bs.x / 2.f);
         const float posx = pos.x;
         for (int i=scrollbar.first; i<scrollbar.last(); i++)

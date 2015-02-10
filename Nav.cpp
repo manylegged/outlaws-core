@@ -282,7 +282,7 @@ bool sNav::tryRotateForAccel(float2 accel)
     if (!kNavThrustWhileTurning || dotAngles(destAngle, state.angle))
         moversDisable();
     action.angAccel = moversForAngAccel(angAccel, true);
-    return false;
+    return action.angAccel == 0.f;
 }
 
 // get the action for this timestep - call every timestep/frame

@@ -4,7 +4,7 @@
 #import "BasicOpenGLView.h"
 #include <execinfo.h>
 
-#include "sdl_inc.h"
+#include "../sdl_os/sdl_inc.h"
 #include "Outlaws.h"
 #include "posix.h"
 

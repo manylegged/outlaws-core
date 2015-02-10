@@ -34,6 +34,10 @@
 #define ASSERT_MAIN_THREAD()
 #endif
 
+template class TriMesh<VertexPosColor>;
+template class LineMesh<VertexPosColor>;
+template class MeshPair<VertexPosColor, VertexPosColor>;
+
 bool supports_ARB_Framebuffer_object = false;
 
 static const uint kDebugFrames = 10;
@@ -510,6 +514,11 @@ ShaderProgramBase::ShaderProgramBase()
 {
 }
 
+ShaderProgramBase::~ShaderProgramBase()
+{
+    reset(); 
+}
+
 GLuint ShaderProgramBase::createShader(const char* txt, GLenum type) const
 {
     GLuint idx = glCreateShader(type);
@@ -825,6 +834,8 @@ void PushRect(TriMesh<VertexPosColor>* triP, LineMesh<VertexPosColor>* lineP, fl
 
 void fadeFullScreen(const ShaderState &s_, const View& view, uint color, float alpha)
 {
+    if (alpha < epsilon)
+        return;
     glDepthMask(GL_FALSE);
     glDisable(GL_DEPTH_TEST);
     ShaderState ss = s_;
@@ -859,6 +870,30 @@ void sexyFillScreen(const ShaderState &ss, const View& view, uint color0, uint c
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_TRUE);
 }    
+
+static DEFINE_CVAR(float, kSpinnerRate, M_PI/2.f);
+
+void renderLoadingSpinner(LineMesh<VertexPosColor> &mesh, float2 pos, float2 size, float alpha, float progress)
+{
+    const float ang = kSpinnerRate * globals.renderTime + M_TAOf * progress;
+    const float2 rad = float2(min_dim(size) * 0.4f, 0.f);
+    mesh.color(0xffffff, 0.5f * alpha);
+    mesh.PushTri(pos + rotate(rad, ang),
+                 pos + rotate(rad, ang+M_TAOf/3.f),
+                 pos + rotate(rad, ang+2.f*M_TAOf/3.f));
+}
+
+void renderLoadingSpinner(ShaderState ss, float2 pos, float2 size, float alpha, float progress)
+{
+    const float ang = kSpinnerRate * globals.renderTime + M_TAOf * progress;
+    const float2 rad = float2(min_dim(size) * 0.4f, 0.f);
+    ss.color(0xffffff, 0.5f * alpha);
+    ShaderUColor::instance().DrawLineTri(ss,
+                                         pos + rotate(rad, ang),
+                                         pos + rotate(rad, ang+M_TAOf/3.f),
+                                         pos + rotate(rad, ang+2.f*M_TAOf/3.f));
+}
+
 
 
 void PostProc::BindWriteFramebuffer()
@@ -992,7 +1027,8 @@ ShaderState View::getWorldShaderState() const
     const float fovy   = M_PI_2f;
     const float aspect = sizePoints.x / sizePoints.y;
     const float dist   = s.y;
-    const float mznear = max(1.f, dist - 10.f);
+    // const float mznear = max(1.f, dist - 10.f);
+    const float mznear = 1.f;
     const float mzfar  = dist + clamp(zfar, 5.f, 10000.f);
 
     const glm::mat4 view = glm::lookAt(float3(position, dist),

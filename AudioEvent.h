@@ -34,21 +34,14 @@
 using cAudio::cAudioMutex;
 using cAudio::cAudioMutexBasicLock;
 
-#define AUDIO_FLAGS(F)                               \
-    F(STREAM,      1<<0)                             \
-    F(LOOP,        1<<1)                             \
-    F(ROUND_ROBIN, 1<<2)                             \
-    F(MUSIC,       1<<3)                             \
-    F(CROSSFADE,   1<<4)                             \
-    F(CLUSTER,     1<<5)                             \
-    
-
-DEFINE_ENUM(uint, EnumAudioFlags, AUDIO_FLAGS);
+struct EventDescription;
+struct GameZone;
 
 static const int kStreamSources = 2;
-static DEFINE_CVAR(int, kSoundSources, 32 - kStreamSources);
+static DEFINE_CVAR(int, kSoundSources, 64 - kStreamSources);
 static DEFINE_CVAR(float, kSpeedOfSound, 5000.f);
 static DEFINE_CVAR(float, kDopplerFactor, 1.f);
+static DEFINE_CVAR(float, kSound3DVolumeCull, 0.1f);
 
 inline cAudio::cVector3 c3(float2 v)
 {
@@ -95,7 +88,7 @@ static string sourceToString(cAudio::IAudioSource *src)
     return str;
 }
 
-class AudioAllocator : public cAudio::ILogReceiver {
+class AudioAllocator final : public cAudio::ILogReceiver {
 
     struct SourceData {
         cAudio::IAudioSource* source;
@@ -154,6 +147,11 @@ public:
         m_mgr->setSpeedOfSound(kSpeedOfSound);
         m_mgr->setDopplerFactor(kDopplerFactor);
         mutex = m_mgr->getMutex();
+
+        cAudio::IListener *lst = m_mgr->getListener();
+        lst->setUpVector(cAudio::cVector3(0.f, 1.f, 0.f));
+        lst->setDirection(cAudio::cVector3(0.f, 0.f, -1.f));
+
         return true;
     }
 
@@ -186,7 +184,6 @@ public:
         lst->setPosition(c3(pos));
         lst->setVelocity(c3(vel));
         // lst->setDirection(cAudio::cVector3(0.f, 0.f, 1.f));
-        lst->setDirection(cAudio::cVector3(0.f, 1.f, 0.f));
         m_lsnrPos = pos;
     }
 
@@ -352,7 +349,7 @@ public:
             const char* path = OL_PathForFile(fname.c_str(), "r");
             buf = m_mgr->createBuffer(path);
             if (!buf) {
-                cAudio::getLogger()->logError("Allocator", str_format("Failed to load sound load '%s'", path).c_str());
+                cAudio::getLogger()->logError("Allocator", str_format("Failed to load sound '%s'", path).c_str());
             }
         }
         return buf;
@@ -360,89 +357,15 @@ public:
    
 };
 
-// loaded per-event type data
-struct EventDescription {
+// layered virtual event handle
+struct SoundEvent final : public Watchable, public cAudio::ISourceEventHandler {
 
-    enum : EnumAudioFlags::Type { AUDIO_FLAGS(SERIAL_TO_ENUM) };
-
-    // read from audio.lua
-    vector< vector<lstring> >  samples;
-    float          volume         = 1.0;
-    float          pitch          = 1.0;
-    float          pitchRandomize = 0.f;
-    EnumAudioFlags flags;
-    float          rolloff  = 1.f;
-    float          minDist  = 1.f;
-    float          maxDist  = 9999999999.f;
-    int            priority = 0;
-    float2         delay;
-
-    lstring                    name;
-
-    mutable uint               m_index = 0;
-
-    void advance(int delta) const
-    {
-        if (samples.empty())
-            return;
-        const uint tracks = samples[0].size();
-        if (tracks <= 1) {
-            m_index = 0;
-        } else if (flags&EventDescription::ROUND_ROBIN) {
-            m_index = (m_index + delta) % tracks;
-        } else {
-            const uint last = m_index;
-            do {
-                m_index = randrange(0, tracks);
-            } while (m_index == last);
-        }
-    }
-
-    static EventDescription &getDefault()
-    {
-        static EventDescription def(false);
-        return def;
-    }
-
-    EventDescription(bool usedef = true)
-    {
-        if (usedef)
-            *this = getDefault();
-    }
-
-    uint getSampleCount() const
-    {
-        uint count = 0;
-        foreach (const auto &x, samples)
-            count += x.size();
-        return count;
-    }
-    
-    typedef int VisitEnabled;
-
-    template <typename V>
-    bool accept(V& vis)
-    {
-        return (vis.VISIT(samples) &&
-                vis.VISIT(volume) &&
-                vis.VISIT(pitch) &&
-                vis.VISIT(pitchRandomize) &&
-                vis.VISIT(rolloff) &&
-                vis.VISIT(minDist) &&
-                vis.VISIT(maxDist) &&
-                vis.VISIT(flags) &&
-                vis.VISIT(delay) &&
-                vis.VISIT(priority));
-    }
-};
-
-
-// lightweight handle to a single playable sample
-struct SoundLayer : public cAudio::ISourceEventHandler {
+    GameZone* zone = NULL;
 
 private:
-    const EventDescription* m_se     = NULL;
-    uint                    m_layer  = 0;
+    const EventDescription* m_se = NULL;
+    float2                  m_pos;
+    float2                  m_vel;
     float                   m_volume = 1.f;
     float                   m_pitch  = 1.f;
     float                   m_offset = 0.f;
@@ -451,18 +374,18 @@ private:
     cAudio::IAudioSource*   m_source = NULL;
     AudioAllocator*         m_allocator = NULL;
 
-    const vector<lstring> &getSamples() const { return m_se->samples[m_layer]; }
+    const vector<lstring> &getSamples() const { return m_se->samples; }
     lstring getSample() const { return getSamples()[m_se->m_index]; }
+    
+public:
 
-public: 
     cAudio::IAudioSource *prepare(AudioAllocator *alloc, float gain3d=1.f)
     {
         if (m_source)
             return m_source;
-        if (getSamples().empty())
+        if (!m_se || getSamples().empty())
             return NULL;
-        const float vol = gain3d * m_se->volume * m_volume;
-        if (vol < epsilon)
+        if ((m_se->flags&EventDescription::CULL3D_VOL) && (gain3d * m_se->volume < kSound3DVolumeCull))
             return NULL;
 
         m_se->m_index = min(m_se->m_index, (uint)getSamples().size()-1);
@@ -476,6 +399,7 @@ public:
                 return NULL;
             }
         } else {
+            const float vol = gain3d * m_se->volume * m_volume;
             m_source = alloc->getSource(vol, m_se->priority);
             if (!m_source)
                 return NULL;
@@ -522,7 +446,21 @@ private:
 
 public:
 
-    void setIndex(int index) { m_se->m_index = index; }
+    SoundEvent() {}
+    SoundEvent(const EventDescription* se) : m_se(se) { }
+    ~SoundEvent() { stop(); }
+
+    SoundEvent& operator=(const SoundEvent& o)
+    {
+        // fixme
+        m_se = o.m_se;
+        m_pos = o.m_pos;
+        m_vel = o.m_vel;
+        zone = o.zone;
+        return *this;
+    }
+
+    void setIndex(uint index) { m_se->m_index = index; }
     uint getIndex() const { return m_se->m_index; }
 
     void advance(int delta)
@@ -530,12 +468,7 @@ public:
         m_se->advance(delta);
     }
 
-    SoundLayer() {}
-    SoundLayer(const EventDescription* se, uint layer) : m_se(se), m_layer(layer) {}
-    ~SoundLayer()
-    {
-        stop();
-    }
+    const EventDescription &getDesc() const { return *m_se; }
 
     void setVolume(float v)
     {
@@ -573,15 +506,20 @@ public:
         if (m_source)
             m_offset = m_source->getCurrentAudioTime();
     }
+    
+    bool  isValid() const { return m_se != NULL; }
 
+    void   setPos(float2 p) { m_pos = p; }
+    void   setVel(float2 v) { m_vel = v; }
+    float2 getPos() const { return m_pos; }
+    float2 getVel() const { return m_vel; }
+   
     float getOffset() const { return m_offset; }
     float getVolume() const { return m_volume; }
     float getPitch()  const { return m_pitch; }
     bool  isLoop()    const { return m_loop; }
-    bool  isValid()   const { return m_se != NULL; }
     bool  isPlaying() const { return m_source && m_source->isPlaying(); }
     bool  isRelative() const { return m_relative; }
-    const EventDescription& getDescription() const { return *m_se; }
 
     void play2d(AudioAllocator *alloc)
     {
@@ -597,18 +535,18 @@ public:
         }
     }
 
-    void play3d(AudioAllocator *alloc, float2 pos, float2 vel)
+    void play3d(AudioAllocator *alloc)
     {
-        const float gain3d = alloc->calculateGain(pos, m_se->minDist, m_se->maxDist, m_se->rolloff);
+        const float gain3d = alloc->calculateGain(m_pos, m_se->minDist, m_se->maxDist, m_se->rolloff);
 
         if (prepare(alloc, gain3d)) 
         {
             m_relative = false;
-            m_source->setVelocity(c3(vel));
+            m_source->setVelocity(c3(m_vel));
             m_source->setMinDistance(m_se->minDist);
             m_source->setMaxAttenuationDistance(m_se->maxDist);
             m_source->setRolloffFactor(m_se->rolloff);
-            m_source->play3d(c3(pos), 1.f, (m_se->flags&EventDescription::LOOP) || m_loop);
+            m_source->play3d(c3(m_pos), 1.f, (m_se->flags&EventDescription::LOOP) || m_loop);
             if (m_source->getBuffer() && m_source->getBuffer()->getChannels() == 2) {
                 DPRINT(SOUND, ("Warning! Stereo sample %s:%d:%s does not support spatialization",
                                m_se->name.c_str(), m_se->m_index, getSample().c_str()));
@@ -628,128 +566,6 @@ public:
                 m_source = NULL;
             }
         }
-    }
-};
-
-static const uint kMaxSoundLayers = 3;
-
-struct GameZone;
-
-// layered virtual event handle
-struct SoundEvent : public Watchable {
-
-private:
-    const EventDescription*            m_se     = NULL;
-    float2                             m_pos;
-    float2                             m_vel;
-    SoundLayer                         m_layers[kMaxSoundLayers];
-    uint                               m_layerCount = 0;
-
-public:
-
-    GameZone* zone = NULL;
-
-    void setDescription(const EventDescription* se)
-    {
-        m_se = se;
-        if (se) {
-            m_layerCount = min((uint)se->samples.size(), kMaxSoundLayers);
-            for (uint i=0; i<m_layerCount; i++)
-                m_layers[i] = SoundLayer(se, i);
-        } else {
-            m_layerCount = 0;
-        }
-    }
-
-    SoundEvent() {}
-    SoundEvent(const EventDescription* se) { setDescription(se); }
-
-    SoundEvent& operator=(const SoundEvent& o)
-    {
-        setDescription(o.m_se);
-        m_pos = o.m_pos;
-        m_vel = o.m_vel;
-        zone = o.zone;
-        return *this;
-    }
-
-    uint getLayerCount() const { return m_layerCount; }
-    SoundLayer& getLayer(uint i) { return m_layers[i]; }
-    const EventDescription &getDescription() const { return *m_se; }
-
-    void setVolume(float v, int i) { m_layers[i].setVolume(v); }
-    void setVolume(float v)
-    {
-        for (uint i=0; i<m_layerCount; i++)
-            m_layers[i].setVolume(v);
-    }
-
-    void setOffset(float s)
-    {
-        for (uint i=0; i<m_layerCount; i++)
-            m_layers[i].setOffset(s);
-    }
-
-    void setLoop(bool loop)
-    {
-        for (uint i=0; i<m_layerCount; i++)
-            m_layers[i].setLoop(loop);
-    }
-    
-    void setPitch(float v, int i=-1)
-    {
-        if (i >= 0)
-            m_layers[i].setPitch(v);
-        else
-            foreach (SoundLayer& sl, m_layers)
-                sl.setPitch(v);
-    }
-
-    float getVolume() const { return m_layerCount ? m_layers[0].getVolume() : 0.f; }
-    float getOffset() const { return m_layerCount ? m_layers[0].getOffset() : 0.f; }    
-    float getPitch()  const { return m_layerCount ? m_layers[0].getPitch() : 0.f; }
-    float isRelative() const { return m_layerCount ? m_layers[0].isRelative() : 0.f; }
-    bool  isLoop()    const { return m_layerCount && m_layers[0].isLoop(); }
-    bool  isValid()   const { return m_se != NULL; }
-
-    void   setPos(float2 p) { m_pos = p; }
-    void   setVel(float2 v) { m_vel = v; }
-    float2 getPos() const { return m_pos; }
-    float2 getVel() const { return m_vel; }
-   
-    bool isPlaying() const 
-    {
-        foreach (const SoundLayer& sl, m_layers)
-            if (sl.isPlaying())
-                return true;
-        return false;
-    }
-
-    void play2d(AudioAllocator *alloc)
-    {
-        if (!m_se || m_se->samples.empty() || m_se->volume < epsilon)
-            return;
-        for (uint i=0; i<m_layerCount; i++)
-            m_layers[i].play2d(alloc);
-    }
-    
-    void play3d(AudioAllocator *alloc)
-    {
-        if (!m_se || m_se->samples.empty() || m_se->volume < epsilon)
-            return;
-        for (uint i=0; i<m_layerCount; i++)
-            m_layers[i].play3d(alloc, m_pos, m_vel);
-    }
-
-    void advance(int delta)
-    {
-        m_se->advance(delta);
-    }
-
-    void stop()
-    {
-        for (uint i=0; i<m_layerCount; i++)
-            m_layers[i].stop();
     }
 };
 

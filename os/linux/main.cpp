@@ -89,7 +89,18 @@ int OL_FileDirectoryPathExists(const char* fname)
     return fileDirectoryPathExists(path);
 }
 
-
+int OL_DirectoryExists(const char *fname)
+{
+    const char *path = OL_PathForFile(fname, "r");
+    struct stat buf;
+    if (stat(path, &buf)) {
+        if (errno == ENOENT)
+            return false;
+        ReportLinux("Error stating '%s': '%s'", fname, strerror(errno));
+        return false;
+    }
+    return S_ISDIR(buf.st_mode);
+}
 
 const char *OL_PathForFile(const char *fname, const char* flags)
 {

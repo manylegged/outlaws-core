@@ -31,8 +31,8 @@
 
 struct ShaderState;
 
-static const float  kPadDist   = 2;
-static const float2 kButtonPad = float2(4.f);
+static const float kPadDist = 2;
+extern float2      kButtonPad;
 
 #define COLOR_TARGET  0xff3a3c
 #define COLOR_TEXT_BG 0x101010
@@ -49,6 +49,11 @@ static const uint kGUIText     = 0xfff0f0f0;
 static const uint kGUITextLow  = 0xffa0a0a0;
 static const uint kGUIInactive = 0xa0a0a0a0;
 static const uint kGUIToolBg   = 0xc0000000;
+
+static const float kOverlayFGAlpha    = 0.8f;
+static const float kOverlayBGAlpha    = 0.6f;
+#define kOverlayBG       (ALPHAF(kOverlayBGAlpha)|COLOR_BLACK)
+#define kOverlayActiveBG (ALPHAF(kOverlayFGAlpha)|COLOR_BLACK)
 
 struct WidgetBase {
     float2      position;       // center of button
@@ -161,11 +166,24 @@ struct Button : public ButtonBase
 
 };
 
-struct ToggleButton : public Button {
 
-    bool enabled = false;
+struct Scrollbar : public WidgetBase {
 
-    bool HandleEvent(const Event* event);
+    int         first   = 0;    // first visible item
+    int         lines   = 0;    // number of visible items
+    int         steps   = 0;    // total items
+    bool        pressed = false; // is actively dragging thumb?
+    float       sfirst  = 0.f;  // float version of first for scrolling
+    WidgetBase *parent  = NULL;
+
+    uint        defaultBGColor = kGUIBg;
+    uint        pressedBGColor = kGUIBgActive;
+    uint        defaultFGColor = kGUIFg;
+    uint        hoveredFGColor = kGUIFgActive;
+
+    int last() const { return min(first + lines, steps); }
+    void render(DMesh &mesh) const;
+    bool HandleEvent(const Event *event);
 };
 
 
@@ -175,6 +193,7 @@ struct TextInputBase : public WidgetBase {
     std::recursive_mutex mutex; // for lines
     float                textSize  = 12;
     bool                 fixedSize = false;
+    Scrollbar            scrollbar;
     
     int2 sizeChars = int2(80, 2);
     int2 startChars;
@@ -208,6 +227,7 @@ struct TextInputBase : public WidgetBase {
     }
 
     void setText(const char* text, bool setSize=false);
+    void setLines(const vector<string> &lines);
 
     bool HandleEvent(const Event* event, bool *textChanged=NULL);
 
@@ -221,6 +241,7 @@ struct TextInputBase : public WidgetBase {
         startChars.y = max(0, (int)lines.size() - sizeChars.y);
     }
 
+    float2 getCharSize() const;
     int2 getSizeChars() const    { return sizeChars; }
     float2 getSizePoints() const { return size; }
 
@@ -244,7 +265,7 @@ struct TextInputCommandLine : public TextInputBase {
     string                    lastSearch;
     int                       historyIndex = 0;
     std::map<string, Command> commands;
-    string                    prompt;
+    string                    prompt = "^2>^7 ";
     
     static vector<string> comp_help(void* data, const char* name, const char* args)
     {
@@ -257,11 +278,9 @@ struct TextInputCommandLine : public TextInputBase {
         return options;
     }
 
-
     TextInputCommandLine()
     {
         sizeChars.y = 10;
-        prompt = "> ";
 
         registerCommand(helpCmd, comp_help, this, "help", "[command]: list help for specified command, or all commands if unspecified");
         setLineText("");
@@ -462,7 +481,7 @@ struct OptionSlider : public WidgetBase {
 
     float2 getSizePoints() const { return size; }
     float  getValueFloat() const { return (float) value / (values-1); }
-    int    floatToValue(float v) const { return clamp(round_int(v * (values-1)), 0, values-1); }
+    int    floatToValue(float v) const { return clamp(floor_int(v * values), 0, values-1); }
     void   setValueFloat(float v) { value = floatToValue(v); }
 
     bool HandleEvent(const Event* event, bool *valueChanged);
@@ -507,9 +526,9 @@ struct OptionEditor {
 
     void init(Type t, void *v, const char* lbl, const vector<const char*> &tt, float st, float mu, int states);
     
-    OptionEditor(float *f, const char* lbl, const vector<const char*> tt) 
+    OptionEditor(float *f, const char* lbl, float mn, float mx, const vector<const char*> tt) 
     {
-        init(FLOAT, (void*) f, lbl, tt, 0.f, 2.f, 100);
+        init(FLOAT, (void*) f, lbl, tt, mn, mx, 100);
     }
 
     OptionEditor(int *u, const char* lbl, int states, const vector<const char*> tt)
@@ -523,7 +542,7 @@ struct OptionEditor {
     }
 
     string getTxt() const;
-    void render(const ShaderState &ss, float alpha);
+    float2 render(const ShaderState &ss, float alpha);
     bool HandleEvent(const Event* event, bool* valueChanged);
 };
 
@@ -576,7 +595,7 @@ struct ITabInterface {
 
 struct TabWindow : public WidgetBase {
 
-    struct TabButton : public ButtonBase {
+    struct TabButton final : public ButtonBase {
         string         text;
         ITabInterface *interface = NULL;
         int            ident     = -1;
@@ -784,20 +803,6 @@ struct ButtonText {
     void renderText(const ShaderState &ss, float2 pos, float width,
                     GLText::Align align, uint color, float fmin, float fmax,
                     const string& text);
-};
-
-struct Scrollbar : public WidgetBase {
-
-    int  first   = 0;           // first visible item
-    int  visible = 0;           // number of visible items
-    int  steps   = 0;           // total items
-    bool pressed = false;       // is actively dragging thumb?
-    float sfirst = 0.f;         // float version of first for scrolling
-    WidgetBase *parent = NULL;
-
-    int last() const { return min(first + visible, steps); }
-    void render(DMesh &mesh) const;
-    bool HandleEvent(const Event *event);
 };
 
 // scrolling button container

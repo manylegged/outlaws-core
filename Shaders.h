@@ -162,7 +162,7 @@ struct ShaderPosBase : public ShaderProgramBase {
     void DrawCircle(const ShaderState& ss, float radius, int numVerts=32) const;
 };
 
-struct ShaderUColor : public ShaderPosBase, public ShaderBase<ShaderUColor> {
+struct ShaderUColor final : public ShaderPosBase, public ShaderBase<ShaderUColor> {
 
     uint m_colorSlot;
         
@@ -200,7 +200,7 @@ struct ShaderUColor : public ShaderPosBase, public ShaderBase<ShaderUColor> {
     }
 };
 
-struct ShaderIridescent : public ShaderProgramBase, public ShaderBase<ShaderIridescent> {
+struct ShaderIridescent final : public ShaderProgramBase, public ShaderBase<ShaderIridescent> {
 
     int SourceColor0;
     int SourceColor1;
@@ -333,7 +333,7 @@ struct ShaderTextureBase : public ShaderProgramBase {
     void DrawButton(const ShaderState &ss, const OutlawTexture& texture, float2 pos, float2 r) const;
 };
 
-struct ShaderTexture : public ShaderTextureBase, public ShaderBase<ShaderTexture> {
+struct ShaderTexture final : public ShaderTextureBase, public ShaderBase<ShaderTexture> {
 
     uint m_uTexture;
     uint m_uColorSlot;
@@ -365,7 +365,7 @@ struct ShaderTexture : public ShaderTextureBase, public ShaderBase<ShaderTexture
     }
 };
 
-struct ShaderTextureWarp : public ShaderTextureBase, public ShaderBase<ShaderTextureWarp> {
+struct ShaderTextureWarp final : public ShaderTextureBase, public ShaderBase<ShaderTextureWarp> {
 
     GLuint texture1, warpTex, SourceColor, SourceTexCoord, camWorldPos, camWorldSize, time;
 
@@ -406,7 +406,7 @@ struct ShaderTextureWarp : public ShaderTextureBase, public ShaderBase<ShaderTex
     }
 };
 
-struct ShaderTextureHSV : public ShaderTextureBase, public ShaderBase<ShaderTextureHSV> {
+struct ShaderTextureHSV final : public ShaderTextureBase, public ShaderBase<ShaderTextureHSV> {
 
     uint m_uTexture;
     uint m_uColorSlot;
@@ -438,7 +438,7 @@ struct ShaderTextureHSV : public ShaderTextureBase, public ShaderBase<ShaderText
     }
 };
 
-struct ShaderTonemapDither : public ShaderTextureBase, public ShaderBase<ShaderTonemapDither> {
+struct ShaderTonemapDither final : public ShaderTextureBase, public ShaderBase<ShaderTonemapDither> {
 
     uint texture1;
     uint dithertex;
@@ -449,7 +449,7 @@ struct ShaderTonemapDither : public ShaderTextureBase, public ShaderBase<ShaderT
     void UseProgram(const ShaderState &ss, const VertexPosTex *ptr, const OutlawTexture &ot) const;
 };
 
-struct ShaderTonemap : public ShaderTextureBase, public ShaderBase<ShaderTonemap> {
+struct ShaderTonemap final : public ShaderTextureBase, public ShaderBase<ShaderTonemap> {
 
     uint texture1;
     uint SourceTexCoord;
@@ -459,7 +459,7 @@ struct ShaderTonemap : public ShaderTextureBase, public ShaderBase<ShaderTonemap
 };
 
 // seperable gaussian blur
-struct ShaderBlur : public ShaderTextureBase {
+struct ShaderBlur final : public ShaderTextureBase {
 
 private:
     uint usourceTex;
@@ -490,7 +490,7 @@ public:
     static const ShaderBlur &instance(int radius);
 };
 
-struct ShaderColor : public ShaderProgramBase, public ShaderBase<ShaderColor> {
+struct ShaderColor final : public ShaderProgramBase, public ShaderBase<ShaderColor> {
 
     int m_colorSlot;
 
@@ -528,7 +528,7 @@ void MeshPair<T, L>::Handle::Draw(const ShaderState& ss)
     mp.Draw(ss, ShaderColor::instance(), ShaderColor::instance());
 }
 
-struct ShaderColorDither : public ShaderProgramBase, public ShaderBase<ShaderColorDither> {
+struct ShaderColorDither final : public ShaderProgramBase, public ShaderBase<ShaderColorDither> {
 
     int SourceColor, dithertex;
 
@@ -549,7 +549,7 @@ struct ShaderColorDither : public ShaderProgramBase, public ShaderBase<ShaderCol
     }
 };
 
-struct ShaderHsv : public ShaderProgramBase, public ShaderBase<ShaderHsv> {
+struct ShaderHsv final : public ShaderProgramBase, public ShaderBase<ShaderHsv> {
 
     int m_colorSlot;
 
@@ -567,7 +567,7 @@ struct ShaderHsv : public ShaderProgramBase, public ShaderBase<ShaderHsv> {
     }
 };
 
-struct ShaderColorLuma : public ShaderProgramBase, public ShaderBase<ShaderColorLuma> {
+struct ShaderColorLuma final : public ShaderProgramBase, public ShaderBase<ShaderColorLuma> {
 
     int SourceColor, Luma;
 
@@ -579,72 +579,6 @@ struct ShaderColorLuma : public ShaderProgramBase, public ShaderBase<ShaderColor
         UseProgramBase(ss, &ptr->pos, base);
         vertexAttribPointer(SourceColor, &ptr->color, base);
         vertexAttribPointer(Luma, &ptr->luma, base);
-    }
-};
-
-struct ShaderSmoothColor : public ShaderProgramBase, public ShaderBase<ShaderSmoothColor> {
-
-    int m_colorSlot;
-
-    void LoadTheProgram()
-    {
-        LoadProgram("ShaderSmoothColor",
-                    "varying vec4 DestinationColor;\n"
-                    ,
-                    "attribute vec4 SourceColor;\n"
-                    "void main(void) {\n"
-                    "    DestinationColor = SourceColor;\n"
-                    "    gl_Position = Transform * Position;\n"
-                    "}\n"
-                    ,
-                    "void main(void) {\n"
-                    "    gl_FragColor = DestinationColor;\n"
-                    "}\n"
-                    );
-        m_colorSlot = getAttribLocation("SourceColor");
-    }
-
-    template <typename Vtx>
-    void UseProgram(const ShaderState&ss, const Vtx* ptr, const Vtx* base) const
-    {
-        UseProgramBase(ss, &ptr->pos, base);
-        vertexAttribPointer(m_colorSlot, &ptr->color, base);
-    }
-};
-
-struct ShaderNoise : public ShaderProgramBase, public ShaderBase<ShaderNoise> {
-    
-    uint m_colorSlot;
-    uint m_uRandomSeed;
-
-    void LoadTheProgram()
-    {
-        LoadProgram("ShaderNoise",
-                    "varying vec4 DestinationColor;\n"
-                    , 
-                    "attribute vec4 SourceColor;\n"
-                    "void main(void) {\n"
-                    "    DestinationColor = SourceColor;\n"
-                    "    gl_Position = Transform * Position;\n"
-                    "}\n"
-                    ,
-                    "uniform float RandomSeed;\n"
-                    "float rand(vec2 co){\n"
-                    "    return fract(sin(dot(co.xy ,vec2(12.9898,78.233))) * 43758.5453);\n"
-                    "}\n"
-                    "void main(void) {\n"
-                    "    gl_FragColor = DestinationColor * (0.5 + rand(RandomSeed * floor(gl_FragCoord.xy / 4.)));\n"
-                    "}\n"
-                    );
-        m_colorSlot = getAttribLocation("SourceColor");
-        m_uRandomSeed = getUniformLocation("RandomSeed");
-    }
-
-    void UseProgram(const ShaderState &ss, const VertexPosColor* ptr, const VertexPosColor* base) const
-    {
-        UseProgramBase(ss, &ptr->pos, base);
-        vertexAttribPointer(m_colorSlot, &ptr->color, base);
-        glUniform1f(m_uRandomSeed, fmod(globals.renderTime, 1.0));
     }
 };
 

@@ -25,6 +25,11 @@
 #include "StdAfx.h"
 #include "Geometry.h"
 
+template class glm::detail::tvec2<float, glm::defaultp>;
+template class glm::detail::tvec2<int, glm::defaultp>;
+template class glm::detail::tvec3<float, glm::defaultp>;
+template class glm::detail::tvec3<int, glm::defaultp>;
+
 #define MYINF std::numeric_limits<float>::max()
 
 // intersect two circles, returning number of intersections with points in RA and RB
@@ -467,3 +472,62 @@ bool mathRunTests()
     return true;
 }
 
+/////////////////// Rand.h ////////////////////////////////////////////////
+
+int& random_seed()
+{
+    static int seed = 0;
+    return seed;
+}
+
+
+std::mt19937 *&my_random_device()
+{
+// static std::default_random_engine e1;
+    static THREAD_LOCAL std::mt19937 *e1 = NULL;
+    return e1;
+}
+
+
+float2 randpolar_uniform(float minradius, float maxradius) 
+{
+    if (maxradius < epsilon)
+        return float2(0.f);
+    const float r = maxradius - minradius;
+    if (r < epsilon)
+        return randpolar(minradius);
+    float2 pos;
+    do { pos = float2(randrange(-r, r), randrange(-r, r));
+    } while (!intersectPointCircle(pos, float2(0), r));
+    pos += normalize(pos) * minradius;
+    return pos;
+}
+
+// Box-Muller transform
+// adapted from http://en.literateprograms.org/Box-Muller_transform_(C)#chunk def:Apply Box-Muller transform on x, y
+float rand_normal(float mean, float stddev)
+{
+    float n2 = 0.0;
+    int n2_cached = 0;
+    if (!n2_cached)
+    {
+        float x, y, r;
+        do {
+            x = randrange(-1.f, 1.f);
+            y = randrange(-1.f, 1.f);
+            r = x*x + y*y;
+        } while (r == 0.0 || r > 1.0);
+
+        float d = sqrtf(-2.f*logf(r)/r);
+        float n1 = x*d;
+        n2 = y*d;
+        float result = n1*stddev + mean;
+        n2_cached = 1;
+        return result;
+    }
+    else
+    {
+        n2_cached = 0;
+        return n2*stddev + mean;
+    }
+}

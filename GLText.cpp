@@ -31,6 +31,7 @@
 #include "Unicode.h"
 
 static DEFINE_CVAR(float, kTextScaleHeight, IS_TABLET ? 320.f : 720.f);
+DEFINE_CVAR(float2, kAspectMinMax, float2(1.6f, 2.f));
 
 FontStats::FontStats(int ft, float sz) : font(ft), fontSize(sz)
 {
@@ -90,8 +91,9 @@ void GLText::load(const string& str, int font_, float size, float pointSize)
         }
     }
 
-    DPRINT(GUI, ("Rendered string texture %3d chars, %d/%.1f: %3dx%03d@%.fx", 
-                 (int)str.size(), font, size, texture.width, texture.height, texPointSize));
+    // deadlocks!
+    //DPRINT(GUI, ("Rendered string texture %3d chars, %d/%.1f: %3dx%03d@%.fx",
+    //             (int)str.size(), font, size, texture.width, texture.height, texPointSize));
 }
 
 void GLText::render(const ShaderState* s, float2 pos) const
@@ -241,9 +243,6 @@ float2 DrawOutlinedText(const ShaderState &s_, float2 pos, float2 relnorm, uint 
     const int font = tsize > 24 ? kTitleFont : kDefaultFont;
     const GLText* txt = GLText::get(font, GLText::getScaledSize(tsize), str);
     ss.translate(pos - relnorm * txt->getSize());
-    // DrawButton(&ss, 0.5f * txt->getSize(), 0.5f * txt->getSize() + float2(2.f), kOverlayBG, ALPHAF(0.5)|color, 0.5f * alpha);
-    // DrawBox(&ss, 0.5f * txt->getSize(), 0.5f * txt->getSize() + kOutlinePad, kOverlayBG,
-    //         SetAlphaAXXX(color, 0.5f), alpha);
     ss.color(color, alpha);
     txt->render(&ss);
     return txt->getSize() + 2.f * kOutlinePad;

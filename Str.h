@@ -31,7 +31,6 @@
 #define STR_H
 
 #include <string>
-#include <sstream>
 #include <utility>
 #include <cctype>
 
@@ -42,6 +41,14 @@
 #define NOEXCEPT noexcept
 #endif
 #endif
+
+namespace std {
+    extern template class basic_string<char>;
+    extern template class vector<string>;
+    extern template class unordered_set<string>;
+    extern template class lock_guard<mutex>;
+    extern template class lock_guard<recursive_mutex>;
+}
 
 typedef unsigned long long uint64;
 
@@ -62,10 +69,16 @@ private:
             return strings.insert(str).first->c_str();
         }
 
+        const char* intern(std::string&& str)
+        {
+            std::lock_guard<std::mutex> l(mutex);
+            return strings.insert(std::move(str)).first->c_str();
+        }
+
         static Lexicon& instance()
         {
-            static Lexicon l;
-            return l;
+            static Lexicon *l = new Lexicon;
+            return *l;
         }
     };
 
@@ -74,6 +87,7 @@ private:
 public:
     lstring() NOEXCEPT {}
     lstring(const std::string& str) : m_ptr(Lexicon::instance().intern(str)) { }
+    lstring(std::string &&str) NOEXCEPT : m_ptr(Lexicon::instance().intern(str)) {}
     lstring(const char* str)        : m_ptr(str ? Lexicon::instance().intern(str) : NULL) { }
     lstring(const lstring& o) NOEXCEPT : m_ptr(o.m_ptr) {}
 
@@ -128,6 +142,7 @@ inline size_t str_len(long null)              { return 0; }
 inline size_t str_len(const char* str)        { return str ? strlen(str) : 0; }
 inline size_t str_len(const std::string& str) { return str.size(); }
 inline size_t str_len(char chr)               { return 1; }
+inline size_t str_len(lstring str)            { return str_len(str.c_str()); }
 
 template <typename T>
 inline size_t str_find(const std::string &s, const T& v, size_t pos=0) { return s.find(v, pos); }
@@ -280,6 +295,12 @@ inline bool str_endswith(const char* str, const char* pfx)
     return strlen >= pfxlen && str_equals(str+(strlen-pfxlen), pfx);
 }
 
+template <typename S1, typename S2>
+inline bool str_endswith(const S1& s1, const S2& s2)
+{
+    return str_endswith(str_tocstr(s1), str_tocstr(s2));
+}
+
 std::string str_vformat(const char *format, va_list vl) __printflike(1, 0);
 std::string str_format(const char *format, ...)  __printflike(1, 2);
 
@@ -298,7 +319,7 @@ inline std::string str_add_line_numbers(const char* s, int start=1)
 }
 
 template <typename T, typename U>
-inline std::vector<std::string> str_split(const T &s, const U &delim)
+inline std::vector<std::string> str_split(const U &delim, const T &s)
 {
     std::vector<std::string> elems;
     size_t i = 0;
@@ -317,7 +338,7 @@ inline std::vector<std::string> str_split(const T &s, const U &delim)
     return elems;
 }
 
-std::vector<std::string> str_split_quoted(const std::string& line, char token);
+std::vector<std::string> str_split_quoted(char token, const std::string& line);
 
 inline std::string str_tostr(float a) { return str_format("%f", a); }
 inline std::string str_tostr(int a)   { return str_format("%d", a); }
@@ -496,10 +517,13 @@ std::string str_path_standardize(const std::string &str);
 template <typename S>
 inline std::string str_path_join(std::string r, const S &b)
 {
-    if (r.size() && r.back() == '/')
-        r.pop_back();
-    if (str_len(b)) {
-        if (b[0] != '/')
+    const size_t bsz = str_len(b);
+    if (!bsz)
+        return r;
+    if (bsz) {
+        if (b[0] == '/' || (bsz > 1 && b[1] == ':'))
+            return b;
+        if (r.empty() || r.back() != '/')
             r += '/';
         r += b;
     }

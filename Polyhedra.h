@@ -4,7 +4,7 @@
 
 void PushTetrahedron(float2 pos, float rad)
 {
-    static const typename Mesh<Vtx>::IndexType il[] = { 0,1,2, 0,2,3, 0,3,1, 1,2,3 };
+    static const uint il[] = { 0,1,2, 0,2,3, 0,3,1, 1,2,3 };
 
     const double phi     = -0.3398369041921167;
     const double cos_phi = cos(phi);
@@ -48,8 +48,8 @@ void PushCube(float2 pos, float rad)
         angle += angle90;
     }
     
-    static const typename Mesh<Vtx>::IndexType il[] = { 0,1,2,3, 4,5,6,7, 0,1,5,4, 
-                                                        1,2,6,5, 2,3,7,6, 3,0,4,7, };
+    static const uint il[] = { 0,1,2,3, 4,5,6,7, 0,1,5,4, 
+                               1,2,6,5, 2,3,7,6, 3,0,4,7, };
     PushLoops(verts, 8, il, arraySize(il), 4);
 }
 
@@ -94,7 +94,7 @@ void PushDodecahedron(float2 pos, float rad)
         angle += angle72;
     }
 
-    static const typename Mesh<Vtx>::IndexType il[] = {
+    static const uint il[] = {
         0,1,2,3,4, 
         0,1,6,10,5, 1,2,7,11,6, 2,3,8,12,7, 3,4,9,13,8, 4,0,5,14,9,
         15,16,11,6,10, 16,17,12,7,11, 17,18,13,8,12, 18,19,14,9,13, 19,15,10,5,14,
@@ -123,7 +123,7 @@ void PushOctahedron(float2 pos, float rad)
       angle += angle90;
   }
 
-  static const typename Mesh<Vtx>::IndexType il[] = {
+  static const uint il[] = {
       0,1,2, 0,2,3, 0,3,4, 0,4,1, 5,1,2, 5,2,3, 5,3,4, 5,4,1 
   };
 
@@ -158,7 +158,7 @@ void PushIcosahedron(float2 pos, float rad)
         angle += angle72;
     }
 
-    static const typename Mesh<Vtx>::IndexType il[] = {
+    static const uint il[] = {
         0,1,2, 0,2,3, 0,3,4, 0,4,5, 0,5,1, 11,6,7, 11,7,8, 11,8,9, 11,9,10, 11,10,6, 
         1,2,6, 2,3,7, 3,4,8, 4,5,9, 5,1,10, 6,7,2, 7,8,3, 8,9,4, 9,10,5, 10,6,1,
     };

@@ -573,9 +573,20 @@ float OL_FontHeight(int fontName, float size)
 struct Strip {
     TTF_Font    *font;
     int          pixel_width;
+    SDL_Color    color;
     std::string  text;
 };
 
+SDL_Color getQuake3Color(int val)
+{
+    const uint color = OLG_GetQuake3Color(val);
+    SDL_Color sc;
+    sc.r = (color>>16);
+    sc.g = (color>>8)&0xff;
+    sc.b = color&0xff;
+    sc.a = 0xff;
+    return sc;
+}
 
 int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int _font, float maxw, float maxh)
 {
@@ -593,10 +604,16 @@ int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int _font,
     bool last_was_fallback = false;
     int line_pixel_width = 0;
 
+    bool last_was_caret = false;
+    int  color_count = 0;
+
     size_t textlen = SDL_strlen(str);
     const size_t totallen = textlen;
     const char* text = str;
 
+    SDL_Color color;
+    memset(&color, 0xff, sizeof(color));
+    
     // split string up by lines, fallback font
     while (1)
     {
@@ -606,15 +623,30 @@ int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int _font,
 
         int pixel_width, pixel_height;
 
-        if (chr == '\n' || chr == '\0' || chr == UNKNOWN_UNICODE)
+        if (last_was_caret && '0' <= chr && chr <= '9')
         {
-            Strip st = { font, -1, string(&str[strip_start], chr_start - strip_start) };
+            Strip st = { font, 0, color, string(&str[strip_start], chr_start - strip_start - 1) };
+            if (st.text.size()) {
+                TTF_SizeUTF8(font, st.text.c_str(), &st.pixel_width, &pixel_height);
+                strips.push_back(std::move(st));
+            }
+
+            text_pixel_width += st.pixel_width;
+            strip_start = chr_end;
+            
+            last_was_caret = false;
+            color_count++;
+            color = getQuake3Color(chr - '0');
+        }
+        else if (chr == '\n' || chr == '\0' || chr == UNKNOWN_UNICODE)
+        {
+            Strip st = { font, -1, color, string(&str[strip_start], chr_start - strip_start) };
             if (st.text.size())
                 TTF_SizeUTF8(font, st.text.c_str(), &pixel_width, &pixel_height);
             else
                 pixel_width = 0;
             strips.push_back(std::move(st));
-
+            
             text_pixel_width = max(text_pixel_width, line_pixel_width + pixel_width);
             strip_start = chr_end;
             newlines++;
@@ -629,7 +661,7 @@ int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int _font,
                 string strip(&str[strip_start], chr_start - strip_start);
                 TTF_SizeUTF8(font, strip.c_str(), &pixel_width, &pixel_height);
                 line_pixel_width += pixel_width;
-                Strip st = { font, pixel_width, strip };
+                Strip st = { font, pixel_width, color, strip };
                 strips.push_back(std::move(st));
             }
 
@@ -664,13 +696,14 @@ int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int _font,
             }
             else
             {
-                Strip st = { fallback_font, pixel_width, c8 };
+                Strip st = { fallback_font, pixel_width, color, c8 };
                 strips.push_back(std::move(st));
             }
             last_was_fallback = true;
         }
         else
         {
+            last_was_caret = (chr == '^');
             last_was_fallback = false;
         }
     }
@@ -680,9 +713,6 @@ int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int _font,
 
     SDL_Surface *intermediary = SDL_CreateRGBSurface(0, text_pixel_width, text_pixel_height, 32, 0x00ff0000, 0x0000ff00, 0x000000ff, 0xff000000);
 
-    SDL_Color color;
-    memset(&color, 255, sizeof(color));
-
     SDL_Rect dstrect;
     memset(&dstrect, 0, sizeof(dstrect));
 
@@ -690,7 +720,7 @@ int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int _font,
     {
         if (st.text.size())
         {
-            SDL_Surface* initial = TTF_RenderUTF8_Blended(st.font, st.text.c_str(), color);
+            SDL_Surface* initial = TTF_RenderUTF8_Blended(st.font, st.text.c_str(), st.color);
             if (initial)
             {
                 SDL_SetSurfaceBlendMode(initial, SDL_BLENDMODE_NONE);
@@ -703,7 +733,7 @@ int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int _font,
             }
         }
 
-        if (st.pixel_width < 0.f) { 
+        if (st.pixel_width < 0.f) {
             dstrect.y += font_pixel_height;
             dstrect.x = 0;
         } else {
@@ -711,11 +741,15 @@ int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int _font,
         }
     }
 
+    if (tex->texnum)
+        glDeleteTextures(1, &tex->texnum);
     glGenTextures(1, &tex->texnum);
     glBindTexture(GL_TEXTURE_2D, tex->texnum);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE_ALPHA, text_pixel_width, text_pixel_height, 
+
+    const GLint tfmt = color_count ? GL_RGBA : GL_LUMINANCE_ALPHA;
+    glTexImage2D(GL_TEXTURE_2D, 0, tfmt, text_pixel_width, text_pixel_height, 
                  0, GL_BGRA, GL_UNSIGNED_BYTE, intermediary->pixels);
     glReportError();
 

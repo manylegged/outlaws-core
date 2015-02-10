@@ -12,6 +12,9 @@
 
 #include "posix.h"
 
+typedef unsigned int uint;
+#include "Colors.h"
+
 #define ASSERT(X) if (!(X)) OLG_OnAssertFailed(__FILE__, __LINE__, __func__, #X, "")
 
 void LogMessage(NSString *str)
@@ -129,6 +132,13 @@ const char *OL_PathForFile(const char *fname, const char* mode)
     return [pathForFileName(fname, mode) UTF8String];
 }
 
+int OL_DirectoryExists(const char* path)
+{
+    NSString *nspath = pathForFileName(path, "r");
+    BOOL isdir = NO;
+    BOOL exists = [[NSFileManager defaultManager] fileExistsAtPath:nspath isDirectory:&isdir];
+    return exists && isdir;
+}
 
 const char** OL_ListDirectory(const char* path)
 {
@@ -415,33 +425,89 @@ float OL_FontHeight(int fontName, float size)
     return 0.9f * [lm defaultLineHeightForFont: font];
 }
 
-int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int fontName, float maxw, float maxh)
+static NSAttributedString *createColorString(const char* str, NSFont *font, NSColor *color)
 {
-    NSString* aString = [NSString stringWithUTF8String:str];
-    if (!aString || [aString length] == 0) 
+    NSString *astring = [NSString stringWithUTF8String:str];
+    if (!astring)
+    {
+        LogMessage([NSString stringWithFormat:@"Failed to get an NSString for '%s'", str]);
+        return nil;
+    }
+    
+    NSMutableDictionary *attribs = [NSMutableDictionary dictionary];
+    [attribs setObject:font forKey: NSFontAttributeName];
+    [attribs setObject:color forKey: NSForegroundColorAttributeName];
+        
+    return  [[[NSAttributedString alloc] initWithString:astring attributes:attribs] autorelease];
+}
+
+static int appendQuake3String(NSMutableAttributedString *mstring, NSFont *font, 
+                               const char* str, int len, int cc)
+{
+    if (len <= 0)
+        return 0;
+    const uint color = OLG_GetQuake3Color(cc);
+    NSColor *nsc = [NSColor colorWithDeviceRed:(color>>16) / 255.0
+                                         green:((color>>8)&0xff)/255.0
+                                          blue:(color&0xff)/255.0
+                                         alpha: 1.0];
+    NSString *astring = [[[NSString alloc] initWithBytes:str length:len encoding:NSUTF8StringEncoding] autorelease];
+    if (!astring) 
     {
         LogMessage([NSString stringWithFormat:@"Failed to get an NSString for '%s'", str]);
         return 0;
     }
+    
+    NSMutableDictionary *attribs = [NSMutableDictionary dictionary];
+    [attribs setObject:font forKey: NSFontAttributeName];
+    [attribs setObject:nsc forKey: NSForegroundColorAttributeName];
+    
+    NSAttributedString* string = [[[NSAttributedString alloc] initWithString:astring attributes:attribs] autorelease];
+    [mstring appendAttributedString:string];
+    return 1;
+}
 
+int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int fontName, float maxw, float maxh)
+{
     // !!!!!
     // NSAttributedString always draws at the resolution of the highest attached monitor
     // Regardless of the current monitor.
     // Higher res tex looks bad on lower res monitors, because the pixels don't line up
     // Apparently there is no way to tell it not to do that, but we can lie about the text size...
-    const float scale = OL_GetCurrentBackingScaleFactor() / getBackingScaleFactor();
-    size *= scale;
-        
+    size *= OL_GetCurrentBackingScaleFactor() / getBackingScaleFactor();
+
     NSFont* font = getFont(fontName, size);
     if (!font)
         return 0;
+    
+    NSAttributedString* string = nil;
+    NSMutableAttributedString *mstring = nil;
 
-    NSMutableDictionary *attribs = [NSMutableDictionary dictionary];
-    [attribs setObject:font forKey: NSFontAttributeName];
-    [attribs setObject:[NSColor whiteColor] forKey: NSForegroundColorAttributeName];
+    int len = 0;
+    int lastV = 7;
+    const char* lastPtr = str;
+    
+    for (const char *ptr=str; *ptr; ptr++, len++)
+    {
+        if (*ptr == '^' && '0' <= ptr[1] && ptr[1] <= '9')
+        {
+            if (!mstring)
+                mstring = [[NSMutableAttributedString alloc] init];
+            appendQuake3String(mstring, font, lastPtr, len, lastV);
 
-    NSAttributedString* string = [[[NSAttributedString alloc] initWithString:aString attributes:attribs] autorelease];
-
+            lastV = ptr[1] - '0';
+            lastPtr = ptr + 2;
+            len = -2;
+        }
+    }
+    
+    if (mstring) {
+        appendQuake3String(mstring, font, lastPtr, len, lastV);
+        string = mstring;
+    } else {
+        string = createColorString(str, font, [NSColor whiteColor]);
+    }
+        
     NSSize previousSize = NSMakeSize(tex->width, tex->height);
     NSSize frameSize = [string size];
 
@@ -496,13 +562,16 @@ int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int fontNa
                      [bitmap samplesPerPixel] == 3 ? GL_RGB :
                      [bitmap samplesPerPixel] == 2 ? GL_LUMINANCE_ALPHA : GL_LUMINANCE);
     if (NSEqualSizes(previousSize, texSize)) {
-        glTexSubImage2D(GL_TEXTURE_2D,0,0,0,(GLsizei)texSize.width,(GLsizei)texSize.height, format, GL_UNSIGNED_BYTE, [bitmap bitmapData]);
+        glTexSubImage2D(GL_TEXTURE_2D,0,0,0,(GLsizei)texSize.width,(GLsizei)texSize.height,
+                        format, GL_UNSIGNED_BYTE, [bitmap bitmapData]);
     } else {
         //glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         //glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);             // it's already antialiased
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE_ALPHA, (GLsizei)texSize.width, (GLsizei)texSize.height, 0, format, GL_UNSIGNED_BYTE, [bitmap bitmapData]);
+        GLint tfmt = mstring ? GL_RGBA : GL_LUMINANCE_ALPHA;
+        glTexImage2D(GL_TEXTURE_2D, 0, tfmt, (GLsizei)texSize.width, (GLsizei)texSize.height,
+                     0, format, GL_UNSIGNED_BYTE, [bitmap bitmapData]);
     }
 
     glReportError();

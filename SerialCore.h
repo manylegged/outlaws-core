@@ -217,7 +217,8 @@ bool hasField(const T& obj, const char* field)
 
 #define DECLARE_SERIAL_STRUCT_CONTENTS(STRUCT_NAME, FIELDS_MACRO, IGNORE_MACRO) \
     FIELDS_MACRO(SERIAL_TO_STRUCT_FIELD);                               \
-    STRUCT_NAME() {}                                                    \
+    STRUCT_NAME();                                                      \
+    ~STRUCT_NAME();                                                     \
     template <typename V>                                               \
     bool accept(V& vis)                                                 \
     {                                                                   \
@@ -233,10 +234,9 @@ bool hasField(const T& obj, const char* field)
     struct STRUCT_NAME {                                                \
         DECLARE_SERIAL_STRUCT_CONTENTS(STRUCT_NAME, FIELDS_MACRO, SERIAL_PLACEHOLDER); \
     }                                                                   \
-        
 
 
-#define DEFINE_SERIAL_STRUCT(STRUCT_NAME, FIELDS_MACRO)         \
+#define DEFINE_SERIAL_STRUCT_OPS(STRUCT_NAME, FIELDS_MACRO)     \
     bool STRUCT_NAME::operator==(const STRUCT_NAME& sb) const   \
     {                                                           \
         if (0); FIELDS_MACRO(SERIAL_ELSE_FIELD_NEQUAL) else return 1;   \
@@ -257,5 +257,10 @@ bool hasField(const T& obj, const char* field)
         return val;                                             \
     }
 
+
+#define DEFINE_SERIAL_STRUCT(STRUCT_NAME, FIELDS_MACRO)         \
+    STRUCT_NAME::STRUCT_NAME() {}                               \
+    STRUCT_NAME::~STRUCT_NAME() {}                              \
+    DEFINE_SERIAL_STRUCT_OPS(STRUCT_NAME, FIELDS_MACRO)
 
 #endif

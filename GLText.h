@@ -29,7 +29,7 @@
 #include "Graphics.h"
 
 static const int kDefaultFontSize = 12;
-static const float2 kAspectMinMax(1.6f, 2.f);
+extern float2 kAspectMinMax;
 
 enum { kDefaultFont=0,
        kFallbackFont,

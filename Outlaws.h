@@ -107,6 +107,9 @@ const char* OLG_GetLogFileName(void);
 // upload logfile to server
 int OLG_UploadLog(const char* logdata, int loglen);
 
+// return 0xRRGGBB indexed color code 
+int OLG_GetQuake3Color(int val);
+
  //////////////////////////////// Game calls into OS layer //////////////////////////////////
 
 // call around code inside the main loop of helper threads
@@ -146,6 +149,12 @@ void OL_WriteClipboard(const char* txt);
 
 // move cursor
 void OL_WarpCursorPosition(float x, float y);
+
+// disable gamepad
+void OL_SetGamepadEnabled(int enabled);
+
+// get name of gamepad
+const char* OL_GetGamepadName();
     
 ////////// Graphics
 
@@ -221,6 +230,8 @@ int OL_CopyFile(const char* source, const char *dest);
 
 // Return list of files in a directory (base name only - no path)
 const char** OL_ListDirectory(const char* path);
+
+int OL_DirectoryExists(const char* path);
 
 // get complete path for data file in utf8, searching through save directory and application resource directory
 // mode should be "w" or "r"

@@ -59,6 +59,7 @@ template <typename T> T or_(const T& a, const T& b) { return a ? a : b; }
 template <typename T> T or_(const T& a, const T& b, const T& c) { return a ? a : b ? b : c; }
 template <typename T> T or_(const T& a, const T& b, const T& c, const T& d) { return a ? a : b ? b : c ? c : d; }
 inline std::string or_(const std::string &a, const std::string &b) { return a.size() ? a : b; }
+inline const char* or_(const char* a, const char* b) { return str_len(a) ? a : b; }
 
 template <typename S, typename T> 
 T and_(const S& a, const T& b) { return a ? b : T(a); }
@@ -1305,8 +1306,8 @@ typedef pthread_t OL_Thread;
 #define THREAD_ALIVE(B) (B)
 #else
 typedef std::thread* OL_Thread;
-#define THREAD_IS_SELF(B) (std::this_thread::get_id() == (B).get_id())
-#define THREAD_ALIVE(B) ((B).joinable())
+#define THREAD_IS_SELF(B) ((B) && std::this_thread::get_id() == (B)->get_id())
+#define THREAD_ALIVE(B) ((B) && (B)->joinable())
 #endif
 
 OL_Thread thread_create(void *(*start_routine)(void *), void *arg);

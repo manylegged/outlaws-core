@@ -325,6 +325,20 @@ int OL_FileDirectoryPathExists(const char* fname)
     return PathFileExists(path.c_str());
 }
 
+static BOOL DirectoryExists(LPCTSTR szPath)
+{
+  DWORD dwAttrib = GetFileAttributes(szPath);
+
+  return (dwAttrib != INVALID_FILE_ATTRIBUTES && 
+         (dwAttrib & FILE_ATTRIBUTE_DIRECTORY));
+}
+
+int OL_DirectoryExists(const char *fname)
+{
+    std::wstring path = pathForFile(fname, "r");
+    return DirectoryExists(path.c_str());
+}
+
 const char** OL_ListDirectory(const char* path1)
 {
     // not thread safe!!

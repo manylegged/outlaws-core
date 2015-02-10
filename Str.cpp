@@ -26,6 +26,14 @@
 #include "StdAfx.h"
 #include "Str.h"
 
+namespace std {
+    template class basic_string<char>;
+    template class vector<string>;
+    template class unordered_set<string>;
+    template class lock_guard<mutex>;
+    template class lock_guard<recursive_mutex>;
+}
+
 std::string str_format(const char *format, ...)
 {
     va_list vl;
@@ -48,7 +56,7 @@ std::string str_vformat(const char *format, va_list vl)
     return s;
 }
 
-vector<string> str_split_quoted(const string& line, char token)
+vector<string> str_split_quoted(char token, const string& line)
 {
     vector<string> vec;
     bool quoted = false;
@@ -314,7 +322,7 @@ std::string str_basename(const std::string &str)
 
 string str_tohex(const char* digest, int size)
 {
-    const char hexchars[] = "0123456789abcdef";
+    const char *hexchars = "0123456789abcdef";
 
     string result;
 
@@ -346,6 +354,7 @@ std::string str_capitalize(const char* str)
 
 bool str_runtests()
 {
+#if IS_DEVEL
     assert_eql(str_path_standardize("~/Foo//Bar.lua"), "~/Foo/Bar.lua");
     assert_eql(str_path_standardize("../../bar.lua"), "../../bar.lua");
     assert_eql(str_path_standardize("foo/baz/../../bar.lua////"), "bar.lua");
@@ -353,11 +362,13 @@ bool str_runtests()
     assert_eql(str_path_standardize("foo/baz/../"), "foo");
     assert_eql(str_path_join("foo", "bar"), "foo/bar");
     assert_eql(str_path_join("foo/", "bar"), "foo/bar");
-    assert_eql(str_path_join("foo/", "/bar"), "foo/bar");
-    assert_eql(str_path_join("foo/", (const char*)NULL), "foo");
-    assert_eql(str_path_join("foo/", ""), "foo");
+    assert_eql(str_path_join("foo/", "/bar"), "/bar");
+    assert_eql(str_path_join("foo/", (const char*)NULL), "foo/");
+    assert_eql(str_path_join("foo/", ""), "foo/");
     assert_eql(str_path_join("/home/foo", "bar"), "/home/foo/bar");
-    assert_eql(str_path_join(str_path_join("/home/foo", "bar"), "/baz"), "/home/foo/bar/baz");
+    assert_eql(str_path_join(str_path_join("/home/foo", "bar"), "/baz"), "/baz");
+    assert_eql(str_path_join("/foo/bar", "c:/thing"), "c:/thing");
+    assert_eql(str_path_join("/foo/bar", "/thing"), "/thing");
     assert_eql(str_dirname("foo/"), ".");
     assert_eql(str_dirname("/foo/"), "/");
     assert_eql(str_dirname("foo/baz/bar///"), "foo/baz");
@@ -368,6 +379,7 @@ bool str_runtests()
     assert_eql(str_rfind(url, "?f"), str_rfind(std::string(url), "?f"));
     assert_eql(str_rfind(url, "?f"), str_rfind(url, std::string("?f")));
     assert_eql(str_substr(url, 10, 5), str_substr(std::string(url), 10, 5));
+#endif
     return 1;
 }
 

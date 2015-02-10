@@ -61,6 +61,11 @@
 #pragma clang diagnostic pop
 #endif
 
+extern template class glm::detail::tvec2<float, glm::defaultp>;
+extern template class glm::detail::tvec2<int, glm::defaultp>;
+extern template class glm::detail::tvec3<float, glm::defaultp>;
+extern template class glm::detail::tvec3<int, glm::defaultp>;
+
 #include <cmath>
 #include <algorithm>
 #include <stdlib.h>
@@ -542,7 +547,7 @@ inline float lerpAngles(float a, float b, float v)
     return vectorToAngle(lerp(angleToVector(a), angleToVector(b), v));
 }
 
-// return 0-1 depending how close value is to inputs zero and one
+// return 0-1 depending how close value is to inputs zero and one (clamps if outside)
 // inv_lerp(a, b, lerp(a, b, v)) == v, for 0 <= v <= 1
 template <typename T>
 inline T inv_lerp(T zero, T one, float val)

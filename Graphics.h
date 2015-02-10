@@ -485,7 +485,7 @@ protected:
     string m_argstr;
 
     ShaderProgramBase();
-    virtual ~ShaderProgramBase() { reset(); }
+    virtual ~ShaderProgramBase() ;
     virtual void LoadTheProgram() = 0;
 
     void reset();
@@ -1323,8 +1323,8 @@ struct LineMesh : public PrimMesh<Vtx, 2> {
     {
         const float3 x[] = { float3(a, d), float3(b, d), float3(c, d),
                              float3(a, -d), float3(b, -d), float3(c, -d) };
-        const uint il0[] = { 0,1,2, 3,4,5 };
-        const uint il1[] = { 0,3, 1,4, 2,5 };
+        static const uint il0[] = { 0,1,2, 3,4,5 };
+        static const uint il1[] = { 0,3, 1,4, 2,5 };
         const uint start = this->PushV(x, arraySize(x));
         PushLoopIndexes(start, il0, 6, 3);
         PushLoopIndexes(start, il1, 6, 2);
@@ -1598,6 +1598,10 @@ typedef TriMesh<VertexPosColor> VertexPusherTri;
 typedef LineMesh<VertexPosColor> VertexPusherLine;
 typedef MeshPair<VertexPosColor, VertexPosColor>  DMesh;
 
+extern template class TriMesh<VertexPosColor>;
+extern template class LineMesh<VertexPosColor>;
+extern template class MeshPair<VertexPosColor, VertexPosColor>;
+
 // generic shared dmesh
 inline DMesh& theDMesh()
 {
@@ -1618,6 +1622,9 @@ void DrawFilledRect(const ShaderState &data, float2 pos, float2 r, uint bgColor,
 
 void fadeFullScreen(const ShaderState &ss, const View& view, uint color, float alpha);
 void sexyFillScreen(const ShaderState &ss, const View& view, uint color, uint color1, float alpha);
+
+void renderLoadingSpinner(LineMesh<VertexPosColor> &mesh, float2 pos, float2 size, float alpha, float progress);
+void renderLoadingSpinner(ShaderState ss, float2 pos, float2 size, float alpha, float progress);
 
 // P is upper left corner, S is size
 float2 DrawBar(const ShaderState &ss, uint fill, uint line, float alpha, float2 p, float2 s, float a);

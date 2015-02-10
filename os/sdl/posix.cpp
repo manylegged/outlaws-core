@@ -111,7 +111,7 @@ static void print_backtrace()
     for (int i=0; i<count; i++) {
         string func;
         if (strings && strings[i]) {
-            vector<string> fields = str_split(strings[i], ' ');
+            vector<string> fields = str_split(' ', strings[i]);
             for (int j=0; j<fields.size(); ) {
                 if (fields[j].size() == 0)
                     fields.erase(fields.begin() + j);
