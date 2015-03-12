@@ -604,7 +604,6 @@ int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int _font,
     bool last_was_fallback = false;
     int line_pixel_width = 0;
 
-    bool last_was_caret = false;
     int  color_count = 0;
 
     size_t textlen = SDL_strlen(str);
@@ -623,20 +622,21 @@ int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int _font,
 
         int pixel_width, pixel_height;
 
-        if (last_was_caret && '0' <= chr && chr <= '9')
+        if (chr == '^' && textlen > 0 && '0' <= str[chr_end] && str[chr_end] <= '9')
         {
-            Strip st = { font, 0, color, string(&str[strip_start], chr_start - strip_start - 1) };
+            Strip st = { font, 0, color, string(&str[strip_start], chr_start - strip_start) };
             if (st.text.size()) {
                 TTF_SizeUTF8(font, st.text.c_str(), &st.pixel_width, &pixel_height);
                 strips.push_back(std::move(st));
             }
 
-            text_pixel_width += st.pixel_width;
-            strip_start = chr_end;
-            
-            last_was_caret = false;
+            line_pixel_width += st.pixel_width;
+
+            const Uint64 num = UTF8_getch(&text, &textlen);
+
+            strip_start = totallen - textlen;
             color_count++;
-            color = getQuake3Color(chr - '0');
+            color = getQuake3Color(num - '0');
         }
         else if (chr == '\n' || chr == '\0' || chr == UNKNOWN_UNICODE)
         {
@@ -703,7 +703,6 @@ int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int _font,
         }
         else
         {
-            last_was_caret = (chr == '^');
             last_was_fallback = false;
         }
     }
@@ -1030,7 +1029,7 @@ void OL_Present(void)
 }
 
 
-void OL_ThreadBeginIteration(int i)
+void OL_ThreadBeginIteration()
 {
 }
 
@@ -1078,7 +1077,7 @@ const char *OL_LoadFile(const char *name)
     return sdl_os_autorelease(buf);
 }
 
-void OL_ThreadEndIteration(int i)
+void OL_ThreadEndIteration()
 {
     AutoreleasePool::instance().drain();
 }
@@ -1220,8 +1219,13 @@ int sdl_os_main(int argc, const char **argv)
 
             if (i == 0)
                 g_windowSize = int2(mode.w, mode.h);
-            g_windowSize = min(g_windowSize, int2(0.9f * float2(mode.w, mode.h)));
+            
+            if (mode.w>0 && mode.h>0)
+            {
+                g_windowSize = min(g_windowSize, int2(0.9f * float2(mode.w, mode.h)));
+            }
         }
+        g_windowSize = max(int2(640, 480), g_windowSize);
         ReportSDL("Requesting initial window size of %dx%d", g_windowSize.x, g_windowSize.y);
         ReportSDL("Current SDL video driver is '%s'", SDL_GetCurrentVideoDriver());
     }
@@ -1269,17 +1273,22 @@ int sdl_os_main(int argc, const char **argv)
         return 1;
     }
 
-    static const double kFrameTime = 1.0 / 60.0;
-
     while (!g_quitting)
     {
         const double start = OL_GetCurrentTime();
         HandleEvents();
         OLG_Draw();
-        const double frameTime = max(0.0, OL_GetCurrentTime() - start);
-        if (frameTime < kFrameTime) {
-            std::this_thread::sleep_for(std::chrono::microseconds(round_int(1e6 * (kFrameTime - frameTime))));
-            // SDL_Delay((kFrameTime - frameTime) * 1000.0);
+
+        const float targetFPS = OLG_GetTargetFPS();
+        if (targetFPS > 0.f)
+        {
+            const double frameTime = max(0.0, OL_GetCurrentTime() - start);
+            const double targetFrameTime = 1.0 / targetFPS;
+
+            if (frameTime < targetFrameTime) {
+                std::this_thread::sleep_for(std::chrono::microseconds(round_int(1e6 * (targetFrameTime - frameTime))));
+                // SDL_Delay((targetFrameTime - frameTime) * 1000.0);
+            }
         }
     }
 

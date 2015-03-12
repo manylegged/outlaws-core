@@ -73,10 +73,6 @@ void OL_SetGamepadEnabled(int enabled)
         SDL_GameControllerClose(s_controller);
         s_controller = NULL;
     }
-    else if (!s_controller && enabled)
-    {
-        initGamepad();
-    }
 }
 
 const char* OL_GetGamepadName()

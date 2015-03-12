@@ -141,6 +141,7 @@ inline size_t str_len(std::nullptr_t null)    { return 0; }
 inline size_t str_len(long null)              { return 0; }
 inline size_t str_len(const char* str)        { return str ? strlen(str) : 0; }
 inline size_t str_len(const std::string& str) { return str.size(); }
+inline size_t str_len(const std::wstring& str) { return str.size(); }
 inline size_t str_len(char chr)               { return 1; }
 inline size_t str_len(lstring str)            { return str_len(str.c_str()); }
 
@@ -164,7 +165,7 @@ inline size_t str_find(const char* s, const char* v, size_t pos=0)
 }
 
 template <typename T>
-inline size_t str_rfind(const std::string &s, const T& v, size_t pos=0)
+inline size_t str_rfind(const std::string &s, const T& v, size_t pos=std::string::npos)
 {
     return s.rfind(v, pos);
 }
@@ -304,19 +305,10 @@ inline bool str_endswith(const S1& s1, const S2& s2)
 std::string str_vformat(const char *format, va_list vl) __printflike(1, 0);
 std::string str_format(const char *format, ...)  __printflike(1, 2);
 
-inline std::string str_add_line_numbers(const char* s, int start=1)
-{
-    std::string r;
-    int i=start;
-    r += str_format("%d: ", i++);
-    for (const char* p = s; *p != '\0'; ++p) {
-        r += *p;
-        if (*p == '\n') {
-            r += str_format("%d: ", i++);
-        }
-    }
-    return r;
-}
+void str_append_vformat(std::string &str, const char *format, va_list vl) __printflike(2, 0);
+void str_append_format(std::string &str, const char *format, ...)  __printflike(2, 3);
+
+std::string str_add_line_numbers(const char* s, int start=1);
 
 template <typename T, typename U>
 inline std::vector<std::string> str_split(const U &delim, const T &s)
@@ -350,6 +342,9 @@ inline std::string str_tostr(const char *a) { return a ? a : ""; }
 inline std::string str_tostr(lstring a) { return a.str(); }
 inline const std::string &str_tostr(const std::string &a) { return a; }
 inline std::string str_tostr(std::string &&a) { return std::move(a); }
+inline const std::wstring &str_tostr(const std::wstring &a) { return a; }
+inline std::wstring str_tostr(std::wstring &&a) { return std::move(a); }
+
 
 template <typename T>
 const char* str_tocstr(const T &v) 
@@ -512,22 +507,29 @@ inline std::string str_no_extension(const std::string &str)
 
 std::string str_basename(const std::string &str);
 std::string str_dirname(const std::string &str);
-std::string str_path_standardize(const std::string &str);
+std::string str_path_standardize(std::string str);
+std::wstring str_w32path_standardize(const std::wstring &inpt);
 
-template <typename S>
-inline std::string str_path_join(std::string r, const S &b)
+template <typename T, typename S>
+inline std::basic_string<T> str_path_join(std::basic_string<T> r, const S &b, T sep=T('/'))
 {
     const size_t bsz = str_len(b);
     if (!bsz)
         return r;
     if (bsz) {
-        if (b[0] == '/' || (bsz > 1 && b[1] == ':'))
+        if (b[0] == sep || (bsz > 1 && b[1] == ':'))
             return b;
-        if (r.empty() || r.back() != '/')
-            r += '/';
+        if (r.empty() || !strchr("/\\", r.back()))
+            r += sep;
         r += b;
     }
     return r;
+}
+
+template <typename S>
+inline std::string str_path_join(std::string r, const S &b)
+{
+    return str_path_join(std::move(r), b, '/');
 }
 
 template <typename T, typename S1, typename S2>
@@ -556,6 +558,9 @@ std::string str_urldecode(const std::string &value);
 
 std::string str_time_format(float seconds);
 std::string str_reltime_format(float seconds);
+
+// return one, two, three, etc
+std::string str_numeral_format(int num);
 
 // return data byte size in MB, KB, etc
 std::string str_bytes_format(int bytes);

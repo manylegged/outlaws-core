@@ -52,7 +52,7 @@
 #define unless(X) if (!(X))
 
 // lambda((int* a), *a + 3)
-#define lambda(X, Y) [&] X { return (Y); }
+// #define lambda(X, Y) [&] X { return (Y); }
 
 // lisp style multi-argument or_ and and_
 template <typename T> T or_(const T& a, const T& b) { return a ? a : b; }
@@ -472,14 +472,6 @@ inline V vec_intersection(const V &v, const V1& t)
     return ret;
 }
 
-inline int myrandom_(int mx) { return randrange(mx); }
-
-template <typename V>
-inline void vec_shuffle(V& vec)
-{
-    std::random_shuffle(std::begin(vec), std::end(vec), myrandom_);
-}
-    
 
 template <typename Vec>
 const typename Vec::value_type &vec_at(const Vec &v, int i,
@@ -923,7 +915,7 @@ inline int vec_next(const T& vec, int index, int delta)
 {
     if (!vec_any(vec))
         return -1;
-    index += delta;
+    index = modulo(index + delta, vec_size(vec));
     delta = (delta >= 0) ? 1 : -1;
     for (; !vec_at(vec, index); index = modulo(index + delta, vec_size(vec)));
     return index;

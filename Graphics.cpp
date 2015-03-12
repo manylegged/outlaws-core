@@ -34,9 +34,9 @@
 #define ASSERT_MAIN_THREAD()
 #endif
 
-template class TriMesh<VertexPosColor>;
-template class LineMesh<VertexPosColor>;
-template class MeshPair<VertexPosColor, VertexPosColor>;
+template struct TriMesh<VertexPosColor>;
+template struct LineMesh<VertexPosColor>;
+template struct MeshPair<VertexPosColor, VertexPosColor>;
 
 bool supports_ARB_Framebuffer_object = false;
 
@@ -937,6 +937,11 @@ void PostProc::Draw(bool bindFB)
     // nothing to do if bindFB and no blur
 }
 
+View::View()
+{
+}
+
+
 View operator+(const View& a, const View& b)
 {
     View r(a);
@@ -1013,7 +1018,7 @@ uint View::getCircleVerts(float worldRadius, int mx) const
     return verts;
 }
 
-ShaderState View::getWorldShaderState() const
+ShaderState View::getWorldShaderState(float2 zminmax) const
 {
     // +y is up in world coordinates
     const float2 s = 0.5f * sizePoints * float(scale);
@@ -1027,9 +1032,10 @@ ShaderState View::getWorldShaderState() const
     const float fovy   = M_PI_2f;
     const float aspect = sizePoints.x / sizePoints.y;
     const float dist   = s.y;
-    // const float mznear = max(1.f, dist - 10.f);
-    const float mznear = 1.f;
-    const float mzfar  = dist + clamp(zfar, 5.f, 10000.f);
+    // const float mznear = min(1.f, dist - 100.f);
+    const float mznear = clamp(dist + zminmax.x - 10.f, 1.f, dist - 10.f);
+    const float mzfar  = dist + ((zminmax.y == 0.f) ? 2000.f : clamp(zminmax.y, 5.f, 10000.f));
+    ASSERT(mznear < mzfar);
 
     const glm::mat4 view = glm::lookAt(float3(position, dist),
                                        float3(position, 0.f),

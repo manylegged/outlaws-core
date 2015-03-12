@@ -250,7 +250,7 @@ static string rawKeyToString(int key)
     case GamepadGuide:             return "Gamepad Guide";
     case GamepadStart:             return "Gamepad Start";
     case GamepadLeftStick:         return "Left Stick";
-    case GamepadRightSitck:        return "Right Sitck";
+    case GamepadRightSitck:        return "Right Stick";
     case GamepadLeftShoulder:      return "Left Bumper";
     case GamepadRightShoulder:     return "Right Bumper";
     case GamepadDPadUp:            return "DPad Up";

@@ -114,8 +114,8 @@ int OLG_GetQuake3Color(int val);
 
 // call around code inside the main loop of helper threads
 // these allocate and drain autorelease pools on Apple platforms
-void OL_ThreadBeginIteration(int i);
-void OL_ThreadEndIteration(int i);
+void OL_ThreadBeginIteration(void);
+void OL_ThreadEndIteration(void);
 
 // return number of cpu cores
 int OL_GetCpuCount(void);

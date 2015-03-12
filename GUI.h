@@ -257,7 +257,7 @@ struct TextInputCommandLine : public TextInputBase {
         string       name;
         CommandFunc  func;
         CompleteFunc comp;
-        void*        data;
+        void*        data = NULL;
         string       description;
     };
 
@@ -267,26 +267,13 @@ struct TextInputCommandLine : public TextInputBase {
     std::map<string, Command> commands;
     string                    prompt = "^2>^7 ";
     
-    static vector<string> comp_help(void* data, const char* name, const char* args)
-    {
-        vector<string> options;
-        TextInputCommandLine *self = (TextInputCommandLine*) data;
-        for (std::map<string, Command>::iterator it=self->commands.begin(), end=self->commands.end(); it != end; ++it)
-        {
-            options.push_back(it->first);
-        }
-        return options;
-    }
+    static vector<string> comp_help(void* data, const char* name, const char* args);
 
-    TextInputCommandLine()
-    {
-        sizeChars.y = 10;
+    TextInputCommandLine();
 
-        registerCommand(helpCmd, comp_help, this, "help", "[command]: list help for specified command, or all commands if unspecified");
-        setLineText("");
-    }
-
-    static string helpCmd(void* data, const char* name, const char* args);
+    vector<string> completeCommand(string cmd) const;
+    static string cmd_help(void* data, const char* name, const char* args);
+    static string cmd_find(void* data, const char* name, const char* args);
 
     void registerCommand(CommandFunc func, CompleteFunc comp, void *data, const char* name, const char* desc)
     {

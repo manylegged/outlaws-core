@@ -166,7 +166,7 @@ int os_create_parent_dirs(const char* path)
 bool os_symlink_f(const char* source, const char* dest)
 {
     int status = unlink(dest);
-    if (status && status != ENOENT) {
+    if (status && errno != ENOENT) {
         ReportLinux("Error unlink('%s'): %s", dest, strerror(errno));
     }
     if (symlink(source, dest)) {

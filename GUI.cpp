@@ -296,18 +296,23 @@ static void delete_region(int2& cursor, deque<string> &lines, int2 mark)
 
 bool TextInputBase::HandleEvent(const Event* event, bool *textChanged)
 {
+    active = forceActive || 
+             intersectPointRectangle(KeyState::instance().cursorPosScreen, position, 0.5f * size);
+    hovered = active;
+
+    if (active && event->type == Event::SCROLL_WHEEL)
+    {
+        startChars.y += ceil_int(-event->vel.y);
+        startChars.y = clamp(startChars.y, 0, max(0, (int)lines.size() - sizeChars.y));
+        return true;
+    }
+    
     if (locked)
         return false;
-
-    active = forceActive || 
-             (!locked && intersectPointRectangle(KeyState::instance().cursorPosScreen, 
-                                                 position, 0.5f * size));
-    hovered = active;
 
     if (textChanged)
         *textChanged = false;
 
-  
     if (active && event->type == Event::KEY_DOWN)
     {
         std::lock_guard<std::recursive_mutex> l(mutex);
@@ -424,12 +429,6 @@ bool TextInputBase::HandleEvent(const Event* event, bool *textChanged)
         cursor.x = clamp(cursor.x, 0, lines[cursor.y].size());
         scrollForInput();
             
-        return true;
-    }
-    else if (active && event->type == Event::SCROLL_WHEEL)
-    {
-        startChars.y += ceil_int(-event->vel.y);
-        startChars.y = clamp(startChars.y, 0, max(0, (int)lines.size() - sizeChars.y));
         return true;
     }
 
@@ -582,6 +581,15 @@ void TextInputBase::render(const ShaderState &s_)
     }
 }
 
+TextInputCommandLine::TextInputCommandLine()
+{
+    sizeChars.y = 10;
+
+    registerCommand(cmd_help, comp_help, this, "help", "[command]: list help for specified command, or all commands if unspecified");
+    registerCommand(cmd_find, comp_help, this, "find", "[string]: list commands matching search");
+    setLineText("");
+}
+
 void TextInputCommandLine::saveHistory(const char *fname)
 {
     string str = str_join("\n", commandHistory);
@@ -603,33 +611,56 @@ void TextInputCommandLine::loadHistory(const char *fname)
     historyIndex = commandHistory.size();
 }
 
-string TextInputCommandLine::helpCmd(void* data, const char* name, const char* args) 
+vector<string> TextInputCommandLine::comp_help(void* data, const char* name, const char* args)
+{
+    vector<string> options;
+    TextInputCommandLine *self = (TextInputCommandLine*) data;
+    for (std::map<string, Command>::iterator it=self->commands.begin(), end=self->commands.end(); it != end; ++it)
+    {
+        options.push_back(it->first);
+    }
+    return options;
+}
+
+string TextInputCommandLine::cmd_help(void* data, const char* name, const char* args) 
 {
     TextInputCommandLine* self = (TextInputCommandLine*) data;
         
     const string arg = str_strip(args);
-    string s;
-    if (map_contains(self->commands, arg))
-    {
-        std::map<string, Command>::iterator it=self->commands.find(arg);
-        s += it->first;
-        s += " ";
-        s += it->second.description;
-        s += "\n";
-    }
-    else
+    vector<string> helps = self->completeCommand(arg);
+    if (helps.size() == 0)
     {
         for (std::map<string, Command>::iterator it=self->commands.begin(), end=self->commands.end(); it != end; ++it)
-        {
-            s += it->first;
-            s += " ";
-            s += it->second.description;
-            s += "\n";
-        }
+            helps.push_back(it->first);
     }
-    return s;
+    string ss;
+    foreach (const string &cmd, helps)
+        ss += "^2" + cmd + "^7 " + self->commands[cmd].description + "\n";
+    ss.pop_back();
+    return ss;
 }
 
+string TextInputCommandLine::cmd_find(void* data, const char* name, const char* args)
+{
+    TextInputCommandLine* self = (TextInputCommandLine*) data;
+        
+    const string arg = str_strip(args);
+    string ss;
+    int count = 0;
+    foreach (const auto& x, self->commands) {
+        if (str_contains(x.first, arg) || str_contains(x.second.description, arg))
+        {
+            ss += "^2" + x.first + "^7 " + x.second.description + "\n";
+            count++;
+        }
+    }
+    if (count) {
+        ss.pop_back();
+    } else {
+        ss = str_format("No commands matching '%s'", arg.c_str());
+    }
+    return ss;
+}
 
 void TextInputCommandLine::pushCmdOutput(const char *format, ...)
 {
@@ -646,6 +677,16 @@ void TextInputCommandLine::pushCmdOutput(const char *format, ...)
     cursor.y = (int)lines.size() - 1;
     cursor.x = lines[cursor.y].size();
     scrollForInput();
+}
+
+vector<string> TextInputCommandLine::completeCommand(string cmd) const
+{
+    vector<string> possible;
+    foreach (const auto& x, commands) {
+        if (x.first.size() >= cmd.size() && x.first.substr(0, cmd.size()) == cmd)
+            possible.push_back(x.first);
+    }
+    return possible;
 }
 
 bool TextInputCommandLine::doCommand(const string& line)
@@ -667,11 +708,7 @@ bool TextInputCommandLine::doCommand(const string& line)
         if (map_contains(commands, cmd)) {
             c = &commands[cmd];
         } else {
-            vector<string> possible;
-            foreach (const auto& x, commands) {
-                if (x.first.size() > cmd.size() && x.first.substr(0, cmd.size()) == cmd)
-                    possible.push_back(x.first);
-            }
+            const vector<string> possible = completeCommand(cmd);
             if (possible.size() == 1) {
                 c = &commands[possible[0]];
             } else {
@@ -994,8 +1031,11 @@ void OptionButtons::render(ShaderState *s_, const View& view)
 
 bool OptionSlider::HandleEvent(const Event* event, bool *valueChanged)
 {
+    if (!event->isMouse())
+        return false;
     const float2 sz = 0.5f*size;
-    hovered = pressed || (event->isMouse() && intersectPointRectangle(event->pos, position, sz));
+    
+    hovered = pressed || intersectPointRectangle(event->pos, position, sz);
     pressed = (hovered && event->type == Event::MOUSE_DOWN) ||
               (!isDiscrete() && pressed && event->type == Event::MOUSE_DRAGGED);
     
@@ -1650,6 +1690,8 @@ void Scrollbar::render(DMesh &mesh) const
 
 bool Scrollbar::HandleEvent(const Event *event)
 {
+    if (!event->isMouse())
+        return false;
     hovered = intersectPointRectangle(event->pos, position, size/2.f);
     if (steps == 0) {
         first = 0;

@@ -61,10 +61,10 @@
 #pragma clang diagnostic pop
 #endif
 
-extern template class glm::detail::tvec2<float, glm::defaultp>;
-extern template class glm::detail::tvec2<int, glm::defaultp>;
-extern template class glm::detail::tvec3<float, glm::defaultp>;
-extern template class glm::detail::tvec3<int, glm::defaultp>;
+extern template struct glm::detail::tvec2<float, glm::defaultp>;
+extern template struct glm::detail::tvec2<int, glm::defaultp>;
+extern template struct glm::detail::tvec3<float, glm::defaultp>;
+extern template struct glm::detail::tvec3<int, glm::defaultp>;
 
 #include <cmath>
 #include <algorithm>

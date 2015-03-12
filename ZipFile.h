@@ -25,6 +25,6 @@ string ZF_Decompress(const char* data, size_t size);
 // load an entire directory or zip file into memory
 typedef std::pair<std::string, std::string> ZFFileData;
 typedef std::map<std::string, std::string> ZFDirMap;
-ZFDirMap ZF_LoadDirectory(const char* path);
+ZFDirMap ZF_LoadDirectory(const char* path, float* progress);
 
 #endif
