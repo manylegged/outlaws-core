@@ -13,7 +13,8 @@ float getBackingScaleFactor(void);
 	NSTimer* timer;
  
     NSTrackingArea *trackingArea;
-
+    NSUInteger lastFlags;
+    
 @public
     int  closing;
     BOOL fullscreen;

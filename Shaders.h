@@ -277,6 +277,9 @@ struct ShaderWormhole : public ShaderProgramBase, public ShaderBase<ShaderWormho
 
 struct ShaderTextureBase : public ShaderProgramBase {
 
+    void bindTextureDrawElements(const ShaderState &ss, const OutlawTexture &texture,
+                                 VertexPosTex *vtx, int icount, const ushort *idxs) const;
+    
     virtual void UseProgram(const ShaderState &ss, const VertexPosTex *ptr, const OutlawTexture& ot) const = 0;
 
     void BindTexture(const OutlawTexture& texture, int slot) const
@@ -288,14 +291,14 @@ struct ShaderTextureBase : public ShaderProgramBase {
 
     // a b
     // c d
-    void DrawQuad(const ShaderState& ss, const OutlawTexture& texture, float2 scale, 
+    void DrawQuad(const ShaderState& ss, const OutlawTexture& texture,
                   float2 a, float2 b, float2 c, float2 d) const;
 
     void DrawRectCorners(const ShaderState &ss, const OutlawTexture& texture, float2 a, float2 b) const
     {
         float2 bl(min(a.x, b.x), min(a.y, b.y));
         float2 ur(max(a.x, b.x), max(a.y, b.y));
-        DrawQuad(ss, texture, float2(1.f), float2(bl.x, ur.y), ur, bl, float2(ur.x, bl.y));
+        DrawQuad(ss, texture, float2(bl.x, ur.y), ur, bl, float2(ur.x, bl.y));
     }
 
     void DrawRectCornersUpsideDown(const ShaderState &ss, const OutlawTexture& texture, float2 a, float2 b) const
@@ -306,7 +309,7 @@ struct ShaderTextureBase : public ShaderProgramBase {
 
         float2 bl(min(a.x, b.x), min(a.y, b.y));
         float2 ur(max(a.x, b.x), max(a.y, b.y));
-        DrawQuad(ss, texture, float2(1.f), bl, float2(ur.x, bl.y), float2(bl.x, ur.y), ur);
+        DrawQuad(ss, texture, bl, float2(ur.x, bl.y), float2(bl.x, ur.y), ur);
     }
 
     void DrawRect(const ShaderState &ss, const OutlawTexture& texture, float2 pos, float2 rad) const
@@ -314,10 +317,8 @@ struct ShaderTextureBase : public ShaderProgramBase {
         DrawRectCorners(ss, texture, pos - rad, pos + rad);
     }
 
-    void DrawRectScale(const ShaderState &ss, const OutlawTexture& texture, float2 scale, float2 pos, float2 rad) const
-    {
-        DrawQuad(ss, texture, scale, pos + flipX(rad), pos + rad, pos - rad, pos + flipY(rad));
-    }
+    void DrawRectScaleAngle(const ShaderState &ss, const OutlawTexture& texture,
+                            float2 scale, float angle, float2 pos, float2 rad) const;
 
     void DrawRectWidth(const ShaderState &ss, const OutlawTexture& texture, float2 pos, float width) const
     {

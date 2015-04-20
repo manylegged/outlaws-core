@@ -29,14 +29,15 @@
 #include "StdAfx.h"
 #include "Graphics.h"
 #include "Shaders.h"
+#include "Event.h"
 
 #ifndef ASSERT_MAIN_THREAD
 #define ASSERT_MAIN_THREAD()
 #endif
 
-template class TriMesh<VertexPosColor>;
-template class LineMesh<VertexPosColor>;
-template class MeshPair<VertexPosColor, VertexPosColor>;
+template struct TriMesh<VertexPosColor>;
+template struct LineMesh<VertexPosColor>;
+template struct MeshPair<VertexPosColor, VertexPosColor>;
 
 bool supports_ARB_Framebuffer_object = false;
 
@@ -799,9 +800,11 @@ void DrawButton(const ShaderState *data, float2 pos, float2 r, uint bgColor, uin
 void DrawFilledRect(const ShaderState &s_, float2 pos, float2 rad, uint bgColor, uint fgColor, float alpha)
 {
     ShaderState ss = s_;
+    ss.translateZ(-1.f);
     ss.color32(bgColor, alpha);
     ShaderUColor::instance().DrawRect(ss, pos, rad);
     ss.color32(fgColor,alpha);
+    ss.translateZ(0.1f);
     ShaderUColor::instance().DrawLineRect(ss, pos, rad);
 }
 
@@ -840,7 +843,7 @@ void fadeFullScreen(const ShaderState &s_, const View& view, uint color, float a
     glDisable(GL_DEPTH_TEST);
     ShaderState ss = s_;
     ss.color(color, alpha);
-    ShaderUColor::instance().DrawRectCorners(ss, float2(0), view.sizePoints);
+    ShaderUColor::instance().DrawRectCorners(ss, -0.1f * view.sizePoints, 1.1f * view.sizePoints);
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_TRUE);
 }
@@ -852,17 +855,18 @@ void sexyFillScreen(const ShaderState &ss, const View& view, uint color0, uint c
 
     glDepthMask(GL_FALSE);
     glDisable(GL_DEPTH_TEST);
-    const float2 ws = view.sizePoints;
+    const float2 ws = 1.2f * view.sizePoints;
+    const float2 ps = -0.1f * view.sizePoints;
     const float t = globals.renderTime / 20.f;
     const uint a = ALPHAF(alpha);
 
     // 1 2
     // 0 3
     const VertexPosColor v[] = {
-        VertexPosColor(float2(),  a|rgb2bgr(lerpXXX(color0, color1, unorm_sin(t)))),
-        VertexPosColor(justY(ws), a|rgb2bgr(lerpXXX(color0, color1, unorm_sin(3.f * t)))),
-        VertexPosColor(ws,        a|rgb2bgr(lerpXXX(color0, color1, unorm_sin(5.f * t)))),
-        VertexPosColor(justX(ws), a|rgb2bgr(lerpXXX(color0, color1, unorm_sin(7.f * t)))),
+        VertexPosColor(ps,  a|rgb2bgr(lerpXXX(color0, color1, unorm_sin(t)))),
+        VertexPosColor(ps + justY(ws), a|rgb2bgr(lerpXXX(color0, color1, unorm_sin(3.f * t)))),
+        VertexPosColor(ps + ws,        a|rgb2bgr(lerpXXX(color0, color1, unorm_sin(5.f * t)))),
+        VertexPosColor(ps + justX(ws), a|rgb2bgr(lerpXXX(color0, color1, unorm_sin(7.f * t)))),
     };
     static const uint i[] = {0, 1, 2, 0, 2, 3};
     DrawElements(ShaderColorDither::instance(), ss, GL_TRIANGLES, v, i, arraySize(i));
@@ -937,6 +941,11 @@ void PostProc::Draw(bool bindFB)
     // nothing to do if bindFB and no blur
 }
 
+View::View()
+{
+}
+
+
 View operator+(const View& a, const View& b)
 {
     View r(a);
@@ -967,6 +976,7 @@ float2 View::toWorld(float2 p) const
     // FIXME angle
     p -= 0.5f * sizePoints;
     p *= getScale();
+    p = rotate(p, angle);
     p += position;
     return p;
 }
@@ -1013,8 +1023,10 @@ uint View::getCircleVerts(float worldRadius, int mx) const
     return verts;
 }
 
-ShaderState View::getWorldShaderState() const
+ShaderState View::getWorldShaderState(float2 zminmax) const
 {
+    static DEFINE_CVAR(float, kUpAngle, M_PI_2f);
+    
     // +y is up in world coordinates
     const float2 s = 0.5f * sizePoints * float(scale);
     ShaderState ws;
@@ -1027,18 +1039,21 @@ ShaderState View::getWorldShaderState() const
     const float fovy   = M_PI_2f;
     const float aspect = sizePoints.x / sizePoints.y;
     const float dist   = s.y;
-    // const float mznear = max(1.f, dist - 10.f);
-    const float mznear = 1.f;
-    const float mzfar  = dist + clamp(zfar, 5.f, 10000.f);
+    // const float mznear = min(1.f, dist - 100.f);
+    const float mznear = clamp(dist + zminmax.x - 10.f, 1.f, dist - 10.f);
+    const float mzfar  = dist + ((zminmax.y == 0.f) ? 2000.f : clamp(zminmax.y, 5.f, 10000.f));
+    ASSERT(mznear < mzfar);
 
     const glm::mat4 view = glm::lookAt(float3(position, dist),
                                        float3(position, 0.f),
-                                       float3(angleToVector(angle + 0.5f * M_PIf), 0));
+                                       float3(angleToVector(angle + kUpAngle), 0));
     const glm::mat4 proj = glm::perspective(fovy, aspect, mznear, mzfar);
     ws.uTransform = proj * view;
 #endif
 
     ws.translateZ(z);
+    // ws.rotate(-angle);
+
     return ws;
 }
 
@@ -1046,18 +1061,20 @@ ShaderState View::getScreenShaderState() const
 {
     ShaderState ss;
     static DEFINE_CVAR(float, kScreenFrustumDepth, 100.f);
+    static DEFINE_CVAR(float, kMouseScreenSkew, -0.005f);
 
 #if 0
     cpBB screenBB = getScreenPointBB();
     ss.uTransform = glm::ortho((float)screenBB.l, (float)screenBB.r, (float)screenBB.b, (float)screenBB.t, -10.f, 10.f);
 #else
+    const float2 offs = kMouseScreenSkew * (KeyState::instance().cursorPosScreen - 0.5f * globals.windowSizePoints);
     const float2 pos   = 0.5f * sizePoints;
     const float fovy   = M_PI_2f;
     const float aspect = sizePoints.x / sizePoints.y;
     const float dist   = pos.y;
     const float mznear  = max(dist - kScreenFrustumDepth, 1.f);
 
-    const glm::mat4 view = glm::lookAt(float3(pos, dist),
+    const glm::mat4 view = glm::lookAt(float3(pos + offs, dist),
                                        float3(pos, 0.f),
                                        float3(0, 1, 0));
     const glm::mat4 proj = glm::perspective(fovy, aspect, mznear, dist + kScreenFrustumDepth);

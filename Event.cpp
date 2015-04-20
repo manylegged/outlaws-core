@@ -32,14 +32,14 @@ string Event::toString() const
     const string skey = keyToString(key);
     switch(type)
     {
-    case KEY_DOWN:      return str_format("KEY_DOWN %s", skey.c_str());
+    case KEY_DOWN:      return str_format("KEY_DOWN %s (pad %d)", skey.c_str(), which);
     case KEY_UP:        return str_format("KEY_UP %s", skey.c_str());
     case MOUSE_DOWN:    return str_format("MOUSE_DOWN %d (%.f, %.f)", (int)key, pos.x, pos.y);
     case MOUSE_UP:      return str_format("MOUSE_UP %d (%.f, %.f)", (int)key, pos.x, pos.y);
     case MOUSE_DRAGGED: return str_format("MOUSE_DRAGGED %d (%.f, %.f)",(int)key, pos.x, pos.y);
     case MOUSE_MOVED:   return str_format("MOUSE_MOVED, (%.f, %.f)", pos.x, pos.y);
     case SCROLL_WHEEL:  return str_format("SCROLL_WHEEL %g", vel.y);
-    case GAMEPAD_AXIS:  return str_format("GAMEPAD_AXIS %s %g", skey.c_str(), pos.y);
+    case GAMEPAD_AXIS:  return str_format("GAMEPAD_AXIS %s %g (pad %d)", skey.c_str(), pos.y, which);
     case LOST_FOCUS:    return str_format("LOST_FOCUS");
     default:            return "unknown";
     }
@@ -67,6 +67,80 @@ bool Event::isKey() const
     default:
         return false;
     }
+}
+
+bool Event::isGamepad() const
+{
+    if (type == GAMEPAD_AXIS)
+        return true;
+    if (!isKey())
+        return false;
+    return GamepadA <= key && key <= GamepadAxisTriggerRightY;
+}
+
+
+KeyState::KeyState()
+{
+    reset();
+}
+
+bool KeyState::anyAxis() const
+{
+    foreach (const float2& ax, gamepadAxis)
+        if (!isZero(ax))
+            return true;
+    return false;
+}
+
+void KeyState::cancelMouseDown()
+{
+    (*this)[0 + LeftMouseButton] = false;
+    (*this)[1 + LeftMouseButton] = false;
+    (*this)[2 + LeftMouseButton] = false;
+}
+
+int KeyState::getUpKey(const Event *evt) const
+{
+    return ((evt->type == Event::KEY_UP)   ? getModKey(evt->key) :
+            (evt->type == Event::MOUSE_UP) ? getModKey(evt->key + LeftMouseButton) :
+            0);
+}
+
+int KeyState::getDownKey(const Event *evt) const
+{
+    return ((evt->type == Event::KEY_DOWN)   ? getModKey(evt->key) :
+            (evt->type == Event::MOUSE_DOWN) ? getModKey(evt->key + LeftMouseButton) :
+            0);
+}
+
+int KeyState::getModKey(int key) const
+{
+    const int mkey = key|keyMods();
+    if (chr_unshift(key) != key)
+    {
+        return mkey&~MOD_SHFT;
+    }
+    return mkey;
+}
+
+const char* KeyState::stringNext() const
+{
+    return gamepadActive ? "B" : _("ENTER/Click"); 
+}
+
+const char* KeyState::stringYes() const
+{
+    return gamepadActive ? "A" : _("ENTER"); 
+}
+
+const char* KeyState::stringNo() const
+{
+    return gamepadActive ? "B" : _("ESC"); 
+}
+
+const char* KeyState::stringDiscard() const
+{
+    return gamepadActive ? "Y" : _("DELETE"); 
 }
 
 bool& KeyState::operator[](int c)
@@ -102,9 +176,35 @@ uint KeyState::keyMods() const
     return mods;
 }
 
-Event KeyState::OnEvent(const Event* event)
+static Event gamepadAxis2Button(const Event *event, float val)
 {
     Event revent;
+    // create button up or down events when each axis toggles
+    const bool isDown = val == 0.f && event->pos.y != 0.f;
+    const bool isUp   = val != 0.f && event->pos.y == 0.f;
+    if (isDown || isUp)
+    {
+        revent.type = isDown ? Event::KEY_DOWN : Event::KEY_UP;
+        revent.which = event->which;
+        const int key = event->key;
+        const bool isPlus = val > 0.f || event->pos.y > 0.f;
+        if (key == GamepadAxisLeftX && isPlus)        revent.key = GamepadLeftLeft;
+        else if (key == GamepadAxisLeftX && !isPlus)  revent.key = GamepadLeftRight;
+        else if (key == GamepadAxisLeftY && isPlus)   revent.key = GamepadLeftDown;
+        else if (key == GamepadAxisLeftY && !isPlus)  revent.key = GamepadLeftUp;
+        else if (key == GamepadAxisRightX && isPlus)  revent.key = GamepadRightLeft;
+        else if (key == GamepadAxisRightX && !isPlus) revent.key = GamepadRightRight;
+        else if (key == GamepadAxisRightY && isPlus)  revent.key = GamepadRightDown;
+        else if (key == GamepadAxisRightY && !isPlus) revent.key = GamepadRightUp;
+        else if (key == GamepadAxisTriggerLeftY)      revent.key = GamepadTriggerLeft;
+        else if (key == GamepadAxisTriggerRightY)     revent.key = GamepadTriggerRight;
+        revent.rawkey = revent.key;
+    }
+    return revent;
+}
+
+Event KeyState::OnEvent(const Event* event)
+{
     KeyState &self = *this;
     switch (event->type)
     {
@@ -115,6 +215,10 @@ Event KeyState::OnEvent(const Event* event)
             self[RightMouseButton] = (event->type == Event::KEY_DOWN);
         }
         self[event->rawkey] = (event->type == Event::KEY_DOWN);
+        if (GamepadA <= event->key && event->key <= GamepadAxisTriggerRightY)
+        {
+            gamepads[event->which].buttons[event->key - GamepadA] = (event->type == Event::KEY_DOWN);
+        }
         break;
 
     case Event::MOUSE_DOWN:
@@ -137,48 +241,36 @@ Event KeyState::OnEvent(const Event* event)
     case Event::MOUSE_DRAGGED:
     {
         cursorPosScreen = event->pos;
-        gamepadActive = false;
+        if (event->type == Event::MOUSE_MOVED)
+            gamepadActive = false;
         break;
     }
     case Event::GAMEPAD_AXIS: 
     {
-        float* val = NULL;
+        if (abs(event->pos.y) > epsilon)
+        {
+            gamepadActive = true;
+            lastGamepad = event->which;
+        }
+
+        GamepadAxis axis;
+        int dim;
         switch (event->key)
         {
-        case GamepadAxisLeftX:         val = &getAxis(GamepadAxisLeft).x; break;
-        case GamepadAxisLeftY:         val = &getAxis(GamepadAxisLeft).y; break;
-        case GamepadAxisRightX:        val = &getAxis(GamepadAxisRight).x; break;
-        case GamepadAxisRightY:        val = &getAxis(GamepadAxisRight).y; break;
-        case GamepadAxisTriggerLeftY:  val = &getAxis(GamepadAxisTriggerLeft).y; break;
-        case GamepadAxisTriggerRightY: val = &getAxis(GamepadAxisTriggerRight).y; break;
+        case GamepadAxisLeftX:         axis = GamepadAxisLeft; dim = 0; break;
+        case GamepadAxisLeftY:         axis = GamepadAxisLeft; dim = 1; break;
+        case GamepadAxisRightX:        axis = GamepadAxisRight; dim = 0; break;
+        case GamepadAxisRightY:        axis = GamepadAxisRight; dim = 1; break;
+        case GamepadAxisTriggerLeftY:  axis = GamepadAxisTriggerLeft; dim = 1; break;
+        case GamepadAxisTriggerRightY: axis = GamepadAxisTriggerRight; dim = 1; break;
+        default: return Event();
         }
-        if (val)
-        {
-            // create button up or down events when each axis toggles
-            const bool isDown = *val == 0.f && event->pos.y != 0.f;
-            const bool isUp   = *val != 0.f && event->pos.y == 0.f;
-            if (isDown || isUp)
-            {
-                revent.type = isDown ? Event::KEY_DOWN : Event::KEY_UP;
-                const int key = event->key;
-                const bool isPlus = *val > 0.f || event->pos.y > 0.f;
-                if (key == GamepadAxisLeftX && isPlus)        revent.key = GamepadLeftLeft;
-                else if (key == GamepadAxisLeftX && !isPlus)  revent.key = GamepadLeftRight;
-                else if (key == GamepadAxisLeftY && isPlus)   revent.key = GamepadLeftDown;
-                else if (key == GamepadAxisLeftY && !isPlus)  revent.key = GamepadLeftUp;
-                else if (key == GamepadAxisRightX && isPlus)  revent.key = GamepadRightLeft;
-                else if (key == GamepadAxisRightX && !isPlus) revent.key = GamepadRightRight;
-                else if (key == GamepadAxisRightY && isPlus)  revent.key = GamepadRightDown;
-                else if (key == GamepadAxisRightY && !isPlus) revent.key = GamepadRightUp;
-                else if (key == GamepadAxisTriggerLeftY)      revent.key = GamepadTriggerLeft;
-                else if (key == GamepadAxisTriggerRightY)     revent.key = GamepadTriggerRight;
-                revent.rawkey = revent.key;
-            }
-            *val = event->pos.y;
-            if (abs(event->pos.y) > epsilon)
-                gamepadActive = true;
-        }
-        break;
+
+        GamepadInstance &gi = gamepads[event->which];
+        const float before = gi.axis[axis][dim];
+        gi.axis[axis][dim] = event->pos.y;
+        gamepadAxis[axis][dim] = event->pos.y;
+        return gamepadAxis2Button(event, before);
     }
     case Event::GAMEPAD_REMOVED:
     case Event::LOST_FOCUS:
@@ -189,7 +281,7 @@ Event KeyState::OnEvent(const Event* event)
     default:
         break;
     }
-    return revent;
+    return Event();
 }
 
 static string keyToUTF8(int key)
@@ -208,28 +300,29 @@ static string rawKeyToString(int key)
 {
     switch (key) 
     {
-    case LeftMouseButton:          return "Left Mouse";
-    case RightMouseButton:         return "Right Mouse";
-    case MiddleMouseButton:        return "Middle Mouse";
-    case MouseButtonFour:          return "Mouse4";
-    case MouseButtonFive:          return "Mouse5";
-    case NSUpArrowFunctionKey:     return "Up";
-    case NSDownArrowFunctionKey:   return "Down";
-    case NSRightArrowFunctionKey:  return "Right";
-    case NSLeftArrowFunctionKey:   return "Left";
-    case OShiftKey:                return "Shift";
-    case OControlKey:              return "Control";
-    case OAltKey:                  return "Alt";
-    case '\t':                     return "Tab";
-    case '\r':                     return "Enter";
-    case ' ':                      return "Space";
-    case NSPageUpFunctionKey:      return "Page Up";
-    case NSPageDownFunctionKey:    return "Page Down";
-    case NSHomeFunctionKey:        return "Home";
-    case NSEndFunctionKey:         return "End";
-    case NSDeleteFunctionKey:      return "Delete";
-    case NSBackspaceCharacter:     return "Backspace";
-    case EscapeCharacter:          return "Escape";
+    case LeftMouseButton:          return _("Left Mouse");
+    case RightMouseButton:         return _("Right Mouse");
+    case MiddleMouseButton:        return _("Middle Mouse");
+    case MouseButtonFour:          return _("Mouse4");
+    case MouseButtonFive:          return _("Mouse5");
+    case MouseButtonSix:           return _("Mouse6");
+    case NSUpArrowFunctionKey:     return _("Up");
+    case NSDownArrowFunctionKey:   return _("Down");
+    case NSRightArrowFunctionKey:  return _("Right");
+    case NSLeftArrowFunctionKey:   return _("Left");
+    case OShiftKey:                return _("Shift");
+    case OControlKey:              return _("Control");
+    case OAltKey:                  return _("Alt");
+    case '\t':                     return _("Tab");
+    case '\r':                     return _("Enter");
+    case ' ':                      return _("Space");
+    case NSPageUpFunctionKey:      return _("Page Up");
+    case NSPageDownFunctionKey:    return _("Page Down");
+    case NSHomeFunctionKey:        return _("Home");
+    case NSEndFunctionKey:         return _("End");
+    case NSDeleteFunctionKey:      return _("Delete");
+    case NSBackspaceCharacter:     return _("Backspace");
+    case EscapeCharacter:          return _("Escape");
     case NSF1FunctionKey:          return "F1";
     case NSF2FunctionKey:          return "F2";
     case NSF3FunctionKey:          return "F3";
@@ -242,54 +335,54 @@ static string rawKeyToString(int key)
     case NSF10FunctionKey:         return "F10";
     case NSF11FunctionKey:         return "F11";
     case NSF12FunctionKey:         return "F12";
-    case GamepadA:                 return "Gamepad A";
-    case GamepadB:                 return "Gamepad B";
-    case GamepadX:                 return "Gamepad X";
-    case GamepadY:                 return "Gamepad Y";
-    case GamepadBack:              return "Gamepad Back";
-    case GamepadGuide:             return "Gamepad Guide";
-    case GamepadStart:             return "Gamepad Start";
-    case GamepadLeftStick:         return "Left Stick";
-    case GamepadRightSitck:        return "Right Sitck";
-    case GamepadLeftShoulder:      return "Left Bumper";
-    case GamepadRightShoulder:     return "Right Bumper";
-    case GamepadDPadUp:            return "DPad Up";
-    case GamepadDPadDown:          return "DPad Down";
-    case GamepadDPadLeft:          return "DPad Left";
-    case GamepadDPadRight:         return "DPad Right";
-    case GamepadAxisLeftX:         return "Left Axis X";
-    case GamepadAxisLeftY:         return "Left Axis Y";
-    case GamepadAxisRightX:        return "Right Axis X";
-    case GamepadAxisRightY:        return "Right Axis Y";
-    case GamepadAxisTriggerLeftY:  return "Left Trigger Axis";
-    case GamepadAxisTriggerRightY: return "Right Trigger Axis";
-    case GamepadLeftUp:            return "Left Stick Up";
-    case GamepadLeftDown:          return "Left Stick Down";
-    case GamepadLeftLeft:          return "Left Stick Left";
-    case GamepadLeftRight:         return "Left Stick Right";
-    case GamepadRightUp:           return "Right Stick Up";
-    case GamepadRightDown:         return "Right Stick Down";
-    case GamepadRightLeft:         return "Right Stick Left";
-    case GamepadRightRight:        return "Right Stick Right";
-    case GamepadTriggerLeft:       return "Left Trigger";
-    case GamepadTriggerRight:      return "Right Trigger";
-    case Keypad0:                  return "Keypad 0";
-    case Keypad1:                  return "Keypad 1";
-    case Keypad2:                  return "Keypad 2";
-    case Keypad3:                  return "Keypad 3";
-    case Keypad4:                  return "Keypad 4";
-    case Keypad5:                  return "Keypad 5";
-    case Keypad6:                  return "Keypad 6";
-    case Keypad7:                  return "Keypad 7";
-    case Keypad8:                  return "Keypad 8";
-    case Keypad9:                  return "Keypad 9";
-    case KeyVolumeDown:            return "Volume Down";
-    case KeyVolumeUp:              return "Volume Up";
-    case KeyAudioNext:             return "Play Next";
-    case KeyAudioPrev:             return "Play Prev";
-    case KeyAudioPlay:             return "Play";
-    case KeyAudioStop:             return "Stop";
-    case KeyAudioMute:             return "Mute";
+    case GamepadA:                 return _("Gamepad A");
+    case GamepadB:                 return _("Gamepad B");
+    case GamepadX:                 return _("Gamepad X");
+    case GamepadY:                 return _("Gamepad Y");
+    case GamepadBack:              return _("Gamepad Back");
+    case GamepadGuide:             return _("Gamepad Guide");
+    case GamepadStart:             return _("Gamepad Start");
+    case GamepadLeftStick:         return _("Left Stick");
+    case GamepadRightSitck:        return _("Right Stick");
+    case GamepadLeftShoulder:      return _("Left Bumper");
+    case GamepadRightShoulder:     return _("Right Bumper");
+    case GamepadDPadUp:            return _("DPad Up");
+    case GamepadDPadDown:          return _("DPad Down");
+    case GamepadDPadLeft:          return _("DPad Left");
+    case GamepadDPadRight:         return _("DPad Right");
+    case GamepadAxisLeftX:         return _("Left Axis X");
+    case GamepadAxisLeftY:         return _("Left Axis Y");
+    case GamepadAxisRightX:        return _("Right Axis X");
+    case GamepadAxisRightY:        return _("Right Axis Y");
+    case GamepadAxisTriggerLeftY:  return _("Left Trigger Axis");
+    case GamepadAxisTriggerRightY: return _("Right Trigger Axis");
+    case GamepadLeftUp:            return _("Left Stick Up");
+    case GamepadLeftDown:          return _("Left Stick Down");
+    case GamepadLeftLeft:          return _("Left Stick Left");
+    case GamepadLeftRight:         return _("Left Stick Right");
+    case GamepadRightUp:           return _("Right Stick Up");
+    case GamepadRightDown:         return _("Right Stick Down");
+    case GamepadRightLeft:         return _("Right Stick Left");
+    case GamepadRightRight:        return _("Right Stick Right");
+    case GamepadTriggerLeft:       return _("Left Trigger");
+    case GamepadTriggerRight:      return _("Right Trigger");
+    case Keypad0:                  return _("Keypad 0");
+    case Keypad1:                  return _("Keypad 1");
+    case Keypad2:                  return _("Keypad 2");
+    case Keypad3:                  return _("Keypad 3");
+    case Keypad4:                  return _("Keypad 4");
+    case Keypad5:                  return _("Keypad 5");
+    case Keypad6:                  return _("Keypad 6");
+    case Keypad7:                  return _("Keypad 7");
+    case Keypad8:                  return _("Keypad 8");
+    case Keypad9:                  return _("Keypad 9");
+    case KeyVolumeDown:            return _("Volume Down");
+    case KeyVolumeUp:              return _("Volume Up");
+    case KeyAudioNext:             return _("Play Next");
+    case KeyAudioPrev:             return _("Play Prev");
+    case KeyAudioPlay:             return _("Play");
+    case KeyAudioStop:             return _("Stop");
+    case KeyAudioMute:             return _("Mute");
     case 0:                        return " ";
     default:                       return or_(keyToUTF8(key), str_format("%#x", key));
     }
@@ -300,9 +393,9 @@ string keyToString(int key)
     if (key == -1)
         return "<Invalid>";
     string str;
-    if (key&MOD_CTRL) str += "Ctrl-";
-    if (key&MOD_ALT)  str += "Alt-";
-    if (key&MOD_SHFT) str += "Shft-";
+    if (key&MOD_CTRL) str += _("Ctrl-");
+    if (key&MOD_ALT)  str += _("Alt-");
+    if (key&MOD_SHFT) str += _("Shft-");
     return str + rawKeyToString(key&~MOD_MASK);
 }
 

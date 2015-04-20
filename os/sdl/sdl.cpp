@@ -492,16 +492,14 @@ int OL_SaveTexture(const OutlawTexture *tex, const char* fname)
     return success;
 }
 
-static const int                 kMaxFonts = 10;
-static lstring                   g_fontFiles[kMaxFonts];
-static lstring                   g_fontNames[kMaxFonts];
-static std::map<uint, TTF_Font*> g_fonts;
-static std::mutex                g_fontMutex;
+static lstring    g_fontFiles[OL_MAX_FONTS];
+static TTF_Font*  g_fonts[OL_MAX_FONTS];
+static std::mutex g_fontMutex;
 
 TTF_Font* getFont(int fontName, float size)
 {
     std::lock_guard<std::mutex> l(g_fontMutex);
-    if (0 > fontName || fontName > kMaxFonts)
+    if (0 > fontName || fontName > OL_MAX_FONTS)
         return NULL;
     lstring file = g_fontFiles[fontName];
     if (!file)
@@ -514,31 +512,35 @@ TTF_Font* getFont(int fontName, float size)
     if (!font)
     {
         font = TTF_OpenFont(file.c_str(), isize);
-        lstring name = g_fontNames[fontName];
         if (font) {
-            ReportSDL("Loaded font '%s' at size %d", name.c_str(), isize);
+            ReportSDL("Loaded font '%s' at size %d", file.c_str(), isize);
         } else {
             ReportSDL("Failed to load font '%s' at size '%d': %s",
-                      name.c_str(), isize, TTF_GetError());
+                      file.c_str(), isize, TTF_GetError());
         }
         ASSERT(font);
     }
     return font;
 }
 
-void OL_SetFont(int index, const char* file, const char* name)
+void OL_SetFont(int index, const char* file)
 {
     std::lock_guard<std::mutex> l(g_fontMutex);
     const char* fname = OL_PathForFile(file, "r");
-    g_fontNames[index] = lstring(name);
     if (fname && OL_FileDirectoryPathExists(fname))
     {
         g_fontFiles[index] = lstring(fname);
-        ReportSDL("Found font %d '%s' at '%s'", index, name, fname);
+        TTF_Font*  &font  = g_fonts[key];
+        if (font)
+        {
+            TTF_CloseFont(font);
+            font = NULL;
+        }
+        ReportSDL("Found font %d at '%s': %s", index, fname, getFont(index, 12) ? "OK" : "FAILED");
     }
     else
     {
-        ReportSDL("Unable to find font %d '%s'", index, name);
+        ReportSDL("Unable to find font %d '%s'", index, fname);
     }
 }
 
@@ -604,7 +606,6 @@ int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int _font,
     bool last_was_fallback = false;
     int line_pixel_width = 0;
 
-    bool last_was_caret = false;
     int  color_count = 0;
 
     size_t textlen = SDL_strlen(str);
@@ -623,20 +624,21 @@ int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int _font,
 
         int pixel_width, pixel_height;
 
-        if (last_was_caret && '0' <= chr && chr <= '9')
+        if (chr == '^' && textlen > 0 && '0' <= str[chr_end] && str[chr_end] <= '9')
         {
-            Strip st = { font, 0, color, string(&str[strip_start], chr_start - strip_start - 1) };
+            Strip st = { font, 0, color, string(&str[strip_start], chr_start - strip_start) };
             if (st.text.size()) {
                 TTF_SizeUTF8(font, st.text.c_str(), &st.pixel_width, &pixel_height);
                 strips.push_back(std::move(st));
             }
 
-            text_pixel_width += st.pixel_width;
-            strip_start = chr_end;
-            
-            last_was_caret = false;
+            line_pixel_width += st.pixel_width;
+
+            const Uint64 num = UTF8_getch(&text, &textlen);
+
+            strip_start = totallen - textlen;
             color_count++;
-            color = getQuake3Color(chr - '0');
+            color = getQuake3Color(num - '0');
         }
         else if (chr == '\n' || chr == '\0' || chr == UNKNOWN_UNICODE)
         {
@@ -667,7 +669,7 @@ int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int _font,
 
             if (!fallback_font || !TTF_GlyphIsProvided(fallback_font, chr))
             {
-                for (int j=0; j<arraySize(g_fontNames); j++)
+                for (int j=0; j<arraySize(g_fontFiles); j++)
                 {
                     if (j == _font)
                         continue;
@@ -703,7 +705,6 @@ int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int _font,
         }
         else
         {
-            last_was_caret = (chr == '^');
             last_was_fallback = false;
         }
     }
@@ -938,7 +939,7 @@ static void HandleEvents()
                 break;
             case SDL_WINDOWEVENT_FOCUS_LOST: {
                 ReportSDL("Window %d lost keyboard focus", evt.window.windowID);
-                e.type = OLEvent::LOST_FOCUS;
+                e.type = OL_LOST_FOCUS;
                 OLG_OnEvent(&e);
                 break;
             }
@@ -956,7 +957,7 @@ static void HandleEvents()
         case SDL_KEYUP:         // fallthrough
         case SDL_KEYDOWN:
         {
-            e.type = (evt.type == SDL_KEYDOWN) ? OLEvent::KEY_DOWN : OLEvent::KEY_UP;
+            e.type = (evt.type == SDL_KEYDOWN) ? OL_KEY_DOWN : OL_KEY_UP;
             e.key = keysymToKey(evt.key.keysym);
 
             //ReportSDL("key %s %d %c\n", (evt.type == SDL_KEYDOWN) ? "down" : "up", evt.key.keysym.sym, e.key);
@@ -981,17 +982,17 @@ static void HandleEvents()
                              (state&SDL_BUTTON_X1MASK) ? 3 :
                              (state&SDL_BUTTON_X2MASK) ? 4 : -1);
             if (key == -1) {
-                e.type = OLEvent::MOUSE_MOVED;
+                e.type = OL_MOUSE_MOVED;
             } else {
                 e.key = key;
-                e.type = OLEvent::MOUSE_DRAGGED;
+                e.type = OL_MOUSE_DRAGGED;
             }
             OLG_OnEvent(&e);
             break;
         }
         case SDL_MOUSEWHEEL:
         {
-            e.type = OLEvent::SCROLL_WHEEL;
+            e.type = OL_SCROLL_WHEEL;
             e.dy = 5.f * evt.wheel.y;
             e.dx = evt.wheel.x;
             OLG_OnEvent(&e);
@@ -1002,7 +1003,7 @@ static void HandleEvents()
         {
             e.x = evt.button.x / g_scaling_factor;
             e.y = (g_windowSize.y - evt.button.y) / g_scaling_factor;
-            e.type = evt.type == SDL_MOUSEBUTTONDOWN ? OLEvent::MOUSE_DOWN : OLEvent::MOUSE_UP;
+            e.type = evt.type == SDL_MOUSEBUTTONDOWN ? OL_MOUSE_DOWN : OL_MOUSE_UP;
             switch (evt.button.button)
             {
             case SDL_BUTTON_LEFT:   e.key = 0; break;
@@ -1030,7 +1031,7 @@ void OL_Present(void)
 }
 
 
-void OL_ThreadBeginIteration(int i)
+void OL_ThreadBeginIteration()
 {
 }
 
@@ -1078,7 +1079,7 @@ const char *OL_LoadFile(const char *name)
     return sdl_os_autorelease(buf);
 }
 
-void OL_ThreadEndIteration(int i)
+void OL_ThreadEndIteration()
 {
     AutoreleasePool::instance().drain();
 }
@@ -1220,8 +1221,13 @@ int sdl_os_main(int argc, const char **argv)
 
             if (i == 0)
                 g_windowSize = int2(mode.w, mode.h);
-            g_windowSize = min(g_windowSize, int2(0.9f * float2(mode.w, mode.h)));
+            
+            if (mode.w>0 && mode.h>0)
+            {
+                g_windowSize = min(g_windowSize, int2(0.9f * float2(mode.w, mode.h)));
+            }
         }
+        g_windowSize = max(int2(640, 480), g_windowSize);
         ReportSDL("Requesting initial window size of %dx%d", g_windowSize.x, g_windowSize.y);
         ReportSDL("Current SDL video driver is '%s'", SDL_GetCurrentVideoDriver());
     }
@@ -1269,17 +1275,22 @@ int sdl_os_main(int argc, const char **argv)
         return 1;
     }
 
-    static const double kFrameTime = 1.0 / 60.0;
-
     while (!g_quitting)
     {
         const double start = OL_GetCurrentTime();
         HandleEvents();
         OLG_Draw();
-        const double frameTime = max(0.0, OL_GetCurrentTime() - start);
-        if (frameTime < kFrameTime) {
-            std::this_thread::sleep_for(std::chrono::microseconds(round_int(1e6 * (kFrameTime - frameTime))));
-            // SDL_Delay((kFrameTime - frameTime) * 1000.0);
+
+        const float targetFPS = OLG_GetTargetFPS();
+        if (targetFPS > 0.f)
+        {
+            const double frameTime = max(0.0, OL_GetCurrentTime() - start);
+            const double targetFrameTime = 1.0 / targetFPS;
+
+            if (frameTime < targetFrameTime) {
+                std::this_thread::sleep_for(std::chrono::microseconds(round_int(1e6 * (targetFrameTime - frameTime))));
+                // SDL_Delay((targetFrameTime - frameTime) * 1000.0);
+            }
         }
     }
 

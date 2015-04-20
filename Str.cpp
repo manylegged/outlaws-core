@@ -51,10 +51,44 @@ std::string str_vformat(const char *format, va_list vl)
     const int chars = vsnprintf(NULL, 0, format, vl2);
     va_end(vl2);
     std::string s(chars, ' ');
-    int r = vsnprintf((char*) s.data(), chars+1, format, vl);
+    int r = vsnprintf(&s[0], chars+1, format, vl);
     ASSERT(r == chars);
     return s;
 }
+
+void str_append_vformat(std::string &str, const char *format, va_list vl)
+{
+    va_list vl2;
+    va_copy(vl2, vl);
+    const int chars = vsnprintf(NULL, 0, format, vl2);
+    va_end(vl2);
+    const int start = str.size();
+    str.resize(start + chars);
+    vsnprintf(&str[start], chars+1, format, vl);
+}
+    
+void str_append_format(std::string &str, const char *format, ...)
+{
+    va_list vl;
+    va_start(vl, format);
+    str_append_vformat(str, format, vl);
+    va_end(vl);   
+}
+
+std::string str_add_line_numbers(const char* s, int start)
+{
+    std::string r;
+    int i=start;
+    r += str_format("%d: ", i++);
+    for (const char* p = s; *p != '\0'; ++p) {
+        r += *p;
+        if (*p == '\n') {
+            r += str_format("%d: ", i++);
+        }
+    }
+    return r;
+}
+
 
 vector<string> str_split_quoted(char token, const string& line)
 {
@@ -250,6 +284,30 @@ std::string str_reltime_format(float seconds)
         return str_time_format(-seconds) + " ago";
 }
 
+std::string str_numeral_format(int num)
+{
+    static const char* numerals[] = { "zero", "one", "two", "three", "four", "five", "six",
+                                    "seven", "eight", "nine", "ten", "eleven", "twelve",
+                                    "thirteen", "fourteen", "fifteen", "sixteen",
+                                    "seventeen", "eighteen", "nineteen" };
+    static const char* tens[] = { "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety" };
+    if (abs(num) >= 100)
+        return str_format("%d", num);
+    std::string ret;
+    if (num < 0)
+        ret += "negative ";
+    num = abs(num);
+    if (num < 20) {
+        ret += numerals[num];
+    } else {
+        ret += tens[num / 10 - 2];
+        ret += " ";
+        ret += numerals[num % 10];
+    }
+    return ret;
+}
+
+
 std::string str_bytes_format(int bytes)
 {
     static const double kilo = 1000.0; // 1024.0;
@@ -263,57 +321,100 @@ std::string str_bytes_format(int bytes)
         return str_format("%.1f GB", bytes / (kilo * kilo * kilo));
 }
 
-std::string str_path_standardize(const std::string &str)
+template <typename T>
+static std::basic_string<T> str_path_standardize1(const std::basic_string<T> &str, T sep)
 {
-    string path(str.size(), ' ');
-    int rdx = 0;
-    int idx = 0;
-    while (rdx < str.size()) 
-    {
-        while (str[rdx] == '/' && rdx > 0 && str[rdx-1] == '/' && rdx < str.size())
-            rdx++;
-
-        if (rdx > 0 && str[rdx] == '.' && str[rdx-1] == '.' &&
-            idx > 2 && path[idx-3] != '.')
-        {
-            int i=idx-3;
-            while (path[i--] != '/' && i >= 0);
-            rdx++;
-            idx = i+1;
-            while (str[rdx] == '/')
-                rdx++;
-        }
-        path[idx] = str[rdx];
-        idx++;
-        rdx++;
+    const int root_size = (str.size() && str[0] == '/') ? 1 :
+                          (str.size() > 1 && str[1] == ':') ? 3 : 0;
+    if (root_size == 3)
+        sep = T('\\');
+    const T wsep = (sep == T('/')) ? T('\\') : T('/');
+    std::basic_string<T> path;
+    if (root_size) {
+        for (int i=0; i<root_size-1; i++)
+            path += str[i];
+        path += sep;
     }
-    while (idx > 0 && strchr("/ ", path[idx-1]))
-        idx--;
-    path.resize(idx);
+    for (int sidx=root_size; sidx < str.size(); sidx++)
+    {
+        const T cur = str[sidx] == wsep ? sep : str[sidx];
+        const T lst = sidx > root_size ? (str[sidx-1] == wsep ? sep : str[sidx-1]) : T(0);
+        
+        if (cur == sep && lst == sep) // foo// -> foo/
+        {
+        }
+        else if (cur == '.' && lst == '.') // foo/bar/.. -> foo/ .. -> .. or /.. -> /
+        {
+            if (path.size() > 2+root_size && path[path.size()-3] != '.')
+            {
+                int i;
+                for (i=path.size()-3; i > root_size && path[i] != sep; i--);
+                path.resize(max(i, root_size));
+            }
+            else if (root_size)
+            {
+                path.pop_back();
+            }
+            else
+            {
+                path += cur;
+            }
+        }
+        else if (cur == sep && lst == '.' && // foo/./ -> foo/
+                 (sidx == 1 || str[sidx-2] != '.'))
+        {
+            path.pop_back();
+        }
+        else if (path.empty() && cur == sep)
+        {
+        }
+        else
+        {
+            path += cur;
+        }
+    }
+    while (path.size() > root_size && path.back() == sep)
+        path.pop_back();
+    if (!path.size())
+        path += (T)'.';
     return path;
+    // return *new std::basic_string<T>(path);
+}
+
+std::string str_path_standardize(std::string str)
+{
+    return str_path_standardize1(str, '/');
+}
+
+std::wstring str_w32path_standardize(const std::wstring &str)
+{
+    return str_path_standardize1(str, L'\\');
+}
+
+static std::string str_w32path_standardize(const std::string &str)
+{
+    return str_path_standardize1(str, '\\');
 }
 
 
 std::string str_dirname(const std::string &str)
 {
     size_t end = str.size()-1;
-    while (end > 0 && str[end] == '/')
+    while (end > 0 && strchr("/\\", str[end]))
         end--;
-    size_t pt = str.rfind("/", end);
+    size_t pt = str.find_last_of("/\\", end);
     if (pt == std::string::npos)
         return ".";
-    else if (pt == 0)
-        return "/";
     else
-        return str.substr(0, pt);
+        return str.substr(0, max((size_t)1, pt));
 }
 
 std::string str_basename(const std::string &str)
 {
     size_t end = str.size()-1;
-    while (end > 0 && str[end] == '/')
+    while (end > 0 && strchr("/\\", str[end]))
         end--;
-    size_t pt = str.rfind("/", end);
+    size_t pt = str.find_last_of("/\\", end);
     if (pt == std::string::npos)
         return str;
     else
@@ -347,6 +448,8 @@ std::string str_capitalize(const char* str)
     for (int i=1; i<s.size(); i++) {
         if (str_contains(" \n\t_-", s[i-1]))
             s[i] = toupper(s[i]);
+        else
+            s[i] = tolower(s[i]);
     }
         
     return s;
@@ -355,19 +458,38 @@ std::string str_capitalize(const char* str)
 bool str_runtests()
 {
 #if IS_DEVEL
+    // str_w32path_standardize(L"C:/foo/bar");
+    assert_eql(str_path_standardize("/foo/../.."), "/");
     assert_eql(str_path_standardize("~/Foo//Bar.lua"), "~/Foo/Bar.lua");
     assert_eql(str_path_standardize("../../bar.lua"), "../../bar.lua");
     assert_eql(str_path_standardize("foo/baz/../../bar.lua////"), "bar.lua");
     assert_eql(str_path_standardize("foo/baz/.."), "foo");
+    assert_eql(str_path_standardize("foo/../"), ".");
     assert_eql(str_path_standardize("foo/baz/../"), "foo");
+    assert_eql(str_path_standardize("foo/baz/./"), "foo/baz");
+    assert_eql(str_path_standardize("foo//baz"), "foo/baz");
+    assert_eql(str_path_standardize("foo/baz/./.."), "foo");
+    assert_eql(str_path_standardize("./foo"), "foo");
+    assert_eql(str_path_standardize("foo/../.."), "..");
+    assert_eql(str_path_standardize("/../../../../../../.."), "/");
+    assert_eql(str_path_standardize("c:/foo/../.."), "c:\\");
+    assert_eql(str_path_standardize("/foo подпис/공전baz/../"), "/foo подпис");
+    assert_eql(str_path_standardize("foo/../正文如下：///"), "正文如下：");
+    assert_eql(str_path_standardize("C:\\foo\\bar\\..\\"), "C:\\foo");
+    assert_eql(str_path_standardize("C:\\foo\\..\\..\\..\\.."), "C:\\");
+    assert_eql(str_path_standardize("foo\\..\\.."), "..");
+    assert_eql(str_w32path_standardize("C:/foo/bar/../"), "C:\\foo");
+    assert_eql(str_w32path_standardize("foo/bar/../baz"), "foo\\baz");
     assert_eql(str_path_join("foo", "bar"), "foo/bar");
     assert_eql(str_path_join("foo/", "bar"), "foo/bar");
     assert_eql(str_path_join("foo/", "/bar"), "/bar");
     assert_eql(str_path_join("foo/", (const char*)NULL), "foo/");
     assert_eql(str_path_join("foo/", ""), "foo/");
     assert_eql(str_path_join("/home/foo", "bar"), "/home/foo/bar");
-    assert_eql(str_path_join(str_path_join("/home/foo", "bar"), "/baz"), "/baz");
+    assert_eql(str_path_join("/home/foo", "bar", "/baz"), "/baz");
     assert_eql(str_path_join("/foo/bar", "c:/thing"), "c:/thing");
+    assert_eql(str_path_join("c:/foo/bar", "thing"), "c:/foo/bar/thing");
+    assert_eql(str_path_join("c:\\", "thing"), "c:\\thing");
     assert_eql(str_path_join("/foo/bar", "/thing"), "/thing");
     assert_eql(str_dirname("foo/"), ".");
     assert_eql(str_dirname("/foo/"), "/");
@@ -379,6 +501,8 @@ bool str_runtests()
     assert_eql(str_rfind(url, "?f"), str_rfind(std::string(url), "?f"));
     assert_eql(str_rfind(url, "?f"), str_rfind(url, std::string("?f")));
     assert_eql(str_substr(url, 10, 5), str_substr(std::string(url), 10, 5));
+    assert_eql(str_numeral_format(57), "fifty seven");
+    assert_eql(str_numeral_format(-1), "negative one");
 #endif
     return 1;
 }
@@ -420,6 +544,13 @@ std::string str_demangle(const char *str)
     name = str_replace(name, "std::__1::", "std::");
     name = str_replace(name, "unsigned long long", "uint64");
     name = str_replace(name, "basic_string<char, std::char_traits<char>, std::allocator<char> >", "string");
+#if __APPLE__
+    name = str_replace(name, "glm::detail::tvec2<float, (glm::precision)0>", "float2");
+    name = str_replace(name, "glm::detail::tvec3<float, (glm::precision)0>", "float3");
+#else
+    name = str_replace(name, "glm::detail::tvec2<float,0>", "float2");
+    name = str_replace(name, "glm::detail::tvec3<float,0>", "float3");
+#endif
     return name;
 }
 

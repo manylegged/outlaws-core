@@ -131,10 +131,52 @@ struct IDeletable {
 #endif
 
 #include "Geometry.h"
-#include "Rand.h"
 #include "stl_ext.h"
+#include "Rand.h"
 #include "SpacialHash.h"
 #include "SerialCore.h"
 #include "Event.h"
+
+// do interpolation between two world positions from render thread
+struct RenderFloat2 {
+    
+    float2 last, current, render;
+
+    void set(float2 next)
+    {
+        last = current = render = next;
+    }
+    
+    void advanceUpdate(float2 next)
+    {
+        last = current;
+        current = next;
+    }
+
+    void advanceRender(float interpolant)
+    {
+        render = lerp(last, current, interpolant);
+    }
+};
+
+struct RenderAngle {
+    
+    float last=0.f, current=0.f, render=0.f;
+
+    void set(float next)
+    {
+        last = current = render = next;
+    }
+    void advanceUpdate(float next)
+    {
+        last = current;
+        current = next;
+    }
+
+    void advanceRender(float interpolant)
+    {
+        render = lerpAngles(last, current, interpolant);
+    }
+};
 
 #endif // STDAFX_CORE_H

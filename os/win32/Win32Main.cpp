@@ -55,32 +55,6 @@ std::wstring s2ws(const std::string& s)
     return r;
 }
 
-
-static const wchar_t* canonicalizePath(const wchar_t* inpt)
-{
-    static wchar_t buf[MAX_PATH];
-    memset(buf, 0, sizeof(buf));
-    // copy, remove ..
-    const wchar_t* rptr = inpt;
-    wchar_t* wptr = buf;
-    while (*rptr != L'\0') {
-        if (*rptr == L'.' && *(rptr - 1) == L'.') {
-            while (*wptr-- != L'\\' && wptr>buf);
-            while (*wptr-- != L'\\' && wptr>buf);
-            rptr++;
-            wptr++;
-        }
-        if (*rptr == L'/')
-            *wptr = L'\\';
-        else
-            *wptr = *rptr;
-        wptr++;
-        rptr++;
-    }
-    *wptr = L'\0';
-    return buf;
-}
-
 static std::wstring getDirname(const wchar_t *inpt)
 {
     wchar_t driv[_MAX_DRIVE];
@@ -111,8 +85,7 @@ static const std::wstring& getDataDir()
     {
         wchar_t binname[MAX_PATH];
         GetModuleFileName(NULL, binname, MAX_PATH);
-        str = getDirname(binname) + L"..\\";
-        str = canonicalizePath(str.c_str());
+        str = str_w32path_standardize(getDirname(binname) + L"..") + L"\\";
 
         ReportWin32("Data Directory is %s", ws2s(str).c_str());
     }
@@ -133,6 +106,7 @@ void ReportWin32Err1(const char *msg, DWORD dwLastError, const char* file, int l
 }
 
 #define ReportWin32Err(msg, err) ReportWin32Err1(msg, err, __FILE__, __LINE__)
+#define ReportWin32ErrF(msg, err) ReportWin32Err1(str_format msg .c_str(), err, __FILE__, __LINE__)
 
 const char* OL_GetUserName(void)
 {
@@ -200,8 +174,8 @@ std::wstring getKnownPath(REFKNOWNFOLDERID fid)
         if (pSHGetKnownFolderPath(fid, 0, NULL, &path) == S_OK)
             return path;
         else
-            ReportWin32Err(str_format("SHGetKnownFolderPath(%s)", knownFolderIdToString(fid)).c_str(),
-                           GetLastError());
+            ReportWin32ErrF(("SHGetKnownFolderPath(%s)", knownFolderIdToString(fid)),
+                            GetLastError());
     }
     else
     {
@@ -217,7 +191,7 @@ std::wstring getKnownPath(REFKNOWNFOLDERID fid)
     if (SUCCEEDED(res))
         return szPath;
 
-    ReportWin32Err(str_format("SHGetFolderPath(%s)", csidlToString(csidl)).c_str(), res);
+    ReportWin32ErrF(("SHGetFolderPath(%s)", csidlToString(csidl)), res);
     return std::wstring();
 }
 
@@ -229,39 +203,9 @@ static const std::wstring& getSaveDir()
         std::wstring path = getKnownPath(FOLDERID_SavedGames);
         if (path.empty())
             return getDataDir();
-        str = path + L'\\' + s2ws(OLG_GetName()) + L'\\';
-
-        if (!PathFileExists(str.c_str()))
-        {
-#if 0
-            std::wstring opath = std::wstring(path) + L"\\Outlaws\\";
-            if (PathFileExists(opath.c_str()))
-            {
-                BOOL success = MoveFileEx(opath.c_str(), str.c_str(), MOVEFILE_COPY_ALLOWED|MOVEFILE_WRITE_THROUGH);
-
-                ReportWin32("Moved save games from %s to %s: %s",
-                            ws2s(opath).c_str(), ws2s(str).c_str(), success ? "OK" : "FAILED");
-                if (!success)
-                    ReportWin32Err("MoveFileEx", GetLastError());
-            }
-#endif
-        }
+        str = str_win32path_join(path, s2ws(OLG_GetName())) + L'\\';
     }
     return str;
-}
-
-int OL_CopyFile(const char* source, const char* dest)
-{
-    string dpath = OL_PathForFile(dest, "w");
-    os_create_parent_dirs(dpath.c_str());
-    if (!CopyFile(s2ws(OL_PathForFile(source, "r")).c_str(), 
-                  s2ws(dpath).c_str(), FALSE))
-    {
-        ReportWin32Err("CopyFile", GetLastError());
-        return -1;
-    }
-
-    return 0;
 }
 
 static bool DirectoryExists(const wchar_t* szPath)
@@ -277,10 +221,11 @@ static std::wstring getTildePath(const char* fname, const char* path, REFKNOWNFO
     if (!str_startswith(fname, path))
         return L"";
     std::wstring npath = getKnownPath(fid);
-    if (npath.empty())
-        return L"";
-    npath += s2ws(fname + strlen(path));
-    return canonicalizePath(npath.c_str());
+    if (npath.size())
+    {
+        npath = str_w32path_standardize(str_win32path_join(npath, s2ws(fname + strlen(path))));
+    }
+    return npath;
 }
 
 std::wstring pathForFile(const char *fname, const char* flags)
@@ -294,23 +239,20 @@ std::wstring pathForFile(const char *fname, const char* flags)
     if (cpath.size())
         return cpath;
 
-    cpath = canonicalizePath(s2ws(fname).c_str());
+    cpath = str_w32path_standardize(s2ws(fname));
 
     // absolute path
     if (cpath.size() > 2 && cpath[1] == ':')
         return cpath;
 
-    const std::wstring savepath = getSaveDir() + cpath;
-    bool spexists = false;
-    if (!OLG_UseDevSavePath() && (flags[0] == 'w' || 
-                                  flags[0] == 'a' || 
-                                  (spexists = PathFileExists(savepath.c_str()))))
+    std::wstring savepath = str_win32path_join(getSaveDir(), cpath);
+    if (!OLG_UseDevSavePath() &&
+        (flags[0] == 'w' || flags[0] == 'a' || PathFileExists(savepath.c_str())))
     {
         return savepath;
     }
 
-    std::wstring respath = getDataDir() + cpath;
-    return respath;
+    return str_win32path_join(getDataDir(), cpath);
 }
 
 const char *OL_PathForFile(const char *fname, const char* flags)
@@ -325,54 +267,14 @@ int OL_FileDirectoryPathExists(const char* fname)
     return PathFileExists(path.c_str());
 }
 
-static BOOL DirectoryExists(LPCTSTR szPath)
-{
-  DWORD dwAttrib = GetFileAttributes(szPath);
-
-  return (dwAttrib != INVALID_FILE_ATTRIBUTES && 
-         (dwAttrib & FILE_ATTRIBUTE_DIRECTORY));
-}
-
 int OL_DirectoryExists(const char *fname)
 {
     std::wstring path = pathForFile(fname, "r");
     return DirectoryExists(path.c_str());
 }
 
-const char** OL_ListDirectory(const char* path1)
+static int CreateParentDirs(const std::wstring &path)
 {
-    // not thread safe!!
-    static vector<const char*> elements;
-    
-    const std::wstring path = pathForFile(path1, "r");
-
-    WIN32_FIND_DATA data;
-    memset(&data, 0, sizeof(data));
-
-    HANDLE hdir = FindFirstFile((path + L"\\*").c_str(), &data);
-    if (hdir == INVALID_HANDLE_VALUE) {
-        ReportWin32Err("FindFirstFile", GetLastError());
-        return NULL;
-    }
-
-    elements.clear();
-
-    do
-    {
-        if (!(data.dwFileAttributes&FILE_ATTRIBUTE_DIRECTORY))
-        {
-            elements.push_back(lstring(ws2s(data.cFileName)).c_str());
-        }
-    } while (FindNextFile(hdir, &data) != 0);
-
-    FindClose(hdir);
-    elements.push_back(NULL);
-    return &elements[0];
-}
-
-int os_create_parent_dirs(const char* path_)
-{
-    const std::wstring path = s2ws(path_);
     const std::wstring dirname = getDirname(path.c_str());
 
     DWORD res = SHCreateDirectoryEx(NULL, dirname.c_str(), NULL);
@@ -380,10 +282,60 @@ int os_create_parent_dirs(const char* path_)
         res != ERROR_FILE_EXISTS &&
         res != ERROR_ALREADY_EXISTS)
     {
-        ReportWin32Err(str_format("SHCreateDirectoryEx('%s')", ws2s(dirname).c_str()).c_str(), res);
+        ReportWin32ErrF(("SHCreateDirectoryEx('%s')", ws2s(dirname).c_str()), res);
         return 0;
     }
     return 1;
+}
+
+int os_create_parent_dirs(const char* path)
+{
+    return CreateParentDirs(s2ws(path));
+}
+
+int OL_CopyFile(const char* source, const char* dest)
+{
+    const std::wstring dpath = pathForFile(dest, "w");
+    const std::wstring spath = pathForFile(source, "r");
+    CreateParentDirs(dpath);
+    if (!CopyFile(spath.c_str(), dpath.c_str(), FALSE))
+    {
+        ReportWin32ErrF(("CopyFile('%s', '%s')", ws2s(spath).c_str(), ws2s(dpath).c_str()),
+                        GetLastError());
+        return -1;
+    }
+
+    return 0;
+}
+
+const char** OL_ListDirectory(const char* path1)
+{
+    // not thread safe!!
+    static vector<const char*> elements;
+    
+    const std::wstring path = pathForFile(path1, "r") + L"\\*";
+
+    WIN32_FIND_DATA data;
+    memset(&data, 0, sizeof(data));
+
+    HANDLE hdir = FindFirstFile(path.c_str(), &data);
+    if (hdir == INVALID_HANDLE_VALUE) {
+        ReportWin32ErrF(("FindFirstFile('%s')", ws2s(path).c_str()), GetLastError());
+        return NULL;
+    }
+
+    elements.clear();
+
+    do
+    {
+        if (data.cFileName[0] != '.')
+            elements.push_back(lstring(ws2s(data.cFileName)).c_str());
+    } while (FindNextFile(hdir, &data) != 0);
+
+    FindClose(hdir);
+    elements.push_back(NULL);
+    ReportMessagef("Listing %s: %d files", path1, (int) elements.size());
+    return &elements[0];
 }
 
 bool os_symlink_f(const char* source, const char* dest)
@@ -418,23 +370,25 @@ bool os_symlink_f(const char* source, const char* dest)
 
 int OL_SaveFile(const char *name, const char* data, int size)
 {
-    const char* fname = OL_PathForFile(name, "w");
-    const string fnameb = string(fname) + ".b";
+    const std::wstring fname = pathForFile(name, "w");
+    const std::wstring wfnameb = fname + L".b";
+    const string fnameb = ws2s(wfnameb);
 
-    if (!os_create_parent_dirs(fname))
+    if (!CreateParentDirs(fname))
         return 0;
 
     SDL_RWops *io = SDL_RWFromFile(fnameb.c_str(), "w");
 
     if (!io)
     {
-        ReportWin32("error opening '%s' for writing", fnameb.c_str());
+        ReportWin32("error opening '%s' for writing: %s", fnameb.c_str(), SDL_GetError());
         return 0;
     }
 
     // translate newlines
 #if 1
     string data1;
+    data1.reserve(size);
     for (const char* ptr=data; *ptr != '\0'; ptr++) {
         if (*ptr == '\n')
             data1 += "\r\n";
@@ -453,14 +407,13 @@ int OL_SaveFile(const char *name, const char* data, int size)
     }
     if (SDL_RWclose(io) != 0)
     {
-        ReportWin32("error closing temp file from '%s': %s'", fnameb.c_str(), SDL_GetError());
+        ReportWin32("error closing temp file from '%s': %s", fnameb.c_str(), SDL_GetError());
         return 0;
     }
     
-    if (!MoveFileEx(s2ws(fnameb).c_str(), s2ws(fname).c_str(), MOVEFILE_REPLACE_EXISTING))
+    if (!MoveFileEx(wfnameb.c_str(), fname.c_str(), MOVEFILE_REPLACE_EXISTING))
     {
-		ReportWin32Err("MoveFileEx", GetLastError());
-        ReportWin32("Failed to write %s", fname);
+		ReportWin32ErrF(("MoveFileEx('%s')", ws2s(fname).c_str()), GetLastError());
         return 0;
     }
 
@@ -469,18 +422,18 @@ int OL_SaveFile(const char *name, const char* data, int size)
 
 int OL_RemoveFileOrDirectory(const char* dirname)
 {
-	const char* path = OL_PathForFile(dirname, "w");
-    ReportWin32("RemoveFileOrDirectory '%s'", path);
+    std::wstring path = pathForFile(dirname, "w");
+    const std::string spath = ws2s(path);
+    ReportWin32("RemoveFileOrDirectory('%s)'", spath.c_str());
     fflush(NULL);
-    std::wstring buf = s2ws(path);
-    buf.push_back(L'\0');
-    buf.push_back(L'\0');
+    path.push_back(L'\0');
+    path.push_back(L'\0');
     SHFILEOPSTRUCT v;
     memset(&v, 0, sizeof(v));
     v.wFunc = FO_DELETE;
-    v.pFrom = buf.c_str();
+    v.pFrom = path.c_str();
     v.fFlags = FOF_NO_UI;
-    int val = SHFileOperation(&v);
+    const int val = SHFileOperation(&v);
     if (val != 0) {
         ReportWin32Err("SHFileOperation(FO_DELETE)", val);
     }
@@ -527,38 +480,39 @@ T * exception_cast(const UntypedException & e) {
   return reinterpret_cast<T *>(exception_cast_worker(e, ti));
 }
 
-#define PRINT_EXP(X) case EXCEPTION_ ## X: return #X;
+#define PRINT_STATUS(PREFIX, X) case PREFIX ## _ ## X: return #X;
 
 static const char* getExceptionCodeName(const EXCEPTION_RECORD *rec)
 {
-    DWORD code = rec->ExceptionCode;
+    const DWORD code = rec->ExceptionCode;
     static string str;
 
     switch(code)
     {
-        PRINT_EXP(ACCESS_VIOLATION);
-        PRINT_EXP(DATATYPE_MISALIGNMENT);
-        PRINT_EXP(BREAKPOINT);
-        PRINT_EXP(SINGLE_STEP);
-        PRINT_EXP(ARRAY_BOUNDS_EXCEEDED);
-        PRINT_EXP(FLT_DENORMAL_OPERAND);
-        PRINT_EXP(FLT_DIVIDE_BY_ZERO);
-        PRINT_EXP(FLT_INEXACT_RESULT);
-        PRINT_EXP(FLT_INVALID_OPERATION);
-        PRINT_EXP(FLT_OVERFLOW);
-        PRINT_EXP(FLT_STACK_CHECK);
-        PRINT_EXP(FLT_UNDERFLOW);
-        PRINT_EXP(INT_DIVIDE_BY_ZERO);
-        PRINT_EXP(INT_OVERFLOW);
-        PRINT_EXP(PRIV_INSTRUCTION);
-        PRINT_EXP(IN_PAGE_ERROR);
-        PRINT_EXP(ILLEGAL_INSTRUCTION);
-        PRINT_EXP(NONCONTINUABLE_EXCEPTION);
-        PRINT_EXP(STACK_OVERFLOW);
-        PRINT_EXP(INVALID_DISPOSITION);
-        PRINT_EXP(GUARD_PAGE);
-        PRINT_EXP(INVALID_HANDLE);
-    case DBG_CONTROL_C: return "DBG_CONTROL_C";
+        CASE_STR(EXCEPTION_ACCESS_VIOLATION);
+        CASE_STR(EXCEPTION_DATATYPE_MISALIGNMENT);
+        CASE_STR(EXCEPTION_BREAKPOINT);
+        CASE_STR(EXCEPTION_SINGLE_STEP);
+        CASE_STR(EXCEPTION_ARRAY_BOUNDS_EXCEEDED);
+        CASE_STR(EXCEPTION_FLT_DENORMAL_OPERAND);
+        CASE_STR(EXCEPTION_FLT_DIVIDE_BY_ZERO);
+        CASE_STR(EXCEPTION_FLT_INEXACT_RESULT);
+        CASE_STR(EXCEPTION_FLT_INVALID_OPERATION);
+        CASE_STR(EXCEPTION_FLT_OVERFLOW);
+        CASE_STR(EXCEPTION_FLT_STACK_CHECK);
+        CASE_STR(EXCEPTION_FLT_UNDERFLOW);
+        CASE_STR(EXCEPTION_INT_DIVIDE_BY_ZERO);
+        CASE_STR(EXCEPTION_INT_OVERFLOW);
+        CASE_STR(EXCEPTION_PRIV_INSTRUCTION);
+        CASE_STR(EXCEPTION_IN_PAGE_ERROR);
+        CASE_STR(EXCEPTION_ILLEGAL_INSTRUCTION);
+        CASE_STR(EXCEPTION_NONCONTINUABLE_EXCEPTION);
+        CASE_STR(EXCEPTION_STACK_OVERFLOW);
+        CASE_STR(EXCEPTION_INVALID_DISPOSITION);
+        CASE_STR(EXCEPTION_GUARD_PAGE);
+        CASE_STR(EXCEPTION_INVALID_HANDLE);
+        CASE_STR(DBG_CONTROL_C);
+        CASE_STR(STATUS_INVALID_PARAMETER);
     case 0xE06D7363: {
         UntypedException ue(*rec);
         if (std::exception * e = exception_cast<std::exception>(ue)) {
@@ -570,7 +524,7 @@ static const char* getExceptionCodeName(const EXCEPTION_RECORD *rec)
         }
     }
     default: {
-        str = str_format("UNKNOWN(%#d)", code);
+        str = str_format("UNKNOWN(%#x)", code);
         return str.c_str();
     }
     }

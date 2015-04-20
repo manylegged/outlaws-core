@@ -98,13 +98,18 @@ void GLText::load(const string& str, int font_, float size, float pointSize)
 
 void GLText::render(const ShaderState* s, float2 pos) const
 {
-    if (texture.width > 0 && texture.height > 0)
-    {
-        ASSERT(chars == texChars && fontSize == texFontSize);
+    if (texture.width <= 0 || texture.height <= 0)
+        return;
+    
+    ASSERT(chars == texChars && fontSize == texFontSize);
+    
+    const float2 textSizePoints = getSize();
 
-        const float2 textSizePoints = getSize();
-        ShaderTexture::instance().DrawRectCornersUpsideDown(*s, texture, pos, pos + textSizePoints);
-    }
+    glDisable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE);
+    ShaderTexture::instance().DrawRectCornersUpsideDown(*s, texture, pos, pos + textSizePoints);
+    glDepthMask(GL_TRUE);
+    glEnable(GL_DEPTH_TEST);
 }
 
 

@@ -29,12 +29,15 @@
 static DEFINE_CVAR(float, kLinearPosThreshold, 0.5); // how closely should we thrust to the direction we are trying to thrust?
 static DEFINE_CVAR(float, kLinearVelThreshold, 0.3); // when adjusting velocity only, accuracy of thrust direction
 static DEFINE_CVAR(float, kMaxLinearAngAccel, 0.1);
-static DEFINE_CVAR(float, kNavCanRotateThreshold, 0.1);
+static DEFINE_CVAR(float, kNavCanRotateThreshold, 1.f);
 
 static DEFINE_CVAR(bool, kNavThrustWhileTurning, true);
 
 static DEFINE_CVAR(float, kNavRotKp, 1.2f);
 static DEFINE_CVAR(float, kNavRotKd, 0.3f);
+
+static DEFINE_CVAR(float, kNavSpinnerThreshold, 2.f);
+static DEFINE_CVAR(float, kNavSpinnerMinAccel, 1.f);
 
 
 #define USE_EIGEN 0
@@ -119,7 +122,7 @@ static float3 moversForAccelEigen(float3 accel, vector<snMover*> &movers, bool e
 // enable movers to move us vaguely in the right direction...
 // FIXME make sure the returned acceleration matches the input direction as closely as possible
 // FIXME this means that some thrusters may not be fully enabled
-float2 sNav::moversForLinearAccel(float2 dir, float threshold, float maxAngAccel, bool enable)
+float2 sNav::moversForLinearAccel(float2 dir, float threshold, float *maxAngAccel, bool enable)
 {
     if (movers.size() == 0)
         return float2();
@@ -151,13 +154,16 @@ float2 sNav::moversForLinearAccel(float2 dir, float threshold, float maxAngAccel
         }
     }
 
-    if (!enable || movers.size() == 1 || enabled == 1 || (maxAngAccel < 0.f))
+    if (!enable || movers.size() == 1 || enabled == 1 || (*maxAngAccel < 0.f) || isSpinner)
+    {
+        *maxAngAccel = totalAngAccel;
         return accel;
+    }
     
     float angAccelError = totalAngAccel;
 
     // turn off thruster one by one until we stop adding rotation
-    while (fabsf(angAccelError) > maxAngAccel && (enabled - disabled > 1))
+    while (fabsf(angAccelError) > *maxAngAccel && (enabled - disabled > 1))
     {
         float    mxaa = 0.f;
         snMover *mxmv = NULL;
@@ -185,6 +191,8 @@ float2 sNav::moversForLinearAccel(float2 dir, float threshold, float maxAngAccel
         mxmv->accelEnabled -= v;
         disabled++;
     }
+    *maxAngAccel = angAccelError;
+    
     return accel;
 }
 
@@ -228,11 +236,22 @@ float sNav::moversForAngAccel(float angAccel, bool enable)
 
 void sNav::onMoversChanged()
 {
-    // FIXME we are assuming forwards...
-    maxAccel       = moversForLinearAccel(float2(1, 0), kLinearPosThreshold, kMaxLinearAngAccel, false);
     maxPosAngAccel = moversForAngAccel(+1, false);
     maxNegAngAccel = moversForAngAccel(-1, false);
     rotInt         = 0.f;
+
+    // FIXME we are assuming forwards...
+    float angAccel = -1;
+    float2 spinAccel = moversForLinearAccel(float2(1, 0), kLinearPosThreshold, &angAccel, false);
+    float maxAngAccel = kMaxLinearAngAccel;
+    float2 accel = moversForLinearAccel(float2(1, 0), kLinearPosThreshold, &maxAngAccel, false);
+    isSpinner = max(-maxNegAngAccel, maxPosAngAccel) > kNavSpinnerMinAccel &&
+                (spinAccel.x > kNavSpinnerThreshold * accel.x ||
+                (maxPosAngAccel > kNavSpinnerThreshold * -maxNegAngAccel ||
+                 -maxNegAngAccel > kNavSpinnerThreshold * maxPosAngAccel));
+    isSlider = (maxPosAngAccel < kNavCanRotateThreshold &&
+                -maxNegAngAccel < kNavCanRotateThreshold);
+    maxAccel = isSpinner ? spinAccel : accel;
 }
 
 
@@ -270,16 +289,24 @@ float sNav::angAccelForTarget(float destAngle, float destAngVel, bool snap) cons
 
 bool sNav::tryRotateForAccel(float2 accel)
 {
-    // FIXME this assumes we can accelerate straight forwards - this is often not the case!
-    if (dot(float2(1.f, 0.f), maxAccel) < kNavCanRotateThreshold)
+    if (dot(float2(1.f, 0.f), maxAccel) < kNavCanRotateThreshold || isSlider)
         return true;
+    float angAccel = 0.f;
     const float destAngle = vectorToAngle(accel);
-    const float angAccel = angAccelForTarget(destAngle, 0.f, false);
-    const bool canRotate = (angAccel > 0.f) ? maxPosAngAccel > kNavCanRotateThreshold : maxNegAngAccel < -kNavCanRotateThreshold;
-    if (!canRotate)
-        return true;
+    if (isSpinner)
+    {
+        // just start spinning
+        angAccel = maxPosAngAccel > -maxNegAngAccel ? 1.f : -1.f;
+    }
+    else
+    {
+        angAccel = angAccelForTarget(destAngle, 0.f, false);
+        const bool canRotate = (angAccel > 0.f) ? maxPosAngAccel > kNavCanRotateThreshold : maxNegAngAccel < -kNavCanRotateThreshold;
+        if (!canRotate)
+            return true;
+    }
 
-    if (!kNavThrustWhileTurning || dotAngles(destAngle, state.angle))
+    if (!kNavThrustWhileTurning || fabsf(dotAngles(destAngle, state.angle)) < epsilon) // fixme
         moversDisable();
     action.angAccel = moversForAngAccel(angAccel, true);
     return action.angAccel == 0.f;
@@ -331,21 +358,23 @@ bool sNav::update()
             const float2 uBody    = rotate(u, -state.angle);
             const float2 uBodyDir = normalize(uBody);
 
-            action.accel = moversForLinearAccel(uBodyDir, kLinearPosThreshold, kMaxLinearAngAccel, true);
+            float angAccel = kMaxLinearAngAccel;
+            action.accel = moversForLinearAccel(uBodyDir, kLinearPosThreshold, &angAccel, true);
 
-            const float rotThresh = (dest.dims&SN_POS_ANGLE) ? 0.5f : 0.99f;
+            const float rotThresh = (isSpinner || (dest.dims&SN_POS_ANGLE)) ? 0.5f : 0.99f;
             
             if (isZero(action.accel) || dot(normalize(action.accel), uBodyDir) < rotThresh)
             {
                 if (tryRotateForAccel(u))
                 {
                     // already rotated, try moving again ignoring rotation
-                    action.accel = moversForLinearAccel(uBodyDir, kLinearPosThreshold, -1.f, true);
+                    angAccel = -1;
+                    action.accel = moversForLinearAccel(uBodyDir, kLinearPosThreshold, &angAccel, true);
                 }
             }
             else if (dest.dims&SN_POS_ANGLE)
             {
-                const float angAccel = angAccelForTarget(dest.cfg.angle, dest.dims&SN_ANGVEL ? dest.cfg.angVel : 0, false);
+                angAccel = angAccelForTarget(dest.cfg.angle, dest.dims&SN_ANGVEL ? dest.cfg.angVel : 0, false);
                 action.angAccel = moversForAngAccel(angAccel, true);
             }
         }
@@ -368,11 +397,17 @@ bool sNav::update()
         else
         {
             const bool needsVel = (dest.dims&SN_VELOCITY) && !precision.velEqual(dest.cfg.velocity, state.velocity);
-        
-            if (dest.dims&SN_ANGLE)
+            
+            
+            if (dest.dims&SN_ANGVEL)
+            {
+                float angAccel = clamp(dest.cfg.angVel - state.angVel, -1.f, 1.f);
+                action.angAccel = moversForAngAccel(angAccel, true);
+            }
+            else if (dest.dims&SN_ANGLE)
             {
                 const float angAccel = angAccelForTarget(dest.cfg.angle,
-                                                         dest.dims&SN_ANGVEL ? dest.cfg.angVel : 0,
+                                                         (dest.dims&SN_ANGVEL) ? dest.cfg.angVel : 0,
                                                          !needsVel);
                 action.angAccel = moversForAngAccel(angAccel, true);
             }
@@ -383,9 +418,8 @@ bool sNav::update()
                 float2 ve = dest.cfg.velocity - state.velocity;
                 ve /= max(length(ve), 0.05f * length(maxAccel));
                 float2 accel = rotate(float2(clamp(ve.x, -1.f, 1.f), clamp(ve.y, -1.f, 1.f)), -state.angle);
-                action.accel = moversForLinearAccel(accel, kLinearVelThreshold,
-                                                    (dest.dims&SN_VEL_ALLOW_ROTATION) ? -1.f : kMaxLinearAngAccel,
-                                                    true);
+                float angAccel = (dest.dims&SN_VEL_ALLOW_ROTATION) ? -1.f : kMaxLinearAngAccel;
+                action.accel = moversForLinearAccel(accel, kLinearVelThreshold, &angAccel, true);
                 if (isZero(action.accel) && (dest.dims&SN_VEL_ALLOW_ROTATION))
                 {
                     tryRotateForAccel(accel);

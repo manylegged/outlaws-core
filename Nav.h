@@ -125,8 +125,10 @@ struct sNav {
     // input/output
 	vector<snMover*> movers;
     float2           maxAccel;  // dependent on movers
-    float            maxPosAngAccel; // always positive
-    float            maxNegAngAccel; // always negative
+    float            maxPosAngAccel = 0.f; // always positive
+    float            maxNegAngAccel = 0.f; // always negative
+    bool             isSpinner = false;    // can't really control angle
+    bool             isSlider = false;     // can't really rotate
 
     // inputs
     snPrecision      precision;
@@ -169,7 +171,7 @@ struct sNav {
     
     void   onMoversChanged();
     float  moversForAngAccel(float angAccel, bool enable);
-    float2 moversForLinearAccel(float2 dir, float threshold, float angAccel, bool enable);
+    float2 moversForLinearAccel(float2 dir, float threshold, float *angAccel, bool enable);
     void   moversDisable();
     float  angAccelForTarget(float destAngle, float destAngVel, bool snappy) const;
 

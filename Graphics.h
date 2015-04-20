@@ -363,7 +363,8 @@ struct View {
     float  scale = 1.f;               // larger values are more zoomed out
     float  z = 0.f;                   // depth of camera (related to scale)
     float  angle = 0.f;               // rotation is applied after position
-    float  zfar = 3500.f;
+
+    View();
     
     // interpolation support
     friend View operator+(const View& a, const View& b);
@@ -408,13 +409,19 @@ struct View {
 
     bool intersectCircle(const float2 &a, float r) const
     {
-        return intersectCircleRectangle(a, r, position, 0.5f * scale * sizePoints);
+        // FIXME
+        // return intersectCircleRectangle(a, r, position, 0.5f * scale * sizePoints);
+        return intersectCircleRectangle(toScreen(a), toScreenSize(r), sizePoints/2.f, sizePoints/2.f);
     }
 
     bool intersectCircle(const float3 &a, float r) const
     {
-        float2 zPlaneSize = (0.5f * scale * sizePoints) - getAspect() * a.z;
-        return intersectCircleRectangle(float2(a.x, a.y), r, position, zPlaneSize);
+        // FIXME
+        // return intersectCircle(float2(a), r);
+        const float2 rad = sizePoints/2.f - getAspect() * a.z / scale;
+        return intersectCircleRectangle(toScreen(float2(a)), toScreenSize(r), rad, rad);
+        // float2 zPlaneSize = (0.5f * scale * sizePoints) - getAspect() * a.z;
+        // return intersectCircleRectangle(float2(a.x, a.y), r, position, zPlaneSize);
     }
 
     float getScreenPointSizeInPixels() const { return sizePixels.x / ((sizePoints.x) - z); }
@@ -422,7 +429,7 @@ struct View {
 
     uint getCircleVerts(float worldRadius, int mx=24) const;
 
-    ShaderState getWorldShaderState() const;
+    ShaderState getWorldShaderState(float2 zminmax=float2()) const;
     ShaderState getScreenShaderState() const;
 
     float3 getScreenCameraPos(float3 offset) const { return float3(0.f, 0.f, 0.5f * sizePoints.y); }
@@ -931,9 +938,8 @@ struct PrimMesh : public Mesh<Vtx1> {
             return;
         // just re-arrange the indices
         // the other option is to leave the indices and rearange vertices
-        std::sort(primBegin(), primEnd(), lambda((const IndxPrim&a, const IndxPrim &b),
-                                                 this->m_vl[a.indxs[0]].pos.z <
-                                                 this->m_vl[b.indxs[0]].pos.z ));
+        std::sort(primBegin(), primEnd(), [&](const IndxPrim&a, const IndxPrim &b) {
+            return this->m_vl[a.indxs[0]].pos.z < this->m_vl[b.indxs[0]].pos.z;});
     }
 
 #define DBG_OPT 0
@@ -1199,6 +1205,20 @@ struct LineMesh : public PrimMesh<Vtx, 2> {
         return PushLoop(verts, numVerts);
     }
 
+    uint PushEllipse(const float2 &pos, const float2 &radius, uint numVerts=32, float startAngle=0.f)
+    {
+        static const uint maxVerts = 64;
+        ASSERT(numVerts >= 3);
+        numVerts = min(maxVerts, numVerts);
+        float2 verts[maxVerts];
+
+        const float dangle = 2.f * M_PIf / (float) numVerts;
+        for (uint i=0; i != numVerts; ++i)
+            verts[i] = pos + radius * angleToVector(startAngle + i * dangle);
+
+        return PushLoop(verts, numVerts);
+    }
+
     void PushDashedLineCircle(const float2 &pos, float radius, uint numVerts, float startAngle, int dashOn, int dashOff)
     {
         ASSERT(numVerts >= 3);
@@ -1418,7 +1438,7 @@ struct TriMesh : public PrimMesh<Vtx, 3> {
         for (uint i=0; i < numVerts; ++i)
         {
             const uint j = this->PushV1(pos + offset);
-            offset = rotate(offset, rot);
+            offset = ::rotate(offset, rot);
 
             if (j - start > 1)
             {
@@ -1561,6 +1581,7 @@ struct MeshPair {
     void start()
     {
         ASSERT(tri.empty() && line.empty());
+        line.translateZ(0.5f);
     }
 
     void finish()
@@ -1584,6 +1605,12 @@ struct MeshPair {
         return tri.getSizeof() + line.getSizeof();
     }
 
+    void translateZ(float val)
+    {
+        tri.translateZ(val);
+        line.translateZ(val);
+    }
+
     template <typename TriP, typename LineP>
     void Draw(const ShaderState& ss, const TriP &trip, const LineP &linep)
     {
@@ -1598,9 +1625,9 @@ typedef TriMesh<VertexPosColor> VertexPusherTri;
 typedef LineMesh<VertexPosColor> VertexPusherLine;
 typedef MeshPair<VertexPosColor, VertexPosColor>  DMesh;
 
-extern template class TriMesh<VertexPosColor>;
-extern template class LineMesh<VertexPosColor>;
-extern template class MeshPair<VertexPosColor, VertexPosColor>;
+extern template struct TriMesh<VertexPosColor>;
+extern template struct LineMesh<VertexPosColor>;
+extern template struct MeshPair<VertexPosColor, VertexPosColor>;
 
 // generic shared dmesh
 inline DMesh& theDMesh()

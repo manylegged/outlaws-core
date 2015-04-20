@@ -61,10 +61,10 @@
 #pragma clang diagnostic pop
 #endif
 
-extern template class glm::detail::tvec2<float, glm::defaultp>;
-extern template class glm::detail::tvec2<int, glm::defaultp>;
-extern template class glm::detail::tvec3<float, glm::defaultp>;
-extern template class glm::detail::tvec3<int, glm::defaultp>;
+extern template struct glm::detail::tvec2<float, glm::defaultp>;
+extern template struct glm::detail::tvec2<int, glm::defaultp>;
+extern template struct glm::detail::tvec3<float, glm::defaultp>;
+extern template struct glm::detail::tvec3<int, glm::defaultp>;
 
 #include <cmath>
 #include <algorithm>
@@ -454,6 +454,8 @@ inline glm::detail::tvec2<T, glm::defaultp> rotateN(const glm::detail::tvec2<T, 
 }
 
 inline float2 swapXY(float2 v)    { return float2(v.y, v.x); }
+inline float2 flipY(float v)      { return float2(v, -v); }
+inline float2 flipX(float v)      { return float2(-v, v); }
 inline float2 flipY(float2 v)     { return float2(v.x, -v.y); }
 inline float2 flipX(float2 v)     { return float2(-v.x, v.y); }
 inline float3 flipY(float3 v)     { return float3(v.x, -v.y, v.z); }
@@ -1167,7 +1169,7 @@ static double findRootRegulaFalsi(const Fun& fun, double lo, double hi, double e
         fun_est = fun_lo;
     }
 
-    while (fabsf(fun_est) > error)
+    while (fabs(fun_est) > error)
     {
         est     = hi - (fun_hi * (hi - lo)) / (fun_hi - fun_lo);
         fun_est = fun(est);

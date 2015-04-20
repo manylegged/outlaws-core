@@ -159,4 +159,14 @@ inline float randrange_normal(float mn, float mx)
     return clamp(rand_normal(0.5f * (mn + mx), 0.25 * (mx-mn)), mn, mx);
 }
 
+
+inline int myrandom_(int mx) { return randrange(mx); }
+
+template <typename V>
+inline void vec_shuffle(V& vec)
+{
+    std::random_shuffle(std::begin(vec), std::end(vec), myrandom_);
+}
+    
+
 #endif // RAND_H

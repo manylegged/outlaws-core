@@ -112,11 +112,13 @@ struct FrameLogger {
         if (m_paused)
             return;
         ASSERT(m_currentPhases.size() && m_currentPhases.back().first == phase);
-        const double time = OL_GetCurrentTime() - m_currentPhases.back().second;
-        map_setdefault(m_current, m_currentPhases.back().first, 0.0) += time;
+        const double time = max(0.0, OL_GetCurrentTime() - m_currentPhases.back().second);
+        double &curtime = m_current[m_currentPhases.back().first];
+        curtime += time;
         m_currentPhases.pop_back();
-        if (m_currentPhases.size())
-            m_currentPhases.back().second += time;
+        foreach (PhaseTime &pt, m_currentPhases) {
+            pt.second += time;
+        }
     }
 
     void addPhase(const char *phase, double length)

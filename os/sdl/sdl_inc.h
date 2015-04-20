@@ -10,6 +10,7 @@
 #  define OL_WINDOWS 1
 #elif __APPLE__
 #  include <SDL.h>
+// #  include <SDL_ttf.h>
 #  define OL_MAC 1
 #else
 #  include <SDL2/SDL.h>

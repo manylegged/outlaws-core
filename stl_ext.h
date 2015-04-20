@@ -52,14 +52,19 @@
 #define unless(X) if (!(X))
 
 // lambda((int* a), *a + 3)
-#define lambda(X, Y) [&] X { return (Y); }
+// #define lambda(X, Y) [&] X { return (Y); }
 
 // lisp style multi-argument or_ and and_
 template <typename T> T or_(const T& a, const T& b) { return a ? a : b; }
 template <typename T> T or_(const T& a, const T& b, const T& c) { return a ? a : b ? b : c; }
 template <typename T> T or_(const T& a, const T& b, const T& c, const T& d) { return a ? a : b ? b : c ? c : d; }
 inline std::string or_(const std::string &a, const std::string &b) { return a.size() ? a : b; }
+inline std::string or_(const std::string &a, const std::string &b, const std::string &c) { return a.size() ? a : b.size() ? b : c; }
 inline const char* or_(const char* a, const char* b) { return str_len(a) ? a : b; }
+inline const char* or_(const char* a, const char* b, const char* c) { return str_len(a) ? a : str_len(b) ? b : c; }
+inline lstring or_(lstring a, lstring b) { return str_len(a) ? a : b; }
+inline lstring or_(lstring a, lstring b, lstring c) { return str_len(a) ? a : str_len(b) ? b : c; }
+
 
 template <typename S, typename T> 
 T and_(const S& a, const T& b) { return a ? b : T(a); }
@@ -472,14 +477,6 @@ inline V vec_intersection(const V &v, const V1& t)
     return ret;
 }
 
-inline int myrandom_(int mx) { return randrange(mx); }
-
-template <typename V>
-inline void vec_shuffle(V& vec)
-{
-    std::random_shuffle(std::begin(vec), std::end(vec), myrandom_);
-}
-    
 
 template <typename Vec>
 const typename Vec::value_type &vec_at(const Vec &v, int i,
@@ -814,6 +811,20 @@ inline void vec_selection_sort(T& vec, size_t count, const F& comp)
     }
 }
 
+template <typename T>
+inline void vec_reverse(T &vec)
+{
+    std::reverse(vec.begin(), vec.end());
+}
+
+template <typename T>
+inline T vec_reversed(T vec)
+{
+    std::reverse(vec.begin(), vec.end());
+    return vec;
+}
+
+
 // return minimum element of vector, with comparison by fkey
 template <typename T, typename F>
 inline size_t vec_min_idx_by_key(T& col, const F& fkey)
@@ -923,7 +934,7 @@ inline int vec_next(const T& vec, int index, int delta)
 {
     if (!vec_any(vec))
         return -1;
-    index += delta;
+    index = modulo(index + delta, vec_size(vec));
     delta = (delta >= 0) ? 1 : -1;
     for (; !vec_at(vec, index); index = modulo(index + delta, vec_size(vec)));
     return index;

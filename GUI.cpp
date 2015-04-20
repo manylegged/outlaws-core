@@ -107,6 +107,7 @@ void ButtonBase::renderSelected(const ShaderState &ss, uint bgcolor, uint lineco
     const float2 p = position + float2(-sz.x - sz.y, 0);
     s.color32(bgcolor, alpha);
     ShaderUColor::instance().DrawTri(s, p + float2(0, sz.y), p + float2(sz.y / 2, 0), p + float2(0, -sz.y));
+    s.translateZ(0.1f);
     s.color32(linecolor, alpha);
     ShaderUColor::instance().DrawLineTri(s, p + float2(0, sz.y), p + float2(sz.y / 2, 0), p + float2(0, -sz.y));
 }
@@ -296,18 +297,23 @@ static void delete_region(int2& cursor, deque<string> &lines, int2 mark)
 
 bool TextInputBase::HandleEvent(const Event* event, bool *textChanged)
 {
+    active = forceActive || 
+             intersectPointRectangle(KeyState::instance().cursorPosScreen, position, 0.5f * size);
+    hovered = active;
+
+    if (active && event->type == Event::SCROLL_WHEEL)
+    {
+        startChars.y += ceil_int(-event->vel.y);
+        startChars.y = clamp(startChars.y, 0, max(0, (int)lines.size() - sizeChars.y));
+        return true;
+    }
+    
     if (locked)
         return false;
-
-    active = forceActive || 
-             (!locked && intersectPointRectangle(KeyState::instance().cursorPosScreen, 
-                                                 position, 0.5f * size));
-    hovered = active;
 
     if (textChanged)
         *textChanged = false;
 
-  
     if (active && event->type == Event::KEY_DOWN)
     {
         std::lock_guard<std::recursive_mutex> l(mutex);
@@ -424,12 +430,6 @@ bool TextInputBase::HandleEvent(const Event* event, bool *textChanged)
         cursor.x = clamp(cursor.x, 0, lines[cursor.y].size());
         scrollForInput();
             
-        return true;
-    }
-    else if (active && event->type == Event::SCROLL_WHEEL)
-    {
-        startChars.y += ceil_int(-event->vel.y);
-        startChars.y = clamp(startChars.y, 0, max(0, (int)lines.size() - sizeChars.y));
         return true;
     }
 
@@ -570,6 +570,7 @@ void TextInputBase::render(const ShaderState &s_)
             const float2 size  = tx->getCharSize(cursor.x);
             s1.translate(float2(spos, 0));
             s1.color(textColor, alpha);
+            s1.translateZ(1.f);
             ShaderUColor::instance().DrawRectCorners(s1, float2(0), float2(size.x, charHeight));
             if (cursor.x < lines[i].size()) {
                 GLText::Put(s1, float2(0.f), GLText::LEFT, kMonoFont,
@@ -580,6 +581,15 @@ void TextInputBase::render(const ShaderState &s_)
         
         s.translate(float2(0.f, -charHeight));
     }
+}
+
+TextInputCommandLine::TextInputCommandLine()
+{
+    sizeChars.y = 10;
+
+    registerCommand(cmd_help, comp_help, this, "help", "[command]: list help for specified command, or all commands if unspecified");
+    registerCommand(cmd_find, comp_help, this, "find", "[string]: list commands matching search");
+    setLineText("");
 }
 
 void TextInputCommandLine::saveHistory(const char *fname)
@@ -603,33 +613,56 @@ void TextInputCommandLine::loadHistory(const char *fname)
     historyIndex = commandHistory.size();
 }
 
-string TextInputCommandLine::helpCmd(void* data, const char* name, const char* args) 
+vector<string> TextInputCommandLine::comp_help(void* data, const char* name, const char* args)
+{
+    vector<string> options;
+    TextInputCommandLine *self = (TextInputCommandLine*) data;
+    for (std::map<string, Command>::iterator it=self->commands.begin(), end=self->commands.end(); it != end; ++it)
+    {
+        options.push_back(it->first);
+    }
+    return options;
+}
+
+string TextInputCommandLine::cmd_help(void* data, const char* name, const char* args) 
 {
     TextInputCommandLine* self = (TextInputCommandLine*) data;
         
     const string arg = str_strip(args);
-    string s;
-    if (map_contains(self->commands, arg))
-    {
-        std::map<string, Command>::iterator it=self->commands.find(arg);
-        s += it->first;
-        s += " ";
-        s += it->second.description;
-        s += "\n";
-    }
-    else
+    vector<string> helps = self->completeCommand(arg);
+    if (helps.size() == 0)
     {
         for (std::map<string, Command>::iterator it=self->commands.begin(), end=self->commands.end(); it != end; ++it)
-        {
-            s += it->first;
-            s += " ";
-            s += it->second.description;
-            s += "\n";
-        }
+            helps.push_back(it->first);
     }
-    return s;
+    string ss;
+    foreach (const string &cmd, helps)
+        ss += "^2" + cmd + "^7 " + self->commands[cmd].description + "\n";
+    ss.pop_back();
+    return ss;
 }
 
+string TextInputCommandLine::cmd_find(void* data, const char* name, const char* args)
+{
+    TextInputCommandLine* self = (TextInputCommandLine*) data;
+        
+    const string arg = str_strip(args);
+    string ss;
+    int count = 0;
+    foreach (const auto& x, self->commands) {
+        if (str_contains(x.first, arg) || str_contains(x.second.description, arg))
+        {
+            ss += "^2" + x.first + "^7 " + x.second.description + "\n";
+            count++;
+        }
+    }
+    if (count) {
+        ss.pop_back();
+    } else {
+        ss = str_format("No commands matching '%s'", arg.c_str());
+    }
+    return ss;
+}
 
 void TextInputCommandLine::pushCmdOutput(const char *format, ...)
 {
@@ -646,6 +679,16 @@ void TextInputCommandLine::pushCmdOutput(const char *format, ...)
     cursor.y = (int)lines.size() - 1;
     cursor.x = lines[cursor.y].size();
     scrollForInput();
+}
+
+vector<string> TextInputCommandLine::completeCommand(string cmd) const
+{
+    vector<string> possible;
+    foreach (const auto& x, commands) {
+        if (x.first.size() >= cmd.size() && x.first.substr(0, cmd.size()) == cmd)
+            possible.push_back(x.first);
+    }
+    return possible;
 }
 
 bool TextInputCommandLine::doCommand(const string& line)
@@ -667,11 +710,7 @@ bool TextInputCommandLine::doCommand(const string& line)
         if (map_contains(commands, cmd)) {
             c = &commands[cmd];
         } else {
-            vector<string> possible;
-            foreach (const auto& x, commands) {
-                if (x.first.size() > cmd.size() && x.first.substr(0, cmd.size()) == cmd)
-                    possible.push_back(x.first);
-            }
+            const vector<string> possible = completeCommand(cmd);
             if (possible.size() == 1) {
                 c = &commands[possible[0]];
             } else {
@@ -994,15 +1033,18 @@ void OptionButtons::render(ShaderState *s_, const View& view)
 
 bool OptionSlider::HandleEvent(const Event* event, bool *valueChanged)
 {
+    if (!event->isMouse() || !active)
+        return false;
     const float2 sz = 0.5f*size;
-    hovered = pressed || (event->isMouse() && intersectPointRectangle(event->pos, position, sz));
+    
+    hovered = pressed || intersectPointRectangle(event->pos, position, sz);
     pressed = (hovered && event->type == Event::MOUSE_DOWN) ||
               (!isDiscrete() && pressed && event->type == Event::MOUSE_DRAGGED);
     
     const bool handled = pressed || (hovered && event->isMouse());
 
     const int lasthval = hoveredValue;
-    hoveredValue = hovered ? floatToValue(((event->pos.x - position.x) / size.x) + 0.5f) : -1;
+    hoveredValue = hovered ? (isBinary() ? !value : floatToValue(((event->pos.x - position.x) / size.x) + 0.5f)) : -1;
     if (isDiscrete() && lasthval != hoveredValue)
         globals.sound->OnButtonHover();
 
@@ -1024,20 +1066,38 @@ void OptionSlider::render(const ShaderState &s_)
     const float  w  = max(sz.x / values, 5.f);
     const uint   fg = getFGColor();
     const uint   bg = getBGColor();
-    
+
     if (isDiscrete())
     {
         DMesh::Handle h(theDMesh());
-        float2 pos = position - justX(sz.x - w);
-        for (int i=0; i<values; i++)
+        if (isBinary())
         {
+            const uint bgc = true ? bg : 0x0;
+            const uint fgc = hovered ? hoveredLineColor : defaultLineColor;
+            PushButton(&h.mp.tri, &h.mp.line, position, sz, bgc, fgc, alpha);
+            if (value) {
+                h.mp.tri.translateZ(0.1f);
+                PushButton(&h.mp.tri, &h.mp.line, position, max(float2(2.f), sz - kButtonPad), fgc, fgc, alpha);
+                h.mp.tri.translateZ(-0.1f);
+            }
+        }
+        else
+        {
+            float2 pos = position - justX(sz.x - w);
             const float2 bs = float2(w, sz.y) - kButtonPad;
-            const uint bgc = (i == value) ? bg : 0x0;
-            const uint fgc = (i == hoveredValue) ? hoveredLineColor : defaultLineColor;
-            PushButton(&h.mp.tri, &h.mp.line, pos, bs, bgc, fgc, alpha);
-            if (i == value)
-                PushButton(&h.mp.tri, &h.mp.line, pos, max(float2(2.f), bs - kButtonPad), fgc, fgc, alpha);
-            pos.x += 2.f * w;
+            for (int i=0; i<values; i++)
+            {
+                const uint bgc = (i == value) ? bg : 0x0;
+                const uint fgc = (i == hoveredValue) ? hoveredLineColor : defaultLineColor;
+                PushButton(&h.mp.tri, &h.mp.line, pos, bs, bgc, fgc, alpha);
+                if (i == value)
+                {
+                    h.mp.tri.translateZ(0.1f);
+                    PushButton(&h.mp.tri, &h.mp.line, pos, max(float2(2.f), bs - kButtonPad), fgc, fgc, alpha);
+                    h.mp.tri.translateZ(-0.1f);
+                }
+                pos.x += 2.f * w;
+            }
         }
         h.Draw(s_);
     }
@@ -1045,8 +1105,10 @@ void OptionSlider::render(const ShaderState &s_)
     {
         ShaderState ss = s_;
         ss.color32(fg, alpha);
+        ss.translateZ(0.1f);
         ShaderUColor::instance().DrawLine(ss, position - justX(sz), position + justX(sz));
         const float of = (size.x - 2.f * w) * (getValueFloat() - 0.5f);
+        ss.translateZ(1.f);
         DrawButton(&ss, position + float2(of, 0.f), float2(w, sz.y), bg, fg, alpha);
     }
 }
@@ -1146,8 +1208,10 @@ void TabWindow::render(const ShaderState &ss)
 
         const float2 opos = position - float2(0.f, 0.5f * getTabHeight());
         const float2 osz = 0.5f * (size - float2(0.f, getTabHeight()));
+        h.mp.translateZ(-1.5f);
         h.mp.tri.color32(defaultBGColor, alpha);
         h.mp.tri.PushRect(opos, osz);
+        h.mp.line.translateZ(0.1f);
         h.mp.line.color32(defaultLineColor, alpha);
 
         const float2 tsize = float2(size.x / buttons.size(), getTabHeight());
@@ -1245,6 +1309,13 @@ bool TabWindow::HandleEvent(const Event* event)
     }
 
     return false;
+}
+
+MessageBoxWidget::MessageBoxWidget()
+{
+    title = _("Message");
+    okbutton.text = _("OK");
+    okbutton.setReturnKeys();
 }
 
 void MessageBoxWidget::updateFade()
@@ -1382,7 +1453,9 @@ void ColorPicker::render(const ShaderState &ss)
     lmesh.Draw(ss, ShaderColor::instance());
 
     // draw selected color box
-    DrawFilledRect(ss, ccPos, csize/2.f, ALPHA_OPAQUE|getColor(), kGUIFg, alpha);
+    ShaderState s1 = ss;
+    s1.translateZ(1.1f);
+    DrawFilledRect(s1, ccPos, csize/2.f, ALPHA_OPAQUE|getColor(), kGUIFg, alpha);
 }
 
 
@@ -1452,8 +1525,10 @@ void TextBox::Draw(const ShaderState& ss1, float2 point, const string& text) con
 
     ss.translate(center);
     ss.color32(bgColor, alpha);
+    ss.translateZ(1.f);
     ShaderUColor::instance().DrawRect(ss, boxSz);
     ss.color32(fgColor, alpha);
+    ss.translateZ(0.1f);
     ShaderUColor::instance().DrawLineRect(ss, boxSz);
     ss.translate(round(-0.5f * st->getSize()));
     st->render(&ss);
@@ -1526,6 +1601,7 @@ bool HandleConfirmKey(const Event *event, int* slot, int selected, bool *sawUp,
 bool HandleEventSelected(int* selected, ButtonBase &current, int count, int rows, 
                          const Event* event, bool* isActivate)
 {
+    bool handled = false;
     if (event->type == Event::KEY_DOWN)
     {
         switch (event->key)
@@ -1537,7 +1613,8 @@ bool HandleEventSelected(int* selected, ButtonBase &current, int count, int rows
         case GamepadRightUp:
             *selected = modulo(*selected-1, count);
             globals.sound->OnButtonHover();
-            return true;
+            handled = true;
+            break;
 
         case 's':
         case NSDownArrowFunctionKey:
@@ -1546,7 +1623,8 @@ bool HandleEventSelected(int* selected, ButtonBase &current, int count, int rows
         case GamepadRightDown:
             *selected = modulo(*selected+1, count);
             globals.sound->OnButtonHover();
-            return true;
+            handled = true;
+            break;
 
         case 'a':
         case NSLeftArrowFunctionKey:
@@ -1557,7 +1635,8 @@ bool HandleEventSelected(int* selected, ButtonBase &current, int count, int rows
                 return false;
             *selected = modulo(*selected - ((count+rows-1) / rows), count);
             globals.sound->OnButtonHover();
-            return true;
+            handled = true;
+            break;
 
         case 'd':
         case NSRightArrowFunctionKey:
@@ -1568,7 +1647,8 @@ bool HandleEventSelected(int* selected, ButtonBase &current, int count, int rows
                 return false;
             *selected = modulo(*selected + ((count+rows-1) / rows), count);
             globals.sound->OnButtonHover();
-            return true;
+            handled = true;
+            break;
 
         case '\r':
         case GamepadA:
@@ -1590,8 +1670,14 @@ bool HandleEventSelected(int* selected, ButtonBase &current, int count, int rows
     {
         current.pressed = false;
     }
+
+    if (event->isGamepad())
+    {
+        // FIXME not quite right
+        KeyState::instance().cursorPosScreen = current.position;
+    }
     
-    return false;
+    return handled;
 }
 
 bool ButtonHandleEvent(ButtonBase &button, const Event* event, bool* isActivate, bool* isPress, int *selected)
@@ -1640,6 +1726,9 @@ void ButtonText::renderText(const ShaderState &ss, float2 pos, float width,
 void Scrollbar::render(DMesh &mesh) const
 {
     mesh.line.color(hovered ? hoveredFGColor : defaultFGColor, alpha);
+    mesh.translateZ(0.5f);
+    mesh.line.translateZ(0.1f);
+
     const float2 pos = steps ? position + justY(size.y/2.f * (1.f - (sfirst + min(sfirst + lines, (float)steps)) / steps)) : position;
     const float2 rad = float2(size.x, max(kScrollbarWidth/2.f,
                                           steps ? (min(lines, steps) * size.y / steps) : size.y)) / 2.f;
@@ -1650,6 +1739,8 @@ void Scrollbar::render(DMesh &mesh) const
 
 bool Scrollbar::HandleEvent(const Event *event)
 {
+    if (!event->isMouse() && event->type != Event::SCROLL_WHEEL)
+        return false;
     hovered = intersectPointRectangle(event->pos, position, size/2.f);
     if (steps == 0) {
         first = 0;
@@ -1713,10 +1804,14 @@ bool Scrollbar::HandleEvent(const Event *event)
 void ButtonWindow::render(const ShaderState &ss)
 {
     DMesh::Handle h(theDMesh());
+    h.mp.translateZ(-1.f);
     h.mp.line.color(hovered ? kGUIFgActive : kGUIFg, alpha / 2.f);
     h.mp.line.PushRect(position, size/2.f);
     h.mp.tri.color(kGUIBg, alpha / 2.f);
     h.mp.tri.PushRect(position, size/2.f);
+    h.mp.translateZ(1.f);
+
+    std::lock_guard<std::mutex> l(mutex);
 
     scrollbar.steps = (buttons.size() + (dims.x - 1)) / dims.x;
     scrollbar.lines = dims.y;
@@ -1744,7 +1839,10 @@ void ButtonWindow::render(const ShaderState &ss)
                 if (idx >= buttons.size())
                     break;
                 ButtonBase *bu = buttons[idx];
-                bu->position = pos;
+                if (!dragPtr || bu != *dragPtr)
+                    bu->position = pos;
+                else
+                    dragPos = pos;
                 bu->size = bs - 2.f * kButtonPad;
                 bu->alpha = alpha;
                 bu->renderButton(h.mp);
@@ -1793,7 +1891,7 @@ bool ButtonWindow::HandleEvent(const Event *event,
     }
 
     bool handled = false;
-    foreach (ButtonBase *bu, buttons)
+    foreach (ButtonBase *&bu, buttons)
     {
         bool isActivate = false;
         bool isPress = false;
@@ -1816,6 +1914,42 @@ bool ButtonWindow::HandleEvent(const Event *event,
     
     return handled || (dropped && event->type == Event::MOUSE_UP);
 }
+
+ButtonBase *ButtonWindow::HandleRearrange(const Event *event, ButtonBase *drag)
+{
+    std::lock_guard<std::mutex> l(mutex);
+    if (drag && !dragPtr)
+    {
+        dragPos = drag->position;
+        dragOffset = drag->position - event->pos;
+    }
+    ButtonBase **ptr = NULL;
+    foreach (ButtonBase *&bu, buttons) {
+        if (bu == drag) {
+            ptr = &bu;
+            break;
+        }
+    }
+    dragPtr = ptr;
+    if (!drag || !dragPtr)
+        return NULL;
+    const float2 rad = size/2.f - 2.f * kButtonPad;
+    drag->position = clamp(event->pos + dragOffset,
+                           position - rad + drag->size/2.f,
+                           position + rad - drag->size/2.f);
+    foreach (ButtonBase *&bu, buttons)
+    {
+        if (bu != *dragPtr &&
+            distanceSqr(drag->position, bu->position) < distanceSqr(drag->position, dragPos))
+        {
+            std::swap(bu->position, dragPos);
+            std::swap(bu, *dragPtr);
+            return bu;
+        }
+    }
+    return NULL;
+}
+
 
 void ButtonWindow::computeDims(int2 mn, int2 mx)
 {

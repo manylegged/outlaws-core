@@ -14,6 +14,8 @@ void LogMessage(NSString *str);
 
 int main(int argc, char *argv[])
 {
+    // [[NSUserDefaults standardUserDefaults] setValue:[NSNumber numberWithInt:3] forKey:@"AppleFontSmoothing"];
+    
     const int mode = OLG_Init(argc, (const char**)argv);
 
     if (OLG_EnableCrashHandler())

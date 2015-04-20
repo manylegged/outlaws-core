@@ -48,6 +48,11 @@ inline cAudio::cVector3 c3(float2 v)
     return cAudio::cVector3(v.x, v.y, 0.f);
 }
 
+inline cAudio::cVector3 c3(float3 v)
+{
+    return cAudio::cVector3(v.x, v.y, v.z);
+}
+
 #define c3zero cAudio::cVector3(0.f) 
 
 inline float2 c2(const cAudio::cVector3 &v)
@@ -100,7 +105,7 @@ class AudioAllocator final : public cAudio::ILogReceiver {
     vector<SourceData>                        m_sources;
     vector<cAudio::IAudioSource*>             m_streamSources;
     std::map<lstring, cAudio::IAudioBuffer*>  m_buffers;
-    float2                                    m_lsnrPos;
+    float3                                    m_lsnrPos;
     cAudioMutex                               m_dummy;
 
     bool OnLogMessage(const char* sender, const char* message, cAudio::LogLevel level, float time)
@@ -129,7 +134,7 @@ public:
         //                                 AL_ROLLOFF_FACTOR *
         //                                 (distance – AL_REFERENCE_DISTANCE));
 
-        float dist = distance(pos, m_lsnrPos);
+        float dist = distance(float3(pos, 0.f), m_lsnrPos);
         dist = max(dist, refDist);
         dist = min(dist, maxDist);
         float gain = refDist / (refDist + rolloff * (dist - refDist));
@@ -157,8 +162,11 @@ public:
 
     void shutdown()
     {
-        mutex = &m_dummy;
-        releaseAll();
+        {
+            cAudioMutexBasicLock l(*mutex);
+            releaseAll();
+            mutex = &m_dummy;
+        }
         cAudio::destroyAudioManager(m_mgr);
         m_mgr = NULL;
     }
@@ -178,7 +186,7 @@ public:
 
     cAudio::IAudioManager* getMgr() { return m_mgr; }
 
-    void setListener(float2 pos, float2 vel)
+    void setListener(float3 pos, float2 vel)
     {
         cAudio::IListener *lst = m_mgr->getListener();
         lst->setPosition(c3(pos));

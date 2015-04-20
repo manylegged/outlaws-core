@@ -185,6 +185,9 @@ static void doKeyEvent(enum EventType type, NSEvent *theEvent)
         struct OLEvent e;
         memset(&e, 0, sizeof(e));
 
+        // LogMessage([NSString stringWithFormat:@"Cocoa Key: '%C' %s",
+                             // character, (type == OL_KEY_DOWN ? "Down" : "Up")]);
+
         switch (character)
         {
         case NSDeleteCharacter: e.key = NSBackspaceCharacter; break;
@@ -200,12 +203,28 @@ static void doKeyEvent(enum EventType type, NSEvent *theEvent)
 
 -(void)keyDown:(NSEvent *)theEvent
 {
-    doKeyEvent(KEY_DOWN, theEvent);
+    doKeyEvent(OL_KEY_DOWN, theEvent);
 }
 
 -(void)keyUp:(NSEvent *)theEvent
 {
-    doKeyEvent(KEY_UP, theEvent);
+    doKeyEvent(OL_KEY_UP, theEvent);
+}
+
+-(BOOL)performKeyEquivalent:(NSEvent *)theEvent
+{
+    // get events for command-S, etc.
+    NSString *characters = [theEvent charactersIgnoringModifiers];
+    unichar character = [characters length] ? [characters characterAtIndex:0] : 0;
+    if (character == 's')
+    {
+        doKeyEvent(OL_KEY_UP, theEvent);
+        return YES;
+    }
+    else
+    {
+        return NO;
+    }
 }
 
 static void modifierFlagToEvent(NSUInteger flags, NSUInteger lastFlags, NSUInteger mask, int eventKey)
@@ -214,7 +233,7 @@ static void modifierFlagToEvent(NSUInteger flags, NSUInteger lastFlags, NSUInteg
     {
         struct OLEvent e;
         memset(&e, 0, sizeof(e));
-        e.type = (flags&mask) ? KEY_DOWN : KEY_UP;
+        e.type = (flags&mask) ? OL_KEY_DOWN : OL_KEY_UP;
         e.key = eventKey;
         OLG_OnEvent(&e);
     }
@@ -222,8 +241,6 @@ static void modifierFlagToEvent(NSUInteger flags, NSUInteger lastFlags, NSUInteg
 
 - (void)flagsChanged:(NSEvent *)theEvent
 {
-    static NSUInteger lastFlags = 0;
-    
     const NSUInteger flags = [theEvent modifierFlags];
 
     modifierFlagToEvent(flags, lastFlags, NSShiftKeyMask, OShiftKey);
@@ -231,7 +248,7 @@ static void modifierFlagToEvent(NSUInteger flags, NSUInteger lastFlags, NSUInteg
     modifierFlagToEvent(flags, lastFlags, NSCommandKeyMask, OControlKey); // treat command as control
     modifierFlagToEvent(flags, lastFlags, NSAlternateKeyMask, OAltKey);
 
-    lastFlags = flags;
+    self->lastFlags = flags;
 }
 
 // ---------------------------------
@@ -267,52 +284,52 @@ static void doMouseEvent(enum EventType type, NSEvent *theEvent)
 
 - (void)mouseDown:(NSEvent *)theEvent
 {
-    doMouseEvent(MOUSE_DOWN, theEvent);
+    doMouseEvent(OL_MOUSE_DOWN, theEvent);
 }
 
 - (void)rightMouseDown:(NSEvent *)theEvent
 {
-    doMouseEvent(MOUSE_DOWN, theEvent);
+    doMouseEvent(OL_MOUSE_DOWN, theEvent);
 }
 
 - (void)otherMouseDown:(NSEvent *)theEvent
 {
-    doMouseEvent(MOUSE_DOWN, theEvent);
+    doMouseEvent(OL_MOUSE_DOWN, theEvent);
 }
 
 - (void)mouseUp:(NSEvent *)theEvent
 {
-    doMouseEvent(MOUSE_UP, theEvent);
+    doMouseEvent(OL_MOUSE_UP, theEvent);
 }
 
 - (void)rightMouseUp:(NSEvent *)theEvent
 {
-    doMouseEvent(MOUSE_UP, theEvent);
+    doMouseEvent(OL_MOUSE_UP, theEvent);
 }
 
 - (void)otherMouseUp:(NSEvent *)theEvent
 {
-    doMouseEvent(MOUSE_UP, theEvent);
+    doMouseEvent(OL_MOUSE_UP, theEvent);
 }
 
 - (void)mouseDragged:(NSEvent *)theEvent
 {
-    doMouseEvent(MOUSE_DRAGGED, theEvent);
+    doMouseEvent(OL_MOUSE_DRAGGED, theEvent);
 }
 
 - (void)rightMouseDragged:(NSEvent *)theEvent
 {
-    doMouseEvent(MOUSE_DRAGGED, theEvent);
+    doMouseEvent(OL_MOUSE_DRAGGED, theEvent);
 }
 
 - (void)otherMouseDragged:(NSEvent *)theEvent
 {
-    doMouseEvent(MOUSE_DRAGGED, theEvent);
+    doMouseEvent(OL_MOUSE_DRAGGED, theEvent);
 }
 
 - (void)mouseMoved:(NSEvent *)theEvent
 {
-    doMouseEvent(MOUSE_MOVED, theEvent);
+    doMouseEvent(OL_MOUSE_MOVED, theEvent);
 }
 
 // ---------------------------------
@@ -321,7 +338,7 @@ static void doMouseEvent(enum EventType type, NSEvent *theEvent)
 {
     struct OLEvent e;
     memset(&e, 0, sizeof(e));
-    e.type = SCROLL_WHEEL;
+    e.type = OL_SCROLL_WHEEL;
     e.dx = [theEvent deltaX];
     e.dy = [theEvent deltaY];
 
@@ -526,7 +543,7 @@ static void setupPresentationOptions(BOOL fullscreen)
 {
     struct OLEvent e;
     memset(&e, 0, sizeof(e));
-    e.type = LOST_FOCUS;
+    e.type = OL_LOST_FOCUS;
     OLG_OnEvent(&e);
 }
 
@@ -541,7 +558,9 @@ static void setupPresentationOptions(BOOL fullscreen)
     timer = [NSTimer timerWithTimeInterval:(1.0f/60.0f) target:self selector:@selector(animationTimer:) userInfo:nil repeats:YES];
     [[NSRunLoop currentRunLoop] addTimer:timer forMode:NSDefaultRunLoopMode];
     [[NSRunLoop currentRunLoop] addTimer:timer forMode:NSEventTrackingRunLoopMode]; // ensure timer fires during resize
-    
+
+    trackingArea = nil;
+    lastFlags = 0;
 
     [[NSNotificationCenter defaultCenter]
         addObserver:self

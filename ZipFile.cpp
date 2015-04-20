@@ -197,14 +197,18 @@ int ZF_SaveFile(const char* path, const char* data, size_t size)
     return success;
 }
 
-ZFDirMap ZF_LoadDirectory(const char* path)
+ZFDirMap ZF_LoadDirectory(const char* path, float* progress)
 {
     ZFDirMap dir;
     
-    const char** ptr = OL_ListDirectory(path);
-    if (ptr)
+    const char** files = OL_ListDirectory(path);
+    if (files)
     {
-        for (; *ptr; ptr++)
+        int count = 0;
+        for (const char** ptr=files; *ptr; ptr++)
+            count++;
+        int i=0;
+        for (const char** ptr=files; *ptr; ptr++)
         {
             string fname = str_path_join(path, *ptr);
             const char* data = OL_LoadFile(fname.c_str());
@@ -213,6 +217,9 @@ ZFDirMap ZF_LoadDirectory(const char* path)
             } else {
                 ReportMessagef("Error loading '%s' from '%s'", *ptr, path);
             }
+            if (progress)
+                *progress = (float) i / count;
+            i++;
         }
         return dir;
     }

@@ -48,21 +48,47 @@ void ShaderPosBase::DrawCircle(const ShaderState& ss, float radius, int numVerts
     UnuseProgram();
 }
 
-void ShaderTextureBase::DrawQuad(const ShaderState& ss, const OutlawTexture& texture,
-                                 float2 scale, float2 a, float2 b, float2 c, float2 d) const
+static const ushort kQuadIndices[] = {0, 1, 2, 1, 3, 2};
+
+void ShaderTextureBase::bindTextureDrawElements(const ShaderState &ss, const OutlawTexture &texture,
+                                                VertexPosTex *vtx, int icount, const ushort *idxs) const
 {
-    const float wi = scale.x * (texture.texwidth ? (float) texture.width / texture.texwidth : 1.f);
-    const float hi = scale.y * (texture.texheight ? (float) texture.height / texture.texheight : 1.f);
+    BindTexture(texture, 0);
+    UseProgram(ss, vtx, texture);
+    ss.DrawElements(GL_TRIANGLES, icount, idxs);
+    UnuseProgram();
+}
+
+void ShaderTextureBase::DrawQuad(const ShaderState& ss, const OutlawTexture& texture,
+                                 float2 a, float2 b, float2 c, float2 d) const
+{
+    const float wi = (texture.texwidth ? (float) texture.width / texture.texwidth : 1.f);
+    const float hi = (texture.texheight ? (float) texture.height / texture.texheight : 1.f);
     VertexPosTex v[] = { { float3(a, 0), float2(0, hi) },
                          { float3(b, 0), float2(wi, hi) },
                          { float3(c, 0), float2(0, 0) },
                          { float3(d, 0), float2(wi, 0) } };
-    static const ushort i[] = {0, 1, 2, 1, 3, 2};
+    bindTextureDrawElements(ss, texture, v, arraySize(kQuadIndices), kQuadIndices);
+}
 
-    BindTexture(texture, 0);
-    UseProgram(ss, v, texture);
-    ss.DrawElements(GL_TRIANGLES, 6, i);
-    UnuseProgram();
+
+void ShaderTextureBase::DrawRectScaleAngle(const ShaderState &ss, const OutlawTexture& texture,
+                            float2 scale, float angle, float2 pos, float2 rad) const
+{
+    const float wi = scale.x * (texture.texwidth ? (float) texture.width / texture.texwidth : 1.f);
+    const float hi = scale.y * (texture.texheight ? (float) texture.height / texture.texheight : 1.f);
+    const float2 rot = angleToVector(angle);
+
+    const float2 a = pos + flipX(rad);
+    const float2 b = pos + rad;
+    const float2 c = pos - rad;
+    const float2 d = pos + flipY(rad);
+
+    VertexPosTex v[] = { { float3(a, 0), rotate(float2(0, hi), rot) },
+                         { float3(b, 0), rotate(float2(wi, hi), rot) },
+                         { float3(c, 0), float2() },
+                         { float3(d, 0), rotate(float2(wi, 0), rot) } };
+    bindTextureDrawElements(ss, texture, v, arraySize(kQuadIndices), kQuadIndices);
 }
 
 
@@ -77,11 +103,7 @@ void ShaderTextureBase::DrawButton(const ShaderState &ss, const OutlawTexture& t
         { float3(pos + float2(lerp(r.x, -r.x, o), -r.y), 0.f), float2(1.f - o, 0.f) },
         { float3(pos + float2(-r.x, -r.y),               0.f), float2(0.f)          } };
     static const ushort i[] = { 0,1,2, 0,2,3, 0,3,4, 0,4,5 };
-    BindTexture(texture, 0);
-    UseProgram(ss, v, texture);
-    ShaderState s1 = ss;
-    s1.DrawElements(GL_TRIANGLES, arraySize(i), i);
-    UnuseProgram();
+    bindTextureDrawElements(ss, texture, v, arraySize(i), i);
 }
 
 void ShaderTonemap::LoadTheProgram()

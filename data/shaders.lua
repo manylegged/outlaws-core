@@ -8,52 +8,7 @@
 -- uniform mat4 Transform;
 
 {
-   ShaderWormholeParticles = {
-      "varying vec4 DestinationColor;"
-      ,
-      "
-      attribute float StartTime;
-      attribute vec2  Offset;
-      attribute vec4  Color;
-      uniform   float CurrentTime;
-      uniform   vec4  CenterPos;
-      void main(void) {
-          float edge = StartTime ;//* (1 + sin(CurrentTime/10000) / 2);
-          //float a = -210 * edge;
-          float a = -210 * edge;
-          float b = 40.f;
-          float spirals = 8.0;
-          float scale   = 1.8;
-          float range   = spirals * scale;
-          float theta = mod((-CurrentTime / 1 + 10000 * edge) / 8, spirals) * scale;
-          //float r = a + b * theta;
-          //float r = 10 * a / (range - theta);
-          float r = a * exp(b * theta / 350);
-          vec2 rot = vec2(cos(theta), sin(theta));
-          float spin = 10 * edge;
-          vec2 rot2 = vec2(cos(spin * theta), sin(spin * theta));
-          float size = 24;// + 5 * sin(6 * (range - theta));
-          vec2 offset = size * vec2(rot2.x * Offset.x - rot2.y * Offset.y,
-                                   rot2.y * Offset.x + rot2.x * Offset.y);
-          vec4 pos = CenterPos + vec4(offset + r * rot,
-                                     -1000/theta - 0.25 * (range - theta) - 20 * edge,
-                                     0);
-          gl_Position = Transform * pos;
-
-          float fadein = 3;
-          float fadeout = 1;
-          float alpha = 0.5 * ((theta > (range - fadein)) ? (range - theta) / fadein :
-                               (theta < fadeout) ? theta / fadeout : 1.0);
-          DestinationColor = Color.a * alpha * vec4(mix(vec3(.54, .97, 0.9),
-                                                      vec3(0.0, .23, .56), edge), 
-                                  0.65);
-      }"
-      ,
-      "void main(void) {
-         gl_FragColor = DestinationColor;
-      }"
-   },
-
+   -- spaceship hulls
    ShaderIridescent = {
       "varying vec4 DestinationColor;"
       ,
@@ -72,6 +27,7 @@
       }"
    },
 
+   -- draws the wormhole
    ShaderWormhole = {
       "varying vec4 DestColor0;
        varying vec4 DestColor1;
@@ -107,7 +63,8 @@
           gl_FragColor = vec4(alpha * color.a * color.xyz, 0.0);
       }"
    }
-      
+
+   -- draws resource packets (R)
    ShaderResource = {
       "varying vec4 DestColor0;
        varying vec4 DestColor1;
@@ -151,6 +108,7 @@
       }"
    },
 
+   -- used for nice gradient backgrounds
    ShaderColorDither = {
       "varying vec4 DestinationColor;"
       ,
@@ -167,6 +125,7 @@
       }"
    },
 
+   -- passthrough texture shader - used in many places for drawing render targets
    ShaderTexture = {
       "varying vec2 DestTexCoord;
        varying vec4 DestColor;\n"
@@ -216,6 +175,7 @@
       }"
    }
 
+   -- HDR postprocessing. makes really bright areas (i.e. with a lot of particles) more white to make them look brighter
    ShaderTonemap = {
       "varying vec2 DestTexCoord;"
       ,
@@ -286,6 +246,7 @@
        }"
    },
 
+   -- draws dynamic glowey halos around spaceships
    -- FIXME optimize this for 1 point?
    -- NOTE: the lengthSqr distance compare, with scale * scale, has precision issues
    -- NOTE: when scale is very small!
@@ -329,6 +290,7 @@
       }",
    }
 
+   -- obsolete shader for hexagon particles
    ShaderParticles = {
       "varying vec4 DestinationColor;"
       ,
@@ -356,6 +318,7 @@
        }"
    }
 
+   -- used for particles (GL_POINTS)
    ShaderParticlePoints = {
       "varying vec4 DestinationColor;
        varying float Sides;"
@@ -404,6 +367,7 @@
        }"
    }
 
+   -- full screen blurs. 
    ShaderBlur = {
       "varying vec2 DestTexCoord;"
       ,
@@ -413,6 +377,7 @@
            gl_Position  = Transform * Position;
        }"
       ,
+      -- BLUR expands to the sum of a number of texture2d calls depending on the blur radius
       "uniform sampler2D source;
        uniform vec2 offsets[BLUR_SIZE];
        void main() {

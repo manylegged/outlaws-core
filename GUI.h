@@ -64,7 +64,12 @@ struct WidgetBase {
 
     float2 getSizePoints() const { return size; }
 
+    void setAdjacent(const WidgetBase &last, float2 rpos)
+    {
+        position = last.position + (last.size + size + 2.f * kButtonPad) * (rpos / 2.f);
+    }
 };
+
 
 struct ButtonBase : public WidgetBase {
 
@@ -87,7 +92,7 @@ struct ButtonBase : public WidgetBase {
     virtual void renderButton(DMesh& mesh, bool selected=false)=0;
     virtual void renderContents(const ShaderState &s_) {};
     
-    bool HandleEvent(const Event* event, bool* isActivate, bool* isPress=NULL);
+    virtual bool HandleEvent(const Event* event, bool* isActivate, bool* isPress=NULL);
     
     bool renderTooltip(const ShaderState &ss, const View& view, uint color, bool force=false) const;
     string getTooltip() const { return hovered ? tooltip : ""; }
@@ -257,7 +262,7 @@ struct TextInputCommandLine : public TextInputBase {
         string       name;
         CommandFunc  func;
         CompleteFunc comp;
-        void*        data;
+        void*        data = NULL;
         string       description;
     };
 
@@ -267,26 +272,13 @@ struct TextInputCommandLine : public TextInputBase {
     std::map<string, Command> commands;
     string                    prompt = "^2>^7 ";
     
-    static vector<string> comp_help(void* data, const char* name, const char* args)
-    {
-        vector<string> options;
-        TextInputCommandLine *self = (TextInputCommandLine*) data;
-        for (std::map<string, Command>::iterator it=self->commands.begin(), end=self->commands.end(); it != end; ++it)
-        {
-            options.push_back(it->first);
-        }
-        return options;
-    }
+    static vector<string> comp_help(void* data, const char* name, const char* args);
 
-    TextInputCommandLine()
-    {
-        sizeChars.y = 10;
+    TextInputCommandLine();
 
-        registerCommand(helpCmd, comp_help, this, "help", "[command]: list help for specified command, or all commands if unspecified");
-        setLineText("");
-    }
-
-    static string helpCmd(void* data, const char* name, const char* args);
+    vector<string> completeCommand(string cmd) const;
+    static string cmd_help(void* data, const char* name, const char* args);
+    static string cmd_find(void* data, const char* name, const char* args);
 
     void registerCommand(CommandFunc func, CompleteFunc comp, void *data, const char* name, const char* desc)
     {
@@ -464,6 +456,7 @@ struct OptionButtons {
     
 };
 
+// must set size!
 struct OptionSlider : public WidgetBase {
     
     bool        pressed = false;
@@ -478,6 +471,8 @@ struct OptionSlider : public WidgetBase {
     uint   defaultLineColor  = kGUIFg;
     uint   hoveredLineColor  = kGUIFgActive; 
     uint   inactiveLineColor = kGUIInactive;
+    bool   allowBinary       = true;
+
 
     float2 getSizePoints() const { return size; }
     float  getValueFloat() const { return (float) value / (values-1); }
@@ -490,6 +485,7 @@ struct OptionSlider : public WidgetBase {
     uint getFGColor() const { return ((!active) ? inactiveLineColor :
                                       (hovered) ? hoveredLineColor : defaultLineColor); }
 
+    bool isBinary() const { return allowBinary && values == 2; }
     bool isDiscrete() const { return values < 5; }
     
     void render(const ShaderState &s_);
@@ -732,17 +728,13 @@ struct ButtonLayout {
 
 struct MessageBoxWidget : public WidgetBase {
 
-    string title = "Message";  
+    string title;
     string message;
     int    messageFont = kDefaultFont;
     Button okbutton;
     float  alpha2   = 1.f;
 
-    MessageBoxWidget()
-    {
-        okbutton.text = "OK";
-        okbutton.setReturnKeys();
-    }
+    MessageBoxWidget();
 
     void updateFade();
     void render(const ShaderState &ss, const View& view);
@@ -812,6 +804,11 @@ struct ButtonWindow : public WidgetBase {
     Scrollbar            scrollbar;
     int2                 dims = int2(2, 8);
 
+    std::mutex           mutex;
+    float2               dragOffset;
+    float2               dragPos;
+    ButtonBase **        dragPtr = NULL;
+
     ButtonWindow()
     {
         scrollbar.parent = this;
@@ -825,6 +822,7 @@ struct ButtonWindow : public WidgetBase {
     void render(const ShaderState &ss);
     bool HandleEvent(const Event *event, ButtonBase **activated=NULL,
                      ButtonBase **dragged=NULL, ButtonBase **dropped=NULL);
+    ButtonBase *HandleRearrange(const Event *event, ButtonBase *dragged);
 
     void computeDims(int2 mn, int2 mx);
 };

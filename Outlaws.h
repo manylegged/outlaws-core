@@ -49,16 +49,20 @@ enum OLModKeys {
     OAltKey = 0xF612,
 };
 
+enum EventType {
+    OL_KEY_DOWN=0, OL_KEY_UP, OL_MOUSE_DOWN, OL_MOUSE_UP, OL_MOUSE_DRAGGED,
+    OL_MOUSE_MOVED, OL_SCROLL_WHEEL, OL_LOST_FOCUS, OL_GAINED_FOCUS,
+    OL_TOUCH_BEGIN, OL_TOUCH_MOVED, OL_TOUCH_STATIONARY, OL_TOUCH_ENDED, OL_TOUCH_CANCELLED,
+    OL_GAMEPAD_AXIS, OL_GAMEPAD_ADDED, OL_GAMEPAD_REMOVED,
+    OL_INVALID
+};
+
 struct OLEvent {
-    enum EventType { KEY_DOWN=0, KEY_UP, MOUSE_DOWN, MOUSE_UP, MOUSE_DRAGGED, 
-                     MOUSE_MOVED, SCROLL_WHEEL, LOST_FOCUS, GAINED_FOCUS,
-                     TOUCH_BEGIN, TOUCH_MOVED, TOUCH_STATIONARY, TOUCH_ENDED, TOUCH_CANCELLED,
-                     GAMEPAD_AXIS, GAMEPAD_ADDED, GAMEPAD_REMOVED,
-                     INVALID };
     enum EventType type;
     long key;
+    int which;                  /* which device (gamepads) */
     float x, y;
-    float dx, dy;
+    float dx, dy;               /* delta x, y */
 };
 
 // handle an input event
@@ -114,8 +118,8 @@ int OLG_GetQuake3Color(int val);
 
 // call around code inside the main loop of helper threads
 // these allocate and drain autorelease pools on Apple platforms
-void OL_ThreadBeginIteration(int i);
-void OL_ThreadEndIteration(int i);
+void OL_ThreadBeginIteration(void);
+void OL_ThreadEndIteration(void);
 
 // return number of cpu cores
 int OL_GetCpuCount(void);
@@ -154,7 +158,7 @@ void OL_WarpCursorPosition(float x, float y);
 void OL_SetGamepadEnabled(int enabled);
 
 // get name of gamepad
-const char* OL_GetGamepadName();
+const char* OL_GetGamepadName(int instance_id);
     
 ////////// Graphics
 
@@ -202,8 +206,10 @@ int OL_SaveTexture(const OutlawTexture *tex, const char* fname);
 struct OLSize {
     float x, y;
 };
-// load a font file, may be referred to later using INDEX
-void OL_SetFont(int index, const char* file, const char* name);
+#define OL_MAX_FONTS 10
+
+// load a ttf font file, may be referred to later using INDEX
+void OL_SetFont(int index, const char* file);
 
 // render a string into an OpenGL texture, using a previously loaded font
 int OL_StringTexture(OutlawTexture *tex, const char* string, float size, int font, float maxw, float maxh);

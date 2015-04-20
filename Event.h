@@ -121,6 +121,7 @@ enum : uint {
     MiddleMouseButton,
     MouseButtonFour,
     MouseButtonFive,
+    MouseButtonSix,
 
     // OShiftKey, OControlKey, and OAltKey from Outlaws.h go here
     
@@ -194,6 +195,7 @@ struct Event {
     Type   type = INVALID;
     int    key = 0;
     int    rawkey = 0;
+    int    which = 0;           // which gamepad
     float2 pos;
     float2 vel;
 
@@ -201,6 +203,7 @@ struct Event {
     string toUTF8() const;
     bool isMouse() const;
     bool isKey() const;
+    bool isGamepad() const;
 
     bool isKeyDown(const char* keys) const
     {
@@ -274,80 +277,40 @@ class KeyState {
     bool                          function[SpecialKeyMax - NSUpArrowFunctionKey];
     bool                          device[EventKeyMax - LeftMouseButton];
     std::unordered_map<int, bool> misc;
-    float2                        gamepadAxis[GamepadAxisCount + 1];
+    float2                        gamepadAxis[GamepadAxisCount];
+
+    struct GamepadInstance {
+        float2 axis[GamepadAxisCount];
+        bool   buttons[GamepadAxisTriggerRightY - GamepadA];
+    };
+    std::unordered_map<int, GamepadInstance> gamepads;
 
 public:
 
     float2 cursorPosScreen;
     bool   gamepadActive = false;
+    int    lastGamepad = -1;
 
-    KeyState()
-    {
-        reset();
-    }
+    KeyState();
 
-    float2 &getAxis(GamepadAxis axis)
-    {
-        if (0 > axis || axis >= GamepadAxisCount)
-            return gamepadAxis[GamepadAxisCount];
-        else
-            return gamepadAxis[axis];
-    }
-
-    bool anyAxis() const
-    {
-        foreach (const float2& ax, gamepadAxis)
-            if (!isZero(ax))
-                return true;
-        return false;
-    }
+    float2 &getAxis(GamepadAxis axis) { return gamepadAxis[axis]; }
+    bool anyAxis() const;
 
     bool& operator[](int c);
-
-    bool operator[](int c) const
-    {
-        return (*const_cast<KeyState*>(this))[c];
-    }
+    bool operator[](int c) const { return (*const_cast<KeyState*>(this))[c]; }
 
     void reset();
-
-    void cancelMouseDown()
-    {
-        (*this)[0 + LeftMouseButton] = false;
-        (*this)[1 + LeftMouseButton] = false;
-        (*this)[2 + LeftMouseButton] = false;
-    }
-
+    void cancelMouseDown();
     uint keyMods() const;
 
-    int getUpKey(const Event *evt) const
-    {
-        return ((evt->type == Event::KEY_UP)   ? getModKey(evt->key) :
-                (evt->type == Event::MOUSE_UP) ? getModKey(evt->key + LeftMouseButton) :
-                0);
-    }
+    int getUpKey(const Event *evt) const;
+    int getDownKey(const Event *evt) const;
+    int getModKey(int key) const;
 
-    int getDownKey(const Event *evt) const
-    {
-        return ((evt->type == Event::KEY_DOWN)   ? getModKey(evt->key) :
-                (evt->type == Event::MOUSE_DOWN) ? getModKey(evt->key + LeftMouseButton) :
-                0);
-    }
-
-    int getModKey(int key) const
-    {
-        const int mkey = key|keyMods();
-        if (chr_unshift(key) != key)
-        {
-            return mkey&~MOD_SHFT;
-        }
-        return mkey;
-    }
-
-    const char* stringNext() const { return gamepadActive ? "B" : "ENTER/Click"; }
-    const char* stringYes() const { return gamepadActive ? "A" : "ENTER"; }
-    const char* stringNo() const { return gamepadActive ? "B" : "ESC"; }
-    const char* stringDiscard() const { return gamepadActive ? "Y" : "DELETE"; }
+    const char* stringNext() const;
+    const char* stringYes() const;
+    const char* stringNo() const;
+    const char* stringDiscard() const;
 
     // update current button state
     // returns new synthetic event to process

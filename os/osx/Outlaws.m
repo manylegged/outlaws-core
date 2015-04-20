@@ -4,8 +4,10 @@
 #import <Cocoa/Cocoa.h>
 #import <OpenGL/OpenGL.h>
 #import <OpenGL/CGLContext.h>
+// @import CoreGraphics
 
 #include <cpuid.h>
+#include <pthread.h>
 
 #import "BasicOpenGLView.h"
 #include "Outlaws.h"
@@ -142,26 +144,29 @@ int OL_DirectoryExists(const char* path)
 
 const char** OL_ListDirectory(const char* path)
 {
-    static const int kMaxElements = 500;
-    static const char* array[kMaxElements];
-
     NSString *nspath = pathForFileName(path, "r");
     NSError *error = nil;
     NSArray *dirFiles = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:nspath error:&error];
     if (!dirFiles || error)
     {
-        // do this a lot to test for existence
-        // LogMessage([NSString stringWithFormat:@"Error listing directory %@: %@",
-                             // nspath, error ? [error localizedFailureReason] : @"unknown"]);
         return NULL;
     }
 
+    static const char** array = NULL;
+    static int arraysize = 0;
+    
+    if (!array || arraysize <= [dirFiles count])
+    {
+        arraysize = [dirFiles count] + 1;
+        if (array)
+            array = realloc(array, sizeof(const char*) * arraysize);
+        else
+            array = calloc(sizeof(const char*), arraysize);
+    }
+    
     int i = 0;
     for (NSString* file in dirFiles)
     {
-        if (i >= kMaxElements-1)
-            break;
-        
         array[i] = [file UTF8String];
         i++;
     }
@@ -374,23 +379,45 @@ int OL_SaveTexture(const OutlawTexture *tex, const char* fname)
     return success;
 }
 
-static NSString *g_fontNames[10];
+static NSString *g_fontPaths[OL_MAX_FONTS];
+static CGFontRef g_fonts[OL_MAX_FONTS];
+static NSLock   *g_fontMutex;
 
-static NSFont* getFont(int fontName, float size)
+static NSFont* getFont(int index, float size)
 {
-    NSFont* font = [NSFont fontWithName:g_fontNames[fontName] size:size];
-    if (!font) {
-        LogMessage([NSString stringWithFormat:@"Failed to load font %d '%@' size %g", fontName, g_fontNames[fontName], size]);
+    [g_fontMutex lock];
+    if (!g_fonts[index])
+    {
+        // see http://devmacosx.blogspot.com/2012/03/nsfont-from-file.html
+        CGDataProviderRef dataProvider = CGDataProviderCreateWithFilename([g_fontPaths[index] UTF8String]);
+        if (dataProvider)
+        {
+            g_fonts[index] = CGFontCreateWithDataProvider(dataProvider);
+            CGDataProviderRelease(dataProvider);
+        }
     }
-    return font;
+
+    CTFontRef font = nil;
+    if (g_fonts[index])
+        font = CTFontCreateWithGraphicsFont(g_fonts[index], size, NULL, NULL);
+    if (!font)
+        LogMessage([NSString stringWithFormat:@"Failed to load font %d from '%@' size %g", index, g_fontPaths[index], size]);
+    [g_fontMutex unlock];
+    return (NSFont*)font;
 }
 
-void OL_SetFont(int index, const char* file, const char* name)
+void OL_SetFont(int index, const char* file)
 {
-    g_fontNames[index] = [[NSString alloc] initWithUTF8String:name];
-    getFont(index, 12);         // preload
-}\
-
+    [g_fontMutex lock];
+    g_fontPaths[index] = [pathForFileName(file, "r") retain];
+    if (g_fonts[index]) {
+        CFRelease(g_fonts[index]);
+        g_fonts[index] = nil;
+    }
+    [g_fontMutex unlock];
+    LogMessage([NSString stringWithFormat:@"Found font %d at %s: %s",
+                         index, file, getFont(index, 12) ? "OK" : "FAILED"]);
+}
 
 void OL_FontAdvancements(int fontName, float size, struct OLSize* advancements)
 {
@@ -530,12 +557,17 @@ int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int fontNa
 
 	[image lockFocus];
     {
-        const BOOL useAA = size >= 7.f;
-        [[NSGraphicsContext currentContext] setShouldAntialias:useAA];
-        //[[NSCol=or blackColor] setFill];
-        //[NSBezierPath fillRect:NSMakeRect(0, 0, frameSize.width, frameSize.height)];
+        CGContextRef ctx = [[NSGraphicsContext currentContext] graphicsPort];
+        CGContextSetShouldAntialias(ctx, YES);
+        // CContextSetShouldSmoothFonts(ctx, YES);
+        CGContextSetShouldSubpixelPositionFonts(ctx, YES);
+        CGContextSetShouldSubpixelQuantizeFonts(ctx, YES);
+        // const BOOL useAA = size >= 7.f;
+        // [[NSColor blackColor] setFill];
+        // [NSBezierPath fillRect:NSMakeRect(0, 0, frameSize.width, frameSize.height)];
         @try {
-            [string drawAtPoint:NSMakePoint (0, 0)]; // draw at offset position
+            [string drawAtPoint:NSMakePoint(0.5, 0.5)]; // draw at offset position
+            // [string drawAtPoint:NSMakePoint(0.0, 0.0)]; // draw at offset position
         } @catch (NSException* exception) {
             LogMessage([NSString stringWithFormat:@"Error drawing string '%s': %@", str, exception.description]);
             LogMessage([NSString stringWithFormat:@"Stack trace: %@", [exception callStackSymbols]]);
@@ -565,10 +597,10 @@ int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int fontNa
         glTexSubImage2D(GL_TEXTURE_2D,0,0,0,(GLsizei)texSize.width,(GLsizei)texSize.height,
                         format, GL_UNSIGNED_BYTE, [bitmap bitmapData]);
     } else {
-        //glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        //glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);             // it's already antialiased
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        // glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);             // it's already antialiased
+        // glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         GLint tfmt = mstring ? GL_RGBA : GL_LUMINANCE_ALPHA;
         glTexImage2D(GL_TEXTURE_2D, 0, tfmt, (GLsizei)texSize.width, (GLsizei)texSize.height,
                      0, format, GL_UNSIGNED_BYTE, [bitmap bitmapData]);
@@ -581,38 +613,41 @@ int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int fontNa
     return 1;
 }
 
+static NSMutableDictionary* gUpdateThreadPool;
+static NSLock *gPoolMutex;
 
-#define THREADS 10
-static NSAutoreleasePool* gUpdateThreadPool[THREADS];
-
-
-void OL_ThreadBeginIteration(int i)
+static NSNumber* current_thread_id(void)
 {
-    if (i < 0 || i >= THREADS)
-        return;
-    
-    static bool initialized = false;
-    if (!initialized)
+    uint64 tid = 0;
+    pthread_threadid_np(pthread_self(), &tid);
+    return [NSNumber numberWithUnsignedLongLong:tid];
+}
+
+void OL_ThreadBeginIteration(void)
+{
+    if (!gUpdateThreadPool)
     {
         // initialized a dummy thread to put Cocoa into multithreading mode
         [[[NSThread new] autorelease] start];
-        initialized = true;
+        gUpdateThreadPool = (NSMutableDictionary*)CFDictionaryCreateMutable(nil, 0, &kCFCopyStringDictionaryKeyCallBacks, NULL);
+        gPoolMutex = [[NSLock alloc] init];
     }
 
-    gUpdateThreadPool[i] = [NSAutoreleasePool new];
+    [gPoolMutex lock];
+    [gUpdateThreadPool setObject:[NSAutoreleasePool new] forKey:current_thread_id()];
+    [gPoolMutex unlock];
 }
 
 
-void OL_ThreadEndIteration(int i)
+void OL_ThreadEndIteration(void)
 {
-    if (i < 0 || i >= THREADS)
-        return;
-
-    if (gUpdateThreadPool[i])
+    [gPoolMutex lock];
+    NSAutoreleasePool *pool = [gUpdateThreadPool objectForKey:current_thread_id()];
+    if (pool)
     {
-        [gUpdateThreadPool[i] drain];
-        gUpdateThreadPool[i] = nil;
+        [pool drain];
     }
+    [gPoolMutex unlock];
 }
 
 FILE *g_logfile = nil;
