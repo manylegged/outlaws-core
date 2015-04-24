@@ -85,12 +85,13 @@ inline void steamStatSet(const char* statname, int value)
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // enums -> string
 
- const char* EResult2String(EResult res);
+const char* EResult2String(EResult res);
 
 #define CHECK_STEAM_RESULT(DATA) \
-    DPRINT(MODS, ("%s -> %s", __func__, EResult2String((DATA)->m_eResult)))
+    DPRINT(STEAM, ("%s -> %s", __func__, EResult2String((DATA)->m_eResult)))
 
- const char* EItemUpdateStatus2String(EItemUpdateStatus status);
+const char* EItemUpdateStatus2String(EItemUpdateStatus status);
+const char* EPublishedFileVisibility2String(ERemoteStoragePublishedFileVisibility status);
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // index ISteamRemoteStorage files. Checking for existence is otherwise unexpectedly slow

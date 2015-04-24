@@ -72,22 +72,21 @@ void ShaderTextureBase::DrawQuad(const ShaderState& ss, const OutlawTexture& tex
 }
 
 
-void ShaderTextureBase::DrawRectScaleAngle(const ShaderState &ss, const OutlawTexture& texture,
-                            float2 scale, float angle, float2 pos, float2 rad) const
+void ShaderTextureBase::DrawRectScale(const ShaderState &ss, const OutlawTexture& texture,
+                                      float2 scale, float2 pos, float2 rad) const
 {
     const float wi = scale.x * (texture.texwidth ? (float) texture.width / texture.texwidth : 1.f);
     const float hi = scale.y * (texture.texheight ? (float) texture.height / texture.texheight : 1.f);
-    const float2 rot = angleToVector(angle);
 
     const float2 a = pos + flipX(rad);
     const float2 b = pos + rad;
     const float2 c = pos - rad;
     const float2 d = pos + flipY(rad);
 
-    VertexPosTex v[] = { { float3(a, 0), rotate(float2(0, hi), rot) },
-                         { float3(b, 0), rotate(float2(wi, hi), rot) },
+    VertexPosTex v[] = { { float3(a, 0), float2(0, hi) },
+                         { float3(b, 0), float2(wi, hi) },
                          { float3(c, 0), float2() },
-                         { float3(d, 0), rotate(float2(wi, 0), rot) } };
+                         { float3(d, 0), float2(wi, 0) } };
     bindTextureDrawElements(ss, texture, v, arraySize(kQuadIndices), kQuadIndices);
 }
 

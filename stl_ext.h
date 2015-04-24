@@ -594,6 +594,18 @@ inline bool vec_pop_increment_deep(V& v, I &idx, bool test)
     }
 }
 
+// remove v[i] if test, otherwise increment i. return test
+template <typename V, typename I>
+inline bool vec_erase_increment(V& v, I &idx, bool test)
+{
+    if (test) {
+        return vec_erase(v, idx);
+    } else {
+        ++idx;
+        return false;
+    }
+}
+
 // remove first occurrence of t in v, return true if found
 // swap from end to fill - does not maintain order!
 template <typename V, typename T>

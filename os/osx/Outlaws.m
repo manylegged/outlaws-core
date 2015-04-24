@@ -240,10 +240,25 @@ int OL_FileDirectoryPathExists(const char* fname)
     return exists ? 1 : 0;
 }
 
+static void invert_image(uint *pix, int width, int height)
+{
+    for (int y=0; y<height/2; y++)
+    {
+        for (int x=0; x<width; x++)
+        {
+            const int top = y * width + x;
+            const int bot = (height - y - 1) * width + x;
+            const uint temp = pix[top];
+            pix[top] = pix[bot];
+            pix[bot] = temp;
+        }
+    }
+}
+
 struct OutlawImage OL_LoadImage(const char* fname)
 {
-    struct OutlawImage t;
-    memset(&t, 0, sizeof(t));
+    struct OutlawImage img;
+    memset(&img, 0, sizeof(img));
 
     NSString* path = pathForFileName(fname, "r");
     CFURLRef texture_url = CFURLCreateWithFileSystemPath(NULL, (__bridge CFStringRef)path, kCFURLPOSIXPathStyle, false);
@@ -251,7 +266,7 @@ struct OutlawImage OL_LoadImage(const char* fname)
     if (!texture_url)
     {
         LogMessage([NSString stringWithFormat:@"Error getting image url for %s", fname]);
-        return t;
+        return img;
     }
     
     CGImageSourceRef image_source = CGImageSourceCreateWithURL(texture_url, NULL);
@@ -261,21 +276,24 @@ struct OutlawImage OL_LoadImage(const char* fname)
         CFRelease(texture_url);
         if (image_source)
             CFRelease(image_source);
-        return t;
+        return img;
     }
     
     CGImageRef image = CGImageSourceCreateImageAtIndex(image_source, 0, NULL);
     
-    t.width  = (unsigned)CGImageGetWidth(image);
-    t.height = (unsigned)CGImageGetHeight(image);
-    
-    t.data = calloc(t.width * t.height, 4);
-    if (t.data)
+    img.width  = (unsigned)CGImageGetWidth(image);
+    img.height = (unsigned)CGImageGetHeight(image);
+
+    img.format = GL_BGRA;
+    img.type = GL_UNSIGNED_INT_8_8_8_8;
+    img.data = calloc(img.width * img.height, 4);
+    if (img.data)
     {
         CGColorSpaceRef color_space = CGColorSpaceCreateDeviceRGB();
-        CGContextRef context = CGBitmapContextCreate(t.data, t.width, t.height, 8, t.width * 4, color_space, kCGImageAlphaPremultipliedFirst);
+        CGContextRef context = CGBitmapContextCreate(img.data, img.width, img.height, 8, img.width * 4, color_space,
+                                                     kCGImageAlphaPremultipliedFirst);
         
-        CGContextDrawImage(context, CGRectMake(0, 0, t.width, t.height), image);
+        CGContextDrawImage(context, CGRectMake(0, 0, img.width, img.height), image);
         
         CFRelease(context);
         CFRelease(color_space);
@@ -283,39 +301,15 @@ struct OutlawImage OL_LoadImage(const char* fname)
     CFRelease(image);
     CFRelease(image_source);
     CFRelease(texture_url);
+
+    invert_image((uint*)img.data, img.width, img.height);
     
-    return t;
+    return img;
 }
 
-
-struct OutlawTexture OL_LoadTexture(const char* fname)
+void OL_FreeImage(OutlawImage *img)
 {
-    struct OutlawTexture t;
-    memset(&t, 0, sizeof(t));
-    
-    struct OutlawImage image = OL_LoadImage(fname);
-    if (!image.data)
-        return t;
-    
-    GLuint texture_id;
-    glGenTextures(1, &texture_id);
-    glBindTexture(GL_TEXTURE_2D, texture_id);
-    //glTexParameteri(GL_TEXTURE_2D, GL_GENERATE_MIPMAP_SGIS, GL_TRUE);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image.width, image.height, 0, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8, image.data);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE_SGIS);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE_SGIS);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-
-    glReportError();
-    
-    free(image.data);
-
-    t.width = image.width;
-    t.height = image.height;
-    t.texnum = texture_id;
-
-    return t;
+    free(img->data);
 }
 
 int OL_SaveTexture(const OutlawTexture *tex, const char* fname)
@@ -330,18 +324,7 @@ int OL_SaveTexture(const OutlawTexture *tex, const char* fname)
     glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pix);
     glReportError();
 
-    // invert image
-    for (int y=0; y<tex->height/2; y++)
-    {
-        for (int x=0; x<tex->width; x++)
-        {
-            const int top = y * tex->width + x;
-            const int bot = (tex->height - y - 1) * tex->width + x;
-            const uint temp = pix[top];
-            pix[top] = pix[bot];
-            pix[bot] = temp;
-        }
-    }
+    invert_image(pix, tex->width, tex->height);
 
     CGImageRef cimg = nil;
     {

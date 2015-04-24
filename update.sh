@@ -14,4 +14,12 @@ cp $outlaws/data/shaders.lua data/
 cp -rv $outlaws/data/shaders/ data/
 cp ~/.lldbinit .
 
+mkdir -pv scripts
+cp -v $outlaws/scripts/ccount.py scripts/
+cp -v $outlaws/scripts/decluster.py scripts/
+cp -v $outlaws/scripts/etags.py scripts/
+cp -v $outlaws/scripts/filter_*.py scripts/
+cp -v $outlaws/scripts/langtool.py scripts/
+cp -v $outlaws/scripts/stack_lookup.py scripts/
+
 hg status

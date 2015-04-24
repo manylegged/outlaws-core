@@ -1671,12 +1671,6 @@ bool HandleEventSelected(int* selected, ButtonBase &current, int count, int rows
         current.pressed = false;
     }
 
-    if (event->isGamepad())
-    {
-        // FIXME not quite right
-        KeyState::instance().cursorPosScreen = current.position;
-    }
-    
     return handled;
 }
 
@@ -1939,12 +1933,12 @@ ButtonBase *ButtonWindow::HandleRearrange(const Event *event, ButtonBase *drag)
                            position + rad - drag->size/2.f);
     foreach (ButtonBase *&bu, buttons)
     {
-        if (bu != *dragPtr &&
+        if (bu != drag &&
             distanceSqr(drag->position, bu->position) < distanceSqr(drag->position, dragPos))
         {
             std::swap(bu->position, dragPos);
             std::swap(bu, *dragPtr);
-            return bu;
+            return *dragPtr;    // button we swapped with
         }
     }
     return NULL;

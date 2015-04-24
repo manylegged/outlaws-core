@@ -195,7 +195,18 @@ const char* EItemUpdateStatus2String(EItemUpdateStatus status)
     case k_EItemUpdateStatusUploadingContent: return "uploading content changes to Steam";
     case k_EItemUpdateStatusUploadingPreviewFile: return "uploading new preview file image";
     case k_EItemUpdateStatusCommittingChanges: return "committing all changes";
-    default: return "Unkown EUpdateStatus";
+    default: return "Unnkown EUpdateStatus";
+    }
+}
+
+const char* EPublishedFileVisibility2String(ERemoteStoragePublishedFileVisibility status)
+{
+    switch (status)
+    {
+    case k_ERemoteStoragePublishedFileVisibilityPublic: return "Public";
+    case k_ERemoteStoragePublishedFileVisibilityFriendsOnly: return "FriendsOnly";
+    case k_ERemoteStoragePublishedFileVisibilityPrivate: return "Private";
+    default: return "Unknown Visibility";
     }
 }
 

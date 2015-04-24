@@ -805,9 +805,9 @@ struct ButtonWindow : public WidgetBase {
     int2                 dims = int2(2, 8);
 
     std::mutex           mutex;
-    float2               dragOffset;
-    float2               dragPos;
-    ButtonBase **        dragPtr = NULL;
+    float2               dragOffset;     // positon of dragged button relative to mouse pointer
+    float2               dragPos;        // original position of dragged button
+    ButtonBase **        dragPtr = NULL; // pointer to dragged button in buttons vector
 
     ButtonWindow()
     {

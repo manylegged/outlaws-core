@@ -380,13 +380,6 @@ struct OutlawImage OL_LoadImage(const char* fname)
     // FIXME implement me
     OutlawImage img;
     memset(&img, 0, sizeof(img));
-    return img;
-}
-
-struct OutlawTexture OL_LoadTexture(const char* fname)
-{
-    struct OutlawTexture t;
-    memset(&t, 0, sizeof(t));
     
     const char *buf = OL_PathForFile(fname, "r");
     ReportSDL("loading [%s]...\n", buf);
@@ -395,7 +388,7 @@ struct OutlawTexture OL_LoadTexture(const char* fname)
  
     if (!surface) {
         ReportSDL("SDL could not load '%s': %s\n", buf, SDL_GetError());
-        return t;
+        return img;
     }
 
     GLenum texture_format = 0;
@@ -412,31 +405,21 @@ struct OutlawTexture OL_LoadTexture(const char* fname)
             texture_format = GL_BGR;
     }
 
-    int w=surface->w, h=surface->h;
-    ReportSDL("texture has %d colors, %dx%d pixels\n", nOfColors, w, h);
+    ReportSDL("texture has %d colors, %dx%d pixels\n", nOfColors, surface->w, surface->h);
 
-    GLuint texture;
-    glGenTextures(1, &texture);
-    glBindTexture(GL_TEXTURE_2D, texture);
- 
-    //glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
- 
-    glTexImage2D(GL_TEXTURE_2D, 0, nOfColors, surface->w, surface->h, 0,
-                  texture_format, GL_UNSIGNED_BYTE, surface->pixels);
+    img.width = surface->w;
+    img.height = surface->h;
+    img.type = GL_UNSIGNED_BYTE;
+    img.format = texture_format;
+    img.data = (char*) surface->pixels;
+    img.handle = surface;
 
-    //gluBuild2DMipmaps( GL_TEXTURE_2D, nOfColors, surface->w, surface->h,
-    //               texture_format, GL_UNSIGNED_BYTE, surface->pixels);
- 
-    SDL_FreeSurface(surface);
-    glReportError();
+    return img;
+}
 
-    t.width = w;
-    t.height = h;
-    t.texnum = texture;
-
-    return t;
+void OL_FreeImage(OutlawImage *img)
+{
+    SDL_FreeSurface((SDL_Surface*)img->handle);
 }
 
 int OL_SaveTexture(const OutlawTexture *tex, const char* fname)
@@ -493,20 +476,20 @@ int OL_SaveTexture(const OutlawTexture *tex, const char* fname)
 }
 
 static lstring    g_fontFiles[OL_MAX_FONTS];
-static TTF_Font*  g_fonts[OL_MAX_FONTS];
+static std::unordered_map<uint, TTF_Font*> g_fonts;
 static std::mutex g_fontMutex;
 
-TTF_Font* getFont(int fontName, float size)
+TTF_Font* getFont(int index, float size)
 {
     std::lock_guard<std::mutex> l(g_fontMutex);
-    if (0 > fontName || fontName > OL_MAX_FONTS)
+    if (0 > index || index > OL_MAX_FONTS)
         return NULL;
-    lstring file = g_fontFiles[fontName];
+    lstring file = g_fontFiles[index];
     if (!file)
         return NULL;
 
     const int   isize = round_int(size * g_scaling_factor);
-    const uint  key   = (fontName<<16)|isize;
+    const uint  key   = (index<<16)|isize;
     TTF_Font*  &font  = g_fonts[key];
 
     if (!font)
@@ -525,23 +508,25 @@ TTF_Font* getFont(int fontName, float size)
 
 void OL_SetFont(int index, const char* file)
 {
-    std::lock_guard<std::mutex> l(g_fontMutex);
     const char* fname = OL_PathForFile(file, "r");
     if (fname && OL_FileDirectoryPathExists(fname))
     {
+        std::lock_guard<std::mutex> l(g_fontMutex);
         g_fontFiles[index] = lstring(fname);
-        TTF_Font*  &font  = g_fonts[key];
-        if (font)
+        for (auto it = g_fonts.begin(); it != g_fonts.end(); )
         {
-            TTF_CloseFont(font);
-            font = NULL;
+            if ((it->first >> 16) == index)
+            {
+                TTF_CloseFont(it->second);
+                it = g_fonts.erase(it);
+            }
+            else
+            {
+                ++it;
+            }
         }
-        ReportSDL("Found font %d at '%s': %s", index, fname, getFont(index, 12) ? "OK" : "FAILED");
     }
-    else
-    {
-        ReportSDL("Unable to find font %d '%s'", index, fname);
-    }
+    ReportSDL("Found font %d at '%s': %s", index, fname, getFont(index, 12) ? "OK" : "FAILED");
 }
 
 void OL_FontAdvancements(int fontName, float size, struct OLSize* advancements)

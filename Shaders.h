@@ -317,8 +317,8 @@ struct ShaderTextureBase : public ShaderProgramBase {
         DrawRectCorners(ss, texture, pos - rad, pos + rad);
     }
 
-    void DrawRectScaleAngle(const ShaderState &ss, const OutlawTexture& texture,
-                            float2 scale, float angle, float2 pos, float2 rad) const;
+    void DrawRectScale(const ShaderState &ss, const OutlawTexture& texture,
+                       float2 scale, float2 pos, float2 rad) const;
 
     void DrawRectWidth(const ShaderState &ss, const OutlawTexture& texture, float2 pos, float width) const
     {

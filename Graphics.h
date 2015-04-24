@@ -239,7 +239,7 @@ public:
     float2 size() const { return m_size; }
     bool  empty() const { return m_texname == 0; } 
 
-    void loadFile(const char* fname);
+    bool loadFile(const char* fname);
 
     OutlawTexture getTexture() const;
 
@@ -277,12 +277,12 @@ struct ShaderState {
 
     glm::mat4            uTransform;
     uint                 uColor = 0xffffffff;
-    uint                 uColor1 = 0xffffffff;
 
     void translate(float2 t) { uTransform = glm::translate(uTransform, float3(t.x, t.y, 0)); }
     void translateZ(float z) { uTransform = glm::translate(uTransform, float3(0, 0, z)); }
     void translate(const float3 &t) { uTransform = glm::translate(uTransform, t); }
     void rotate(float a)     { uTransform = glm::rotate(uTransform, a, float3(0, 0, 1)); }
+    void rotate(float2 rot)  { rotate(vectorToAngle(rot)); }
     void scale(const float3 &s) { uTransform = glm::scale(uTransform, s); }
 
     void translateRotate(float2 t, float a)
@@ -293,12 +293,6 @@ struct ShaderState {
 
     void color(uint c, float a=1)   { uColor = argb2abgr(0xff000000|c, a); }
     void color32(uint c, float a=1) { uColor = argb2abgr(c, a); }
-
-    void color2(uint c, float ca, uint c1, float c1a)  
-    { 
-        uColor = argb2abgr(0xff000000|c, ca); 
-        uColor1 = argb2abgr(0xff000000|c1, c1a); 
-    }
 
     void DrawElements(uint dt, size_t ic, const ushort* i) const;
     void DrawElements(uint dt, size_t ic, const uint* i) const;
@@ -362,9 +356,12 @@ struct View {
     float2 velocity;            // change in position
     float  scale = 1.f;               // larger values are more zoomed out
     float  z = 0.f;                   // depth of camera (related to scale)
-    float  angle = 0.f;               // rotation is applied after position
+    float2 rot = float2(1.f, 0.f);    // rotation is applied after position
 
     View();
+
+    void setAngle(float angle) { rot = angleToVector(angle); }
+    float getAngle() const { return vectorToAngle(rot); }
     
     // interpolation support
     friend View operator+(const View& a, const View& b);
@@ -1641,6 +1638,8 @@ enum ButtonStyle { S_BOX=1, S_CORNERS=2, S_FIXED=4, S_OVAL=8, S_3D=16 };
 
 void PushButton(TriMesh<VertexPosColor>* triP, LineMesh<VertexPosColor>* lineP, float2 pos, float2 r, 
                 uint bgColor, uint fgColor, float alpha);
+void PushButton1(TriMesh<VertexPosColor>* triP, LineMesh<VertexPosColor>* lineP, float2 pos, float2 r, 
+                 uint bgColor, uint fgColor, float alpha);
 
 void DrawButton(const ShaderState *data, float2 pos, float2 r, uint bgColor, uint fgColor, float alpha=1);
 

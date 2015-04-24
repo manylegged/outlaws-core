@@ -490,17 +490,31 @@ void GLTexture::GenerateMipmap()
     glReportError();
 }
 
-void GLTexture::loadFile(const char* fname)
+bool GLTexture::loadFile(const char* fname)
 {
     clear();
-
-    OutlawTexture tex = OL_LoadTexture(fname);
-    ASSERT(tex.texnum);
+    OutlawImage image = OL_LoadImage(fname);
+    if (!image.data)
+        return false;
     
-    m_texname = tex.texnum;
-    m_size.x  = tex.width;
-    m_size.y  = tex.height;
-    m_format  = GL_RGB;
+    glGenTextures(1, &m_texname);
+    glBindTexture(GL_TEXTURE_2D, m_texname);
+    //glTexParameteri(GL_TEXTURE_2D, GL_GENERATE_MIPMAP_SGIS, GL_TRUE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image.width, image.height, 0, image.format, image.type, image.data);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE_SGIS);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE_SGIS);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glGenerateMipmap(GL_TEXTURE_2D);
+
+    glReportError();
+    
+    OL_FreeImage(&image);
+    
+    m_size.x  = image.width;
+    m_size.y  = image.height;
+    m_format  = GL_RGBA;
+    return true;
 }
 
 GLTexture PixImage::uploadTexture() const
@@ -788,6 +802,26 @@ void PushButton(TriMesh<VertexPosColor>* triP, LineMesh<VertexPosColor>* lineP, 
     }
 }
 
+void PushButton1(TriMesh<VertexPosColor>* triP, LineMesh<VertexPosColor>* lineP, float2 pos, float2 r, uint bgColor, uint fgColor, float alpha)
+{
+    static const float o = 0.1f;
+    const float2 v[5] = { pos + float2(-r.x, r.y),
+                          pos + float2(r.x, r.y),
+                          pos + float2(r.x, lerp(-r.y, r.y, o)),
+                          pos + float2(lerp(r.x, -r.x, o), -r.y),
+                          pos + float2(-r.x, -r.y) };
+
+    if (triP && (bgColor&ALPHA_OPAQUE) && alpha > epsilon) {
+        triP->color32(bgColor, alpha);
+        triP->PushPoly(v, 5);
+    }
+
+    if (lineP && (fgColor&ALPHA_OPAQUE) && alpha > epsilon) {
+        lineP->color32(fgColor, alpha);
+        lineP->PushLoop(v, 5);
+    }
+}
+
 void DrawButton(const ShaderState *data, float2 pos, float2 r, uint bgColor, uint fgColor, float alpha)
 {
     if (alpha < epsilon)
@@ -952,7 +986,7 @@ View operator+(const View& a, const View& b)
     r.position = a.position + b.position;
     r.velocity = a.velocity + b.velocity;
     r.scale    = a.scale + b.scale;
-    r.angle    = a.angle + b.angle;
+    r.rot      = a.rot + b.rot;
     return r;
 }
 
@@ -962,7 +996,7 @@ View operator*(float a, const View& b)
     r.position = a * b.position;
     r.velocity = a * b.velocity;
     r.scale    = a * b.scale;
-    r.angle    = a * b.angle;
+    r.rot      = a * b.rot;
     return r;
 }
 
@@ -973,22 +1007,20 @@ float View::getScale() const
 
 float2 View::toWorld(float2 p) const
 {
-    // FIXME angle
     p -= 0.5f * sizePoints;
     p *= getScale();
-    p = rotate(p, angle);
+    p = rotate(p, rot);
     p += position;
     return p;
 }
 
 float2 View::toScreen(float2 p) const
 {
-    double2 dp = double2(p);
-    dp -= position;
-    dp = rotate(dp, double(-angle));
-    dp /= getScale();
-    dp += 0.5f * sizePoints;
-    return float2(dp);
+    p -= position;
+    p = rotateN(p, rot);
+    p /= getScale();
+    p += 0.5f * sizePoints;
+    return p;
 }
 
 bool View::intersectRectangle(const float3 &a, const float2 &r) const
@@ -1046,13 +1078,12 @@ ShaderState View::getWorldShaderState(float2 zminmax) const
 
     const glm::mat4 view = glm::lookAt(float3(position, dist),
                                        float3(position, 0.f),
-                                       float3(angleToVector(angle + kUpAngle), 0));
+                                       float3(rotate(rot, kUpAngle), 0));
     const glm::mat4 proj = glm::perspective(fovy, aspect, mznear, mzfar);
     ws.uTransform = proj * view;
 #endif
 
     ws.translateZ(z);
-    // ws.rotate(-angle);
 
     return ws;
 }

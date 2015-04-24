@@ -185,20 +185,22 @@ int OL_HasTearControl(void);
 
 typedef struct OutlawImage {
     int width, height;
-    char *data;                 /* release with free() */
+    unsigned format;
+    unsigned type;
+    char *data;                 /* pixel data */
+    void *handle;
 } OutlawImage;
 
 // load an image
-OutlawImage OL_LoadImage(const char*fname);
+struct OutlawImage OL_LoadImage(const char *fname);
+void OL_FreeImage(struct OutlawImage *img);
 
 typedef struct OutlawTexture {
     int width, height;
     int texwidth, texheight;
+    unsigned format;
     unsigned texnum;
 } OutlawTexture;
-
-// load a texture from file into OpenGL
-OutlawTexture OL_LoadTexture(const char* fname);
 
 // save a texture to file
 int OL_SaveTexture(const OutlawTexture *tex, const char* fname);
