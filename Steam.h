@@ -101,7 +101,9 @@ int SteamFileExists(const char* fname);
 bool SteamFileDelete(const char* fname);
 
 // ISteamRemoteStorage::FileWrite / FileRead which use/maintain file index and report errors
+extern int g_steamReadsFailed;
 bool steamFileWrite(const char* fname, const char* data, int size, int ucsize);
 string steamFileRead(ISteamRemoteStorage *ss, const char* fname);
+int steamDeleteRecursive(const char *path);
 
 #endif

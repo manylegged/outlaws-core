@@ -212,11 +212,11 @@ bool hasField(const T& obj, const char* field)
     static const STRUCT_NAME &getDefault();                             \
     bool operator==(const STRUCT_NAME& sb) const;                       \
     STRUCT_NAME& operator=(const STRUCT_NAME& sb);                      \
-    STRUCT_NAME& operator=(STRUCT_NAME&& sb) NOEXCEPT;                  \
+    STRUCT_NAME& operator=(STRUCT_NAME&& sb) NOEXCEPT
     
 
 #define DECLARE_SERIAL_STRUCT_CONTENTS(STRUCT_NAME, FIELDS_MACRO, IGNORE_MACRO) \
-    FIELDS_MACRO(SERIAL_TO_STRUCT_FIELD);                               \
+    FIELDS_MACRO(SERIAL_TO_STRUCT_FIELD)                                \
     STRUCT_NAME();                                                      \
     ~STRUCT_NAME();                                                     \
     template <typename V>                                               \
@@ -227,13 +227,13 @@ bool hasField(const T& obj, const char* field)
             true;                                                       \
     }                                                                   \
     typedef int VisitEnabled;                                           \
-    DECLARE_SERIAL_STRUCT_OPS(STRUCT_NAME)                              \
+    DECLARE_SERIAL_STRUCT_OPS(STRUCT_NAME)
     
 
 #define DECLARE_SERIAL_STRUCT(STRUCT_NAME, FIELDS_MACRO)                \
     struct STRUCT_NAME {                                                \
         DECLARE_SERIAL_STRUCT_CONTENTS(STRUCT_NAME, FIELDS_MACRO, SERIAL_PLACEHOLDER); \
-    }                                                                   \
+    }
 
 
 #define DEFINE_SERIAL_STRUCT_OPS(STRUCT_NAME, FIELDS_MACRO)     \

@@ -13,7 +13,17 @@ import subprocess
 
 UNDNAME = "C:/Program Files (x86)/Microsoft Visual Studio 12.0/VC/bin/undname.exe"
 DIA2DUMP = "C:/Users/Arthur/Documents/DIA2Dump/Release/Dia2Dump.exe"
-SYMBOLS = "C:/symbols"
+if sys.platform.startswith("darwin"):
+    PDB_SYMBOLS = ["/Volumes/BOOTCAMP/symbols",
+                   "/Volumes/Users/Arthur/AppData/Local/Temp/SymbolCache"]
+    OUTLAWS_WIN32 = ["win32",
+                     "/Volumes/BOOTCAMP/Users/Arthur/Documents/outlaws/win32",
+                     "/Volumes/Users/Arthur/Documents/outlaws/win32"]
+else:
+    PDB_SYMBOLS = ["C:/symbols",
+                   "//THOR/Users/Arthur/AppData/Local/Temp/SymbolCache"]
+    OUTLAWS_WIN32 = ["win32", "//THOR/Users/Arthur/Documents/outlaws/win32"]
+    
 REL_SYM_PATH = {"ReassemblyRelease":["steam", "release"],
                 "ReassemblyBuilder":["builder"],
                 "ReassemblyRelease64":["release"],
@@ -126,14 +136,7 @@ def shorten_fname(fname):
     return fname
 
 
-def glob_files(*patterns):
-    if sys.platform.startswith("darwin"):
-        patterns = [pat.replace("C:", BOOTCAMP) if pat.startswith("C:") else os.path.join(BOOTCAMP_OUTLAWS, pat)
-                    for pat in patterns]
-        for pat in patterns:
-            if pat.startswith(ROOT):
-                patterns.append(pat.replace(ROOT, BOOTCAMP_OUTLAWS))
-                # print pat, patterns[-1]
+def glob_files(patterns):
     paths = []
     for pat in patterns:
         paths.extend(glob.glob(pat))
@@ -146,31 +149,36 @@ def get_dll_symbols(modname):
     if lpdb in ("msvcp120.pdb", "msvcr120.pdb"):
         lpdb = lpdb.replace(".pdb", ".i386.pdb")
 
-    if os.path.exists(DIA2DUMP):
-        paths = glob_files(os.path.join(ROOT, "win32", pdb),
-                           os.path.join(SYMBOLS, lpdb, "*", lpdb))
-        if len(paths) == 0:
-            return None, []
-        pdb_path = paths[0]
+    pdb_path = [os.path.join(ROOT, "win32", pdb)]
+    if sys.platform.startswith("darwin"):
+        pdb_path.extend(os.path.join(w32, pdb) for w32 in OUTLAWS_WIN32)
+    pdb_path.extend(os.path.join(sp, lpdb, "*", lpdb) for sp in PDB_SYMBOLS)
+    paths = glob_files(pdb_path)
+    if len(paths) == 0:
+        return None, []
+    pdb_path = paths[0]
 
-        ext, flags = ("line", ("-l",)) if "win32" in pdb_path else ("globals", ("-g", "-p"))
+    ext, flags = ("line", ("-l",)) if "win32" in pdb_path else ("globals", ("-g", "-p"))
 
-        gpath = "%s.%s.gz" % (pdb_path, ext)
-        if not os.path.exists(gpath):
-            fil = gzip.open(gpath, "w")
-            if not fil:
-                print "can't open", gpath
-                exit(1)
-            for flag in flags:
-                dat = subprocess.check_output([DIA2DUMP, flag, pdb_path])
-                if len(dat) > 100:
-                    break;
-            fil.write(dat)
-            fil.close()
+    gpath = "%s.%s.gz" % (pdb_path, ext)
+    if not os.path.exists(gpath) and os.path.exists(DIA2DUMP):
+        fil = gzip.open(gpath, "w")
+        if not fil:
+            print "can't open", gpath
+            exit(1)
+        for flag in flags:
+            dat = subprocess.check_output([DIA2DUMP, flag, pdb_path])
+            if len(dat) > 100:
+                break;
+        fil.write(dat)
+        fil.close()
+    if os.path.exists(gpath):
         return ext, gzip.open(gpath)
 
-    paths = glob_files(os.path.join(ROOT, "win32", "%s.line.gz" % pdb),
-                       os.path.join(ROOT, "win32", "symbols", "%s.globals.gz" % lpdb))
+    symbol_path = [os.path.join(ROOT, w32, "%s.line.gz" % pdb) for w32 in OUTLAWS_WIN32]
+    symbol_path.extend(os.path.join(ROOT, w32, "symbols", "%s.globals.gz" % lpdb) for w32 in OUTLAWS_WIN32)
+    
+    paths = glob_files(symbol_path)
     for pat in paths:
         ext = "line" if pat.endswith(".line.gz") else "globals"
         return ext, gzip.open(pat)
@@ -200,10 +208,10 @@ def get_symbol_type_handle(modname, version):
         platform = "win32" if modname.endswith(".exe") else "linux"
         dirns = REL_SYM_PATH.get(basename, "")
         for dirn in dirns:
-            for typ in ("line", "elf", "map"):
-                pattern = os.path.join(ROOT, platform, dirn, version, "%s.%s.gz" % (basename, typ))
-                paths = glob_files(pattern)
-                # print pattern, paths
+            for typ in ("line", "elf"):
+                symbol_path = OUTLAWS_WIN32 if platform == "win32" else [platform]
+                # print symbol_path
+                paths = glob_files(os.path.join(ROOT, p, dirn, version, "%s.%s.gz" % (basename, typ)) for p in symbol_path)
                 if len(paths):
                     # print "using", paths[0]
                     return typ, gzip.open(paths[0])
@@ -734,6 +742,7 @@ def extract_callstack(logf, opts, triage=None, handlers=None):
 if __name__ == '__main__':
 
     ROOT = os.path.abspath(os.path.join(os.path.dirname(sys.argv[0]), ".."))
+    ROOT = ROOT.replace("/cygdrive/c/", "c:/")
 
     ops = extract_opts()
     

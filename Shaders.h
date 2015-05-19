@@ -277,31 +277,24 @@ struct ShaderWormhole : public ShaderProgramBase, public ShaderBase<ShaderWormho
 
 struct ShaderTextureBase : public ShaderProgramBase {
 
-    void bindTextureDrawElements(const ShaderState &ss, const OutlawTexture &texture,
+    void bindTextureDrawElements(const ShaderState &ss, const GLTexture &texture,
                                  VertexPosTex *vtx, int icount, const ushort *idxs) const;
     
-    virtual void UseProgram(const ShaderState &ss, const VertexPosTex *ptr, const OutlawTexture& ot) const = 0;
-
-    void BindTexture(const OutlawTexture& texture, int slot) const
-    {
-        ASSERT(texture.width && texture.texnum);
-        glActiveTexture(GL_TEXTURE0 + slot);
-        glBindTexture(GL_TEXTURE_2D, texture.texnum);
-    }
+    virtual void UseProgram(const ShaderState &ss, const VertexPosTex *ptr, const GLTexture& ot) const = 0;
 
     // a b
     // c d
-    void DrawQuad(const ShaderState& ss, const OutlawTexture& texture,
+    void DrawQuad(const ShaderState& ss, const GLTexture& texture,
                   float2 a, float2 b, float2 c, float2 d) const;
 
-    void DrawRectCorners(const ShaderState &ss, const OutlawTexture& texture, float2 a, float2 b) const
+    void DrawRectCorners(const ShaderState &ss, const GLTexture& texture, float2 a, float2 b) const
     {
         float2 bl(min(a.x, b.x), min(a.y, b.y));
         float2 ur(max(a.x, b.x), max(a.y, b.y));
         DrawQuad(ss, texture, float2(bl.x, ur.y), ur, bl, float2(ur.x, bl.y));
     }
 
-    void DrawRectCornersUpsideDown(const ShaderState &ss, const OutlawTexture& texture, float2 a, float2 b) const
+    void DrawRectCornersUpsideDown(const ShaderState &ss, const GLTexture& texture, float2 a, float2 b) const
     {
         // OpenGL texture coordinate origin is in the lower left.
         // but all my image loaders put the origin in the upper left
@@ -312,26 +305,26 @@ struct ShaderTextureBase : public ShaderProgramBase {
         DrawQuad(ss, texture, bl, float2(ur.x, bl.y), float2(bl.x, ur.y), ur);
     }
 
-    void DrawRect(const ShaderState &ss, const OutlawTexture& texture, float2 pos, float2 rad) const
+    void DrawRect(const ShaderState &ss, const GLTexture& texture, float2 pos, float2 rad) const
     {
         DrawRectCorners(ss, texture, pos - rad, pos + rad);
     }
 
-    void DrawRectScale(const ShaderState &ss, const OutlawTexture& texture,
+    void DrawRectScale(const ShaderState &ss, const GLTexture& texture,
                        float2 scale, float2 pos, float2 rad) const;
 
-    void DrawRectWidth(const ShaderState &ss, const OutlawTexture& texture, float2 pos, float width) const
+    void DrawRectWidth(const ShaderState &ss, const GLTexture& texture, float2 pos, float width) const
     {
-        float2 rad(width, width * texture.height / texture.width);
+        float2 rad(width, width * texture.size().y / texture.size().x);
         DrawRect(ss, texture, pos, rad);
     }
 
-    void DrawRectUpsideDown(const ShaderState &ss, const OutlawTexture& texture, float2 pos, float2 rad) const
+    void DrawRectUpsideDown(const ShaderState &ss, const GLTexture& texture, float2 pos, float2 rad) const
     {
         DrawRectCornersUpsideDown(ss, texture, pos - rad, pos + rad);
     }
 
-    void DrawButton(const ShaderState &ss, const OutlawTexture& texture, float2 pos, float2 r) const;
+    void DrawButton(const ShaderState &ss, const GLTexture& texture, float2 pos, float2 r) const;
 };
 
 struct ShaderTexture final : public ShaderTextureBase, public ShaderBase<ShaderTexture> {
@@ -348,7 +341,7 @@ struct ShaderTexture final : public ShaderTextureBase, public ShaderBase<ShaderT
         m_aTexCoords = getAttribLocation("SourceTexCoord");
     }
 
-    void UseProgram(const ShaderState &ss, const VertexPosTex *ptr, const OutlawTexture &ot) const override
+    void UseProgram(const ShaderState &ss, const VertexPosTex *ptr, const GLTexture &ot) const override
     {
         UseProgram(ss, ptr, (const VertexPosTex*) NULL);
     }
@@ -385,7 +378,7 @@ struct ShaderTextureWarp final : public ShaderTextureBase, public ShaderBase<Sha
         GET_ATTR_LOC(SourceTexCoord);
     }
 
-    void UseProgram(const ShaderState &ss, const VertexPosTex *ptr, const OutlawTexture &ot) const override
+    void UseProgram(const ShaderState &ss, const VertexPosTex *ptr, const GLTexture &ot) const override
     {
         UseProgram(ss, ptr, (const VertexPosTex*) NULL);
     }
@@ -421,7 +414,7 @@ struct ShaderTextureHSV final : public ShaderTextureBase, public ShaderBase<Shad
         m_aTexCoords = getAttribLocation("SourceTexCoord");
     }
 
-    void UseProgram(const ShaderState &ss, const VertexPosTex *ptr, const OutlawTexture &ot) const override
+    void UseProgram(const ShaderState &ss, const VertexPosTex *ptr, const GLTexture &ot) const override
     {
         UseProgram(ss, ptr, (const VertexPosTex*) NULL);
     }
@@ -447,7 +440,7 @@ struct ShaderTonemapDither final : public ShaderTextureBase, public ShaderBase<S
 
     void LoadTheProgram();
 
-    void UseProgram(const ShaderState &ss, const VertexPosTex *ptr, const OutlawTexture &ot) const;
+    void UseProgram(const ShaderState &ss, const VertexPosTex *ptr, const GLTexture &ot) const;
 };
 
 struct ShaderTonemap final : public ShaderTextureBase, public ShaderBase<ShaderTonemap> {
@@ -456,7 +449,7 @@ struct ShaderTonemap final : public ShaderTextureBase, public ShaderBase<ShaderT
     uint SourceTexCoord;
 
     void LoadTheProgram();
-    void UseProgram(const ShaderState &ss, const VertexPosTex *ptr, const OutlawTexture &ot) const;
+    void UseProgram(const ShaderState &ss, const VertexPosTex *ptr, const GLTexture &ot) const;
 };
 
 // seperable gaussian blur
@@ -480,7 +473,7 @@ public:
 
     void LoadShader(int smpls, int scl);
 
-    void UseProgram(const ShaderState &ss, const VertexPosTex *ptr, const OutlawTexture &ot) const;
+    void UseProgram(const ShaderState &ss, const VertexPosTex *ptr, const GLTexture &ot) const;
 
     void setDimension(uint dim) const 
     {

@@ -29,7 +29,7 @@
 #include <random>
 
 const char* thread_current_name();
-// #define DEBUG_RAND(X) ReportMessagef X
+// #define DEBUG_RAND(X) Reportf X
 #define DEBUG_RAND(X)
 
 int& random_seed();

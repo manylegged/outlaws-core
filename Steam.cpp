@@ -290,6 +290,8 @@ bool steamFileWrite(const char* fname, const char* data, int size, int ucsize)
     return true;
 }
 
+int g_steamReadsFailed;
+
 string steamFileRead(ISteamRemoteStorage *ss, const char* fname)
 {
     const int32 size = SteamFileExists(fname);
@@ -301,9 +303,51 @@ string steamFileRead(ISteamRemoteStorage *ss, const char* fname)
     data.resize(size);
     const int32 bytes = ss->FileRead(fname, &data[0], size);
     ASSERTF(bytes == size, "Expected %d, got %d: '%s'", size, bytes, fname);
+    if (bytes != size)
+    {
+        g_steamReadsFailed++;
+    }
     data.resize(bytes);
     if (bytes) {
         DPRINT(SAVE, ("load steam/%s", fname));
     }
     return data;
+}
+
+int steamDeleteRecursive(const char *path)
+{
+    ISteamRemoteStorage *ss = SteamRemoteStorage();
+    if (!ss)
+        return 0;
+    int deleted = 0;
+    if (SteamFileExists(path)) {
+        if (SteamFileDelete(path))
+        {
+            deleted++;
+        }
+    }
+    else
+    {
+        vector<string> files;
+        const string base = str_path_standardize(path) + "/";
+        {
+            std::lock_guard<std::mutex> m(steamIndexMutex());
+            foreach (const auto &it, steamIndex())
+            {
+                if (str_startswith(it.first, base))
+                    files.push_back(it.first);
+            }
+        }
+        
+        for_ (name, files)
+        {
+            if (SteamFileDelete(name.c_str()))
+            {
+                deleted++;
+                DPRINT(SAVE, ("Deleted steam/%s", name.c_str()));
+            }
+        }
+    }
+    DPRINT(STEAM, ("Deleted %d cloud files from '%s'", deleted, path));
+    return deleted;
 }

@@ -114,6 +114,9 @@ int OLG_UploadLog(const char* logdata, int loglen);
 // return 0xRRGGBB indexed color code 
 int OLG_GetQuake3Color(int val);
 
+// return game language (e.g. ru_RU, en_US)
+const char* OLG_GetLanguage(void);
+
  //////////////////////////////// Game calls into OS layer //////////////////////////////////
 
 // call around code inside the main loop of helper threads
@@ -159,7 +162,11 @@ void OL_SetGamepadEnabled(int enabled);
 
 // get name of gamepad
 const char* OL_GetGamepadName(int instance_id);
-    
+
+// get ordered list of preferred languages from OS
+// en_US, kr_KR format
+const char** OL_GetOSLanguages(void);
+
 ////////// Graphics
 
 // swap the OpenGL buffers and display the frame
@@ -185,8 +192,9 @@ int OL_HasTearControl(void);
 
 typedef struct OutlawImage {
     int width, height;
-    unsigned format;
-    unsigned type;
+    unsigned internal_format;   /* glTexImage2D */
+    unsigned format;            /* glTexImage2D */
+    unsigned type;              /* glTexImage2D */
     char *data;                 /* pixel data */
     void *handle;
 } OutlawImage;
@@ -195,15 +203,8 @@ typedef struct OutlawImage {
 struct OutlawImage OL_LoadImage(const char *fname);
 void OL_FreeImage(struct OutlawImage *img);
 
-typedef struct OutlawTexture {
-    int width, height;
-    int texwidth, texheight;
-    unsigned format;
-    unsigned texnum;
-} OutlawTexture;
-
-// save a texture to file
-int OL_SaveTexture(const OutlawTexture *tex, const char* fname);
+// save an image to file (png format)
+int OL_SaveImage(const OutlawImage *tex, const char* fname);
 
 struct OLSize {
     float x, y;
@@ -214,7 +215,7 @@ struct OLSize {
 void OL_SetFont(int index, const char* file);
 
 // render a string into an OpenGL texture, using a previously loaded font
-int OL_StringTexture(OutlawTexture *tex, const char* string, float size, int font, float maxw, float maxh);
+int OL_StringImage(struct OutlawImage *img, const char* string, float size, int font, float maxw, float maxh);
 
 // get a table of character sizes for font
 void OL_FontAdvancements(int font, float size, struct OLSize* advancements); // advancements must be at least size 127
@@ -242,7 +243,7 @@ const char** OL_ListDirectory(const char* path);
 int OL_DirectoryExists(const char* path);
 
 // get complete path for data file in utf8, searching through save directory and application resource directory
-// mode should be "w" or "r"
+// mode should be "w" (local), "r" (read), "p" (package)
 const char *OL_PathForFile(const char *fname, const char *mode);
 
 // recursively delete a file or directory

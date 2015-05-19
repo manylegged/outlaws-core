@@ -1,8 +1,10 @@
 
 //
-// Str.cpp - string utilities
+// Str.cpp - string / unicode utilities
 // 
 
+// Some routines borrowed from SDL_ttf
+// everything else
 // Copyright (c) 2013-2015 Arthur Danskin
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -25,6 +27,7 @@
 
 #include "StdAfx.h"
 #include "Str.h"
+#include <cstdint>
 
 namespace std {
     template class basic_string<char>;
@@ -32,6 +35,217 @@ namespace std {
     template class unordered_set<string>;
     template class lock_guard<mutex>;
     template class lock_guard<recursive_mutex>;
+}
+
+typedef std::uint8_t Uint8;
+typedef std::uint16_t Uint16;
+typedef std::uint32_t Uint32;
+
+static void UCS2_to_UTF8(const Uint16 *src, Uint8 *dst)
+{
+    while (*src) {
+        Uint16 ch = *(Uint16*)src++;
+        if (ch <= 0x7F) {
+            *dst++ = (Uint8) ch;
+        } else if (ch <= 0x7FF) {
+            *dst++ = 0xC0 | (Uint8) ((ch >> 6) & 0x1F);
+            *dst++ = 0x80 | (Uint8) (ch & 0x3F);
+        } else {
+            *dst++ = 0xE0 | (Uint8) ((ch >> 12) & 0x0F);
+            *dst++ = 0x80 | (Uint8) ((ch >> 6) & 0x3F);
+            *dst++ = 0x80 | (Uint8) (ch & 0x3F);
+        }
+    }
+    *dst = '\0';
+}
+
+// convert a single ucs2 character to a utf8 string
+string utf8_encode(int ucs2)
+{
+    char outp[5] = {};
+    const Uint16 chrs[] = { (Uint16)ucs2, 0 };
+    UCS2_to_UTF8(chrs, (Uint8*)outp);
+    return outp;
+}
+
+
+// modified from SDL2 SDL_ttf.c
+// return a single ucs2 character from a utf8 stream
+Uint32 utf8_getch(const char **src, size_t *srclen)
+{
+    const Uint8 *p = *(const Uint8**)src;
+    size_t left = 0;
+    bool overlong = false;
+    bool underflow = false;
+    Uint32 ch = UNKNOWN_UNICODE;
+
+    if (*srclen == 0) {
+        return UNKNOWN_UNICODE;
+    }
+    if (p[0] >= 0xFC) {
+        if ((p[0] & 0xFE) == 0xFC) {
+            if (p[0] == 0xFC && (p[1] & 0xFC) == 0x80) {
+                overlong = true;
+            }
+            ch = (Uint32) (p[0] & 0x01);
+            left = 5;
+        }
+    } else if (p[0] >= 0xF8) {
+        if ((p[0] & 0xFC) == 0xF8) {
+            if (p[0] == 0xF8 && (p[1] & 0xF8) == 0x80) {
+                overlong = true;
+            }
+            ch = (Uint32) (p[0] & 0x03);
+            left = 4;
+        }
+    } else if (p[0] >= 0xF0) {
+        if ((p[0] & 0xF8) == 0xF0) {
+            if (p[0] == 0xF0 && (p[1] & 0xF0) == 0x80) {
+                overlong = true;
+            }
+            ch = (Uint32) (p[0] & 0x07);
+            left = 3;
+        }
+    } else if (p[0] >= 0xE0) {
+        if ((p[0] & 0xF0) == 0xE0) {
+            if (p[0] == 0xE0 && (p[1] & 0xE0) == 0x80) {
+                overlong = true;
+            }
+            ch = (Uint32) (p[0] & 0x0F);
+            left = 2;
+        }
+    } else if (p[0] >= 0xC0) {
+        if ((p[0] & 0xE0) == 0xC0) {
+            if ((p[0] & 0xDE) == 0xC0) {
+                overlong = true;
+            }
+            ch = (Uint32) (p[0] & 0x1F);
+            left = 1;
+        }
+    } else {
+        if ((p[0] & 0x80) == 0x00) {
+            ch = (Uint32) p[0];
+        }
+    }
+    ++*src;
+    --*srclen;
+    while (left > 0 && *srclen > 0) {
+        ++p;
+        if ((p[0] & 0xC0) != 0x80) {
+            ch = UNKNOWN_UNICODE;
+            break;
+        }
+        ch <<= 6;
+        ch |= (p[0] & 0x3F);
+        ++*src;
+        --*srclen;
+        --left;
+    }
+    if (left > 0) {
+        underflow = true;
+    }
+    /* Technically overlong sequences are invalid and should not be interpreted.
+       However, it doesn't cause a security risk here and I don't see any harm in
+       displaying them. The application is responsible for any other side effects
+       of allowing overlong sequences (e.g. string compares failing, etc.)
+       See bug 1931 for sample input that triggers this.
+    */
+    UNUSED(overlong);
+    /*if (overlong) return UNKNOWN_UNICODE;*/
+    if (underflow ||
+        (ch >= 0xD800 && ch <= 0xDFFF) ||
+        (ch == 0xFFFE || ch == 0xFFFF) || ch > 0x10FFFF) {
+        ch = UNKNOWN_UNICODE;
+    }
+    return ch;
+}
+
+int utf8_advance(const string& str, int start, int len)
+{
+    while (utf8_iscont(str[start]) && start > 0)
+        start--;
+    if (len == 0)
+        return start;
+    else if (len < 0)
+        return str.size();
+    int end = start;
+    for (; end<str.size(); end++)
+    {
+        if (!utf8_iscont(str[end])) {
+            if (len == 0)
+                break;
+            len--;
+        }
+    }
+    return end;
+}
+
+// return substring of UTF8 starting at byte START of LEN characters (not bytes)
+string utf8_substr(const string &utf8, int start, int len)
+{
+    if (len == 0)
+        return "";
+    start = utf8_advance(utf8, start);
+    return utf8.substr(start, utf8_advance(utf8, start, len) - start);
+}
+
+// return STR with LEN characters erased starting from byte START
+string utf8_erase(const string &str, int start, int len)
+{
+    if (len == 0)
+        return str;
+    string ret = str;
+    start = utf8_advance(str, start);
+    ret.erase(start, utf8_advance(str, start, len) - start);
+    return ret;
+}
+
+// return length of substring in _characters_
+// POS and LEN are byte indexes
+size_t utf8_len(const string &str, size_t pos, size_t len)
+{
+    while (utf8_iscont(str[pos]) && pos > 0)
+        pos--;
+    const size_t lenc = min(str.size() - pos, len);
+    size_t chars = 0;
+    for (int i=pos; i<lenc; i++)
+        if (!utf8_iscont(str[i]))
+            chars++;
+    ASSERT(chars <= lenc);
+    return chars;
+}
+
+static int utf8_charwidth(const char* utf8)
+{
+    size_t size = 4;
+    const uint chr = utf8_getch(&utf8, &size);
+    return ((0x1100 <= chr && chr <= 0x11FF) || // hangul
+            (0xAC00 <= chr && chr <= 0xD7FF) || // hangul extended
+            (0x2E00 <= chr && chr <= 0x9FFF) || // hirigana, katakana, kanji, etc.
+            (0xFF00 < chr && chr <= 0xFF60))    // fullwidth latin
+            ? 2 : 1;
+}
+
+// return length of substring in _character width_
+// (中文/한국어/日本語 characters are double width)
+// POS and LEN are byte indexes
+size_t utf8_width(const string &str, size_t pos, size_t len)
+{
+    while (utf8_iscont(str[pos]) && pos > 0)
+        pos--;
+    const size_t end = pos + min(str.size() - pos, len);
+    size_t chars = 0;
+    for (int i = pos; i < end; i++)
+    {
+        if (utf8_iscont(str[i]))
+            continue;
+        // quake3 style color escapes
+        if ((i+1 < end && str[i] == '^' && isdigit(str[i+1])) ||
+            (i > 0 && str[i-1] == '^' && isdigit(str[i])))
+            continue;
+        chars += utf8_charwidth(&str[i]);
+    }
+    return chars;
 }
 
 std::string str_format(const char *format, ...)
@@ -140,29 +354,47 @@ long chr_unshift(long chr)
 }
 
 
-std::string str_word_wrap(std::string str, size_t width, const char* newline, const char* wrap)
+std::string str_word_wrap(const std::string &str, const str_wrap_options_t &ops)
 {
-    size_t i = 0;
-    size_t lineStart = 0;
-    size_t lastSpace = 0;
-    const size_t nlsize = strlen(newline);
+    const size_t nlsize = strlen(ops.newline)-1;
 
-    while (str.size() - lineStart > width && i<str.size())
+    std::string ret;
+    int line_length = 0;
+    std::string word;
+    for (int i=0; i<=str.size(); i++)
     {
-        if (str[i] == '\n') {
-            lineStart = i;
-        } else if (strchr(wrap, str[i])) {
-            lastSpace = i;
+        char chr = (i == str.size()) ? '\0' : str[i];
+        if (strchr(ops.wrap, chr) || chr == '\n' || chr == '\0')
+        {
+            const int word_len = utf8_width(word);
+            if (line_length + word_len >= ops.width && line_length > nlsize)
+            {
+                while (ret.size() && strchr(ops.wrap, ret.back()))
+                    ret.pop_back();
+                ret += ops.newline;
+                line_length = nlsize;
+            }
+            ret += word;
+            if (ops.rewrap && chr == '\n' && 0 < i && i < str.size()-1 &&
+                str[i-1] != '\n' && str[i+1] != '\n')
+            {
+                chr = ' ';
+            }
+            ret += chr;
+            if (chr == '\n')
+                line_length = 0;
+            else
+                line_length += word_len + 1;
+            word = string();
         }
-        if (i - lineStart > width) {
-            str.replace(lastSpace, 1, newline);
-            lineStart = lastSpace + nlsize;
-            i += nlsize-1;
+        else
+        {
+            word += chr;
         }
-        i++;
     }
-
-    return str;
+    if (ret.back() == '\0')
+        ret.pop_back();
+    return ret;
 }
 
 std::string str_align(const std::string& input, char token)
@@ -172,12 +404,12 @@ std::string str_align(const std::string& input, char token)
     int tokensInLine = 0;
     for (int i=0; i<input.size(); i++) {
         if (input[i] == '\n') {
-            lineStart = i;
+            lineStart = i+1;
             tokensInLine = 0;
         } else if (input[i] == token &&
                    input.size() != i+1 && input[i+1] != '\n' &&
                    tokensInLine == 0) {
-            alignColumn = max(alignColumn, i - lineStart + 1);
+            alignColumn = max(alignColumn, (int)utf8_width(input, lineStart, i - lineStart + 1));
             tokensInLine++;
         }
     }
@@ -192,10 +424,10 @@ std::string str_align(const std::string& input, char token)
     for (int i=0; i<input.size(); i++) {
         str += input[i];
         if (input[i] == '\n') {
-            lineStart = i;
+            lineStart = i+1;
             tokensInLine = 0;
         } else if (input[i] == token && tokensInLine == 0) {
-            const int spaces = alignColumn - (i - lineStart);
+            const int spaces = alignColumn - utf8_width(input, lineStart, (i - lineStart));
             for (; (i+1)<input.size() && input[i+1] == ' '; i++);
             if (input[i+1] != '\n')
                 str.append(spaces, ' ');
@@ -286,6 +518,8 @@ std::string str_reltime_format(float seconds)
 
 std::string str_numeral_format(int num)
 {
+    if (!str_equals(OLG_GetLanguage(), "en_US"))
+        return str_format("%d", num);
     static const char* numerals[] = { "zero", "one", "two", "three", "four", "five", "six",
                                     "seven", "eight", "nine", "ten", "eleven", "twelve",
                                     "thirteen", "fourteen", "fifteen", "sixteen",
@@ -396,6 +630,16 @@ static std::string str_w32path_standardize(const std::string &str)
     return str_path_standardize1(str, '\\');
 }
 
+string str_path_sanitize(string path)
+{
+    const char* kReserved = "<>:\"/\\|?*";
+
+    for (size_t i=path.find_first_of(kReserved); i != std::string::npos; i = path.find_first_of(kReserved, i))
+    {
+        path.erase(i, 1);
+    }
+    return path;
+}
 
 std::string str_dirname(const std::string &str)
 {
@@ -441,68 +685,114 @@ string str_tohex(const char* digest, int size)
     return result;
 }
 
-std::string str_capitalize(const char* str)
+std::string str_capitalize(std::string s)
 {
-    std::string s = str;
     s[0] = toupper(s[0]);
     for (int i=1; i<s.size(); i++) {
         if (str_contains(" \n\t_-", s[i-1]))
             s[i] = toupper(s[i]);
-        else
-            s[i] = tolower(s[i]);
+        // don't lowercase, might be camelCase or something
     }
         
     return s;
 }
 
+std::string str_capitalize_first(std::string s)
+{
+    s[0] = toupper(s[0]);
+    return s;
+}
+
+
+#define TEST(A, B) ASSERTF(A == B, "\n%s\n!=\n%s", str_tocstr(A), str_tocstr(B))
+
 bool str_runtests()
 {
 #if IS_DEVEL
     // str_w32path_standardize(L"C:/foo/bar");
-    assert_eql(str_path_standardize("/foo/../.."), "/");
-    assert_eql(str_path_standardize("~/Foo//Bar.lua"), "~/Foo/Bar.lua");
-    assert_eql(str_path_standardize("../../bar.lua"), "../../bar.lua");
-    assert_eql(str_path_standardize("foo/baz/../../bar.lua////"), "bar.lua");
-    assert_eql(str_path_standardize("foo/baz/.."), "foo");
-    assert_eql(str_path_standardize("foo/../"), ".");
-    assert_eql(str_path_standardize("foo/baz/../"), "foo");
-    assert_eql(str_path_standardize("foo/baz/./"), "foo/baz");
-    assert_eql(str_path_standardize("foo//baz"), "foo/baz");
-    assert_eql(str_path_standardize("foo/baz/./.."), "foo");
-    assert_eql(str_path_standardize("./foo"), "foo");
-    assert_eql(str_path_standardize("foo/../.."), "..");
-    assert_eql(str_path_standardize("/../../../../../../.."), "/");
-    assert_eql(str_path_standardize("c:/foo/../.."), "c:\\");
-    assert_eql(str_path_standardize("/foo подпис/공전baz/../"), "/foo подпис");
-    assert_eql(str_path_standardize("foo/../正文如下：///"), "正文如下：");
-    assert_eql(str_path_standardize("C:\\foo\\bar\\..\\"), "C:\\foo");
-    assert_eql(str_path_standardize("C:\\foo\\..\\..\\..\\.."), "C:\\");
-    assert_eql(str_path_standardize("foo\\..\\.."), "..");
-    assert_eql(str_w32path_standardize("C:/foo/bar/../"), "C:\\foo");
-    assert_eql(str_w32path_standardize("foo/bar/../baz"), "foo\\baz");
-    assert_eql(str_path_join("foo", "bar"), "foo/bar");
-    assert_eql(str_path_join("foo/", "bar"), "foo/bar");
-    assert_eql(str_path_join("foo/", "/bar"), "/bar");
-    assert_eql(str_path_join("foo/", (const char*)NULL), "foo/");
-    assert_eql(str_path_join("foo/", ""), "foo/");
-    assert_eql(str_path_join("/home/foo", "bar"), "/home/foo/bar");
-    assert_eql(str_path_join("/home/foo", "bar", "/baz"), "/baz");
-    assert_eql(str_path_join("/foo/bar", "c:/thing"), "c:/thing");
-    assert_eql(str_path_join("c:/foo/bar", "thing"), "c:/foo/bar/thing");
-    assert_eql(str_path_join("c:\\", "thing"), "c:\\thing");
-    assert_eql(str_path_join("/foo/bar", "/thing"), "/thing");
-    assert_eql(str_dirname("foo/"), ".");
-    assert_eql(str_dirname("/foo/"), "/");
-    assert_eql(str_dirname("foo/baz/bar///"), "foo/baz");
+    TEST(str_path_standardize("/foo/../.."), "/");
+    TEST(str_path_standardize("~/Foo//Bar.lua"), "~/Foo/Bar.lua");
+    TEST(str_path_standardize("../../bar.lua"), "../../bar.lua");
+    TEST(str_path_standardize("foo/baz/../../bar.lua////"), "bar.lua");
+    TEST(str_path_standardize("foo/baz/.."), "foo");
+    TEST(str_path_standardize("foo/../"), ".");
+    TEST(str_path_standardize("foo/baz/../"), "foo");
+    TEST(str_path_standardize("foo/baz/./"), "foo/baz");
+    TEST(str_path_standardize("foo//baz"), "foo/baz");
+    TEST(str_path_standardize("foo/baz/./.."), "foo");
+    TEST(str_path_standardize("./foo"), "foo");
+    TEST(str_path_standardize("foo/../.."), "..");
+    TEST(str_path_standardize("/../../../../../../.."), "/");
+    TEST(str_path_standardize("c:/foo/../.."), "c:\\");
+    TEST(str_path_standardize("/foo подпис/공전baz/../"), "/foo подпис");
+    TEST(str_path_standardize("foo/../正文如下：///"), "正文如下：");
+    TEST(str_path_standardize("C:\\foo\\bar\\..\\"), "C:\\foo");
+    TEST(str_path_standardize("C:\\foo\\..\\..\\..\\.."), "C:\\");
+    TEST(str_path_standardize("foo\\..\\.."), "..");
+    TEST(str_w32path_standardize("C:/foo/bar/../"), "C:\\foo");
+    TEST(str_w32path_standardize("foo/bar/../baz"), "foo\\baz");
+    TEST(str_path_join("foo", "bar"), "foo/bar");
+    TEST(str_path_join("foo/", "bar"), "foo/bar");
+    TEST(str_path_join("foo/", "/bar"), "/bar");
+    TEST(str_path_join("foo/", (const char*)NULL), "foo/");
+    TEST(str_path_join("foo/", ""), "foo/");
+    TEST(str_path_join("/home/foo", "bar"), "/home/foo/bar");
+    TEST(str_path_join("/home/foo", "bar", "/baz"), "/baz");
+    TEST(str_path_join("/foo/bar", "c:/thing"), "c:/thing");
+    TEST(str_path_join("c:/foo/bar", "thing"), "c:/foo/bar/thing");
+    TEST(str_path_join("c:\\", "thing"), "c:\\thing");
+    TEST(str_path_join("/foo/bar", "/thing"), "/thing");
+    TEST(str_path_sanitize("/foo/bar"), "foobar");
+    TEST(str_path_sanitize("foo \"bar\""), "foo bar");
+    TEST(str_path_sanitize("*foo \":<>*bar\"?"), "foo bar");
+    TEST(str_dirname("foo/"), ".");
+    TEST(str_dirname("/foo/"), "/");
+    TEST(str_dirname("foo/baz/bar///"), "foo/baz");
     const char *url = "http://www.anisopteragames.com/forum/viewtopic.php?f=4&t=1136#$@#TW$#^$%*^({}[";
-    assert_eql(str_urldecode(str_urlencode(url)), url);
-    assert_eql(str_find(url, "?f"), str_find(std::string(url), "?f"));
-    assert_eql(str_find(url, "?f"), str_find(url, std::string("?f")));
-    assert_eql(str_rfind(url, "?f"), str_rfind(std::string(url), "?f"));
-    assert_eql(str_rfind(url, "?f"), str_rfind(url, std::string("?f")));
-    assert_eql(str_substr(url, 10, 5), str_substr(std::string(url), 10, 5));
-    assert_eql(str_numeral_format(57), "fifty seven");
-    assert_eql(str_numeral_format(-1), "negative one");
+    TEST(str_urldecode(str_urlencode(url)), url);
+    TEST(str_find(url, "?f"), str_find(std::string(url), "?f"));
+    TEST(str_find(url, "?f"), str_find(url, std::string("?f")));
+    TEST(str_rfind(url, "?f"), str_rfind(std::string(url), "?f"));
+    TEST(str_rfind(url, "?f"), str_rfind(url, std::string("?f")));
+    TEST(str_substr(url, 10, 5), str_substr(std::string(url), 10, 5));
+    // TEST(str_numeral_format(57), "fifty seven");
+    // TEST(str_numeral_format(-1), "negative one");
+
+    TEST(utf8_width("foo"), 3);
+    TEST(utf8_width("NS-윤지"), 7);
+    TEST(utf8_width("これか"), 6);
+    TEST(utf8_width("чтобы"), 5);
+    TEST(str_align("foo: 5\n"
+                   "bazbar: 6"),
+         "foo:    5\n"
+         "bazbar: 6");
+    TEST(str_align("Пролетите: 5\n"
+                   "на: 6"),
+         "Пролетите: 5\n"
+         "на:        6");
+    TEST(str_align("NS-윤지: 5\n"
+                   "これか: 6"),
+         "NS-윤지: 5\n"
+         "これか:  6");
+    TEST(str_word_wrap("чтобы применить дополнительное оружие", 16),
+         "чтобы применить\n"
+         "дополнительное\n"
+         "оружие");
+    TEST(str_word_wrap("чтобы применить дополнительное оружие", 22),
+         "чтобы применить\n"
+         "дополнительное оружие");
+    TEST(str_word_wrap("스텔라 - 마리오네트", 16), "스텔라 -\n마리오네트");
+    
+    str_wrap_options_t ops;
+    ops.rewrap = true;
+    TEST(str_word_wrap("foo\nbar", ops), "foo bar");
+    TEST(str_word_wrap("foo\n\nbar", ops), "foo\n\nbar");
+    ops.width = 4;
+    TEST(str_word_wrap("foo\nbar", ops), "foo\nbar");
+
+    TEST(str_chomp("스텔라 "), "스텔라");
+    TEST(str_strip(" применить\n"), "применить");
+    
 #endif
     return 1;
 }

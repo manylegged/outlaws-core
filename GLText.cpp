@@ -28,7 +28,6 @@
 #include "StdAfx.h"
 #include "GLText.h"
 #include "Shaders.h"
-#include "Unicode.h"
 
 static DEFINE_CVAR(float, kTextScaleHeight, IS_TABLET ? 320.f : 720.f);
 DEFINE_CVAR(float2, kAspectMinMax, float2(1.6f, 2.f));
@@ -46,7 +45,7 @@ FontStats::FontStats(int ft, float sz) : font(ft), fontSize(sz)
         if (isprint(i)) {
             charMaxSize.x = max(charMaxSize.x, advancements[i]);
             charAvgSize.x += advancements[i];
-            // ReportMessagef("%s = %f", str_tostr((char)i).c_str(), advancements[i]);
+            // Reportf("%s = %f", str_tostr((char)i).c_str(), advancements[i]);
             printable++;
         }
     }
@@ -68,37 +67,32 @@ void GLText::load(const string& str, int font_, float size, float pointSize)
     fontSize = size;
     font     = font_;
 
-    if (chars != texChars || fontSize != texFontSize || pointSize != texPointSize)
-    {
-        if (texture.width > 0) {
-            glDeleteTextures(1, &texture.texnum);
-            gpuMemoryUsed -= texture.width * texture.height * 4;
-        }
-        memset(&texture, 0, sizeof(texture));
+    if (chars == texChars && fontSize == texFontSize && pointSize == texPointSize)
+        return;
+    
+    texture.clear();
 
-        if (chars.size())
-        {
-            int status = OL_StringTexture(&texture, chars.c_str(), fontSize, font,
-                                          globals.windowSizePoints.x, globals.windowSizePoints.y);
-            if (status && texture.width > 0 && texture.height > 0)
-            {
-                texChars     = chars;
-                texFontSize  = fontSize;
-                texPointSize = pointSize;
-                gpuMemoryUsed += texture.width * texture.height * 4;
-            }
-            ASSERT(status);
-        }
-    }
+    if (!chars.size())
+        return;
+    
+    OutlawImage img = {};
+    int status = OL_StringImage(&img, chars.c_str(), fontSize, font,
+                                globals.windowSizePoints.x, globals.windowSizePoints.y);
 
-    // deadlocks!
-    //DPRINT(GUI, ("Rendered string texture %3d chars, %d/%.1f: %3dx%03d@%.fx",
-    //             (int)str.size(), font, size, texture.width, texture.height, texPointSize));
+    if (!status || img.width <= 0 || img.height <= 0)
+        return;
+    
+    texture.TexImage2D(img);
+    OL_FreeImage(&img);
+
+    texChars     = chars;
+    texFontSize  = fontSize;
+    texPointSize = pointSize;
 }
 
 void GLText::render(const ShaderState* s, float2 pos) const
 {
-    if (texture.width <= 0 || texture.height <= 0)
+    if (texture.empty())
         return;
     
     ASSERT(chars == texChars && fontSize == texFontSize);
@@ -127,7 +121,7 @@ float2 GLText::Draw(const ShaderState &s_, float2 p, Align align, int font, uint
     const GLText* st = get(font, sizeUnscaled, str);
 
 #if __APPLE__
-    const float mid_y = 0.5f;
+    const float mid_y = 0.60f;
 #else
     const float mid_y = 0.55f;
 #endif
@@ -176,16 +170,15 @@ float GLText::getScaledSize(float sizeUnscaled)
 const GLText* GLText::get(int font, float size, const string& s)
 {
     float pointSize = OL_GetCurrentBackingScaleFactor();
-    //ReportMessagef("scale: %g", pointSize);
+    //Reportf("scale: %g", pointSize);
 
     static DEFINE_CVAR(int, kGLTextCacheSize, 128);
 
     static int cacheSize = kGLTextCacheSize;
     static GLText *cache = new GLText[cacheSize];
     if (cacheSize != kGLTextCacheSize) {
-        GLText *ncache = new GLText[kGLTextCacheSize];
-        for (int i=0; i<min(cacheSize, kGLTextCacheSize); i++)
-            ncache[i] = cache[i];
+        delete cache;
+        cache = new GLText[kGLTextCacheSize];
         cacheSize = kGLTextCacheSize;
     }
     
@@ -200,7 +193,7 @@ const GLText* GLText::get(int font, float size, const string& s)
         }
     }
 
-    // ReportMessagef("RAND %d (gltext)", randrange(1, 101));
+    // Reportf("RAND %d (gltext)", randrange(1, 101));
     const int i = randrange(0, cacheSize);
     cache[i].load(s, font, size, pointSize);
     return &cache[i];

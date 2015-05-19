@@ -50,48 +50,46 @@ void ShaderPosBase::DrawCircle(const ShaderState& ss, float radius, int numVerts
 
 static const ushort kQuadIndices[] = {0, 1, 2, 1, 3, 2};
 
-void ShaderTextureBase::bindTextureDrawElements(const ShaderState &ss, const OutlawTexture &texture,
+void ShaderTextureBase::bindTextureDrawElements(const ShaderState &ss, const GLTexture &texture,
                                                 VertexPosTex *vtx, int icount, const ushort *idxs) const
 {
-    BindTexture(texture, 0);
+    texture.BindTexture(0);
     UseProgram(ss, vtx, texture);
     ss.DrawElements(GL_TRIANGLES, icount, idxs);
     UnuseProgram();
 }
 
-void ShaderTextureBase::DrawQuad(const ShaderState& ss, const OutlawTexture& texture,
+void ShaderTextureBase::DrawQuad(const ShaderState& ss, const GLTexture& texture,
                                  float2 a, float2 b, float2 c, float2 d) const
 {
-    const float wi = (texture.texwidth ? (float) texture.width / texture.texwidth : 1.f);
-    const float hi = (texture.texheight ? (float) texture.height / texture.texheight : 1.f);
-    VertexPosTex v[] = { { float3(a, 0), float2(0, hi) },
-                         { float3(b, 0), float2(wi, hi) },
-                         { float3(c, 0), float2(0, 0) },
-                         { float3(d, 0), float2(wi, 0) } };
+    const float2 tc = texture.tcoordmax();
+    VertexPosTex v[] = { { float3(a, 0), float2(0, tc.y) },
+                         { float3(b, 0), tc },
+                         { float3(c, 0), float2() },
+                         { float3(d, 0), float2(tc.x, 0) } };
     bindTextureDrawElements(ss, texture, v, arraySize(kQuadIndices), kQuadIndices);
 }
 
 
-void ShaderTextureBase::DrawRectScale(const ShaderState &ss, const OutlawTexture& texture,
+void ShaderTextureBase::DrawRectScale(const ShaderState &ss, const GLTexture& texture,
                                       float2 scale, float2 pos, float2 rad) const
 {
-    const float wi = scale.x * (texture.texwidth ? (float) texture.width / texture.texwidth : 1.f);
-    const float hi = scale.y * (texture.texheight ? (float) texture.height / texture.texheight : 1.f);
+    const float2 tc = scale * texture.tcoordmax();
 
     const float2 a = pos + flipX(rad);
     const float2 b = pos + rad;
     const float2 c = pos - rad;
     const float2 d = pos + flipY(rad);
 
-    VertexPosTex v[] = { { float3(a, 0), float2(0, hi) },
-                         { float3(b, 0), float2(wi, hi) },
+    VertexPosTex v[] = { { float3(a, 0), float2(0, tc.y) },
+                         { float3(b, 0), tc },
                          { float3(c, 0), float2() },
-                         { float3(d, 0), float2(wi, 0) } };
+                         { float3(d, 0), float2(tc.x, 0) } };
     bindTextureDrawElements(ss, texture, v, arraySize(kQuadIndices), kQuadIndices);
 }
 
 
-void ShaderTextureBase::DrawButton(const ShaderState &ss, const OutlawTexture& texture, float2 pos, float2 r) const
+void ShaderTextureBase::DrawButton(const ShaderState &ss, const GLTexture& texture, float2 pos, float2 r) const
 {
     static const float o = 0.1f;
     VertexPosTex v[6] = { 
@@ -113,7 +111,7 @@ void ShaderTonemap::LoadTheProgram()
     GET_ATTR_LOC(SourceTexCoord);
 }
 
-void ShaderTonemap::UseProgram(const ShaderState &ss, const VertexPosTex *ptr, const OutlawTexture &ot) const
+void ShaderTonemap::UseProgram(const ShaderState &ss, const VertexPosTex *ptr, const GLTexture &ot) const
 {
     UseProgramBase(ss, &ptr->pos, (const VertexPosTex*) NULL);
 
@@ -131,7 +129,7 @@ void ShaderTonemapDither::LoadTheProgram()
     GET_ATTR_LOC(SourceTexCoord);
 }
 
-void ShaderTonemapDither::UseProgram(const ShaderState &ss, const VertexPosTex *ptr, const OutlawTexture &ot) const
+void ShaderTonemapDither::UseProgram(const ShaderState &ss, const VertexPosTex *ptr, const GLTexture &ot) const
 {
     UseProgramBase(ss, &ptr->pos, (const VertexPosTex*) NULL);
 
@@ -227,21 +225,21 @@ void ShaderBlur::LoadShader(int smpls, int scl)
 }
 
 
-void ShaderBlur::UseProgram(const ShaderState &ss, const VertexPosTex *ptr, const OutlawTexture &ot) const
+void ShaderBlur::UseProgram(const ShaderState &ss, const VertexPosTex *ptr, const GLTexture &ot) const
 {
     UseProgramBase(ss, &ptr->pos, (const VertexPosTex*) NULL);
 
     vertexAttribPointer(asourceTexCoord, &ptr->tex, (const VertexPosTex*) NULL);
     glUniform1i(usourceTex, 0);
 
-    glBindTexture(GL_TEXTURE_2D, ot.texnum);
+    ot.BindTexture(0);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
     offsets.resize(samples);
-    const float of = 1.f / float((dimension == 0) ? ot.width : ot.height);
+    const float of = 1.f / float((dimension == 0) ? ot.size().x : ot.size().y);
     for (int i=0; i<samples; i++)
     {
         offsets[i] = float2();

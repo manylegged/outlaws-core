@@ -152,7 +152,7 @@ string ZF_LoadFile(const char* path)
                 buf.resize(offset * 2);
             }
             if (read == -1) {
-                ReportMessagef("Error reading '%s': %s", path, gzerror(gzf, NULL));
+                Reportf("Error reading '%s': %s", path, gzerror(gzf, NULL));
                 read = 0;
             }
             buf.resize(offset + read);
@@ -191,7 +191,7 @@ int ZF_SaveFile(const char* path, const char* data, size_t size)
     gzclose(gzf);
     const bool success = (written == size);
     if (!success) {
-        ReportMessagef("gzwrite wrote %d of %d bytes to '%s'",
+        Reportf("gzwrite wrote %d of %d bytes to '%s'",
                        written, (int)size, path);
     }
     return success;
@@ -215,7 +215,7 @@ ZFDirMap ZF_LoadDirectory(const char* path, float* progress)
             if (data) {
                 dir[fname] = data;
             } else {
-                ReportMessagef("Error loading '%s' from '%s'", *ptr, path);
+                Reportf("Error loading '%s' from '%s'", *ptr, path);
             }
             if (progress)
                 *progress = (float) i / count;

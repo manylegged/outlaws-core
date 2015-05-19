@@ -6,7 +6,6 @@
 #include <locale>
 
 #include "Graphics.h"
-#include "Unicode.h"
 
 #include "sdl_inc.h"
 #include "sdl_os.h"
@@ -422,35 +421,13 @@ void OL_FreeImage(OutlawImage *img)
     SDL_FreeSurface((SDL_Surface*)img->handle);
 }
 
-int OL_SaveTexture(const OutlawTexture *tex, const char* fname)
+int OL_SaveImage(const OutlawImage *img, const char* fname)
 {
-    if (!tex || !tex->texnum || tex->width <= 0|| tex->height <= 0)
+    if (!img || !img->data || img->width <= 0|| img->height <= 0)
         return 0;
 
-    const size_t size = tex->width * tex->height * 4;
-    uint *pix = (uint*) malloc(size);
-    
-    if (!pix)
-        return 0;
-
-    glBindTexture(GL_TEXTURE_2D, tex->texnum);
-    glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pix);
-    glReportError();
-
-    // invert image
-    for (int y=0; y<tex->height/2; y++)
-    {
-        for (int x=0; x<tex->width; x++)
-        {
-            const int top = y * tex->width + x;
-            const int bot = (tex->height - y - 1) * tex->width + x;
-            const uint temp = pix[top];
-            pix[top] = pix[bot];
-            pix[bot] = temp;
-        }
-    }
     int success = false;
-    SDL_Surface *surf = SDL_CreateRGBSurfaceFrom(pix, tex->width, tex->height, 32, tex->width*4,
+    SDL_Surface *surf = SDL_CreateRGBSurfaceFrom(img->data, img->width, img->height, 32, img->width*4,
                                                  0x000000ff, 0x0000FF00, 0x00FF0000, 0xFF000000);
     if (surf)
     {
@@ -459,18 +436,16 @@ int OL_SaveTexture(const OutlawTexture *tex, const char* fname)
             success = IMG_SavePNG(surf, path) == 0;
         }
         if (!success) {
-            ReportSDL("Failed to write texture %d-%dx%d to '%s': %s",
-                      tex->texnum, tex->width, tex->height, path, SDL_GetError());
+            ReportSDL("Failed to write image %dx%d to '%s': %s",
+                      img->width, img->height, path, SDL_GetError());
         }
         SDL_FreeSurface(surf);
     }
     else
     {
-        ReportSDL("Failed to create surface %d-%dx%d: %s",
-                  tex->texnum, tex->width, tex->height, SDL_GetError());
+        ReportSDL("Failed to create surface %%dx%d: %s",
+                  img->width, img->height, SDL_GetError());
     }
-
-    free(pix);
     
     return success;
 }
@@ -575,7 +550,7 @@ SDL_Color getQuake3Color(int val)
     return sc;
 }
 
-int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int _font, float maxw, float maxh)
+int OL_StringImage(OutlawImage *img, const char* str, float size, int _font, float maxw, float maxh)
 {
     TTF_Font* font = getFont(_font, size);
     if (!font)
@@ -604,7 +579,7 @@ int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int _font,
     while (1)
     {
         const size_t chr_start = totallen - textlen;        
-        const Uint16 chr = textlen ? UTF8_getch(&text, &textlen) : '\0';
+        const Uint32 chr = textlen ? utf8_getch(&text, &textlen) : '\0';
         const size_t chr_end = totallen - textlen;
 
         int pixel_width, pixel_height;
@@ -619,7 +594,7 @@ int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int _font,
 
             line_pixel_width += st.pixel_width;
 
-            const Uint64 num = UTF8_getch(&text, &textlen);
+            const Uint64 num = utf8_getch(&text, &textlen);
 
             strip_start = totallen - textlen;
             color_count++;
@@ -727,24 +702,13 @@ int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int _font,
         }
     }
 
-    if (tex->texnum)
-        glDeleteTextures(1, &tex->texnum);
-    glGenTextures(1, &tex->texnum);
-    glBindTexture(GL_TEXTURE_2D, tex->texnum);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-
-    const GLint tfmt = color_count ? GL_RGBA : GL_LUMINANCE_ALPHA;
-    glTexImage2D(GL_TEXTURE_2D, 0, tfmt, text_pixel_width, text_pixel_height, 
-                 0, GL_BGRA, GL_UNSIGNED_BYTE, intermediary->pixels);
-    glReportError();
-
-    SDL_FreeSurface(intermediary);
-
-    tex->width = text_pixel_width;
-    tex->height = text_pixel_height;
-
-    //ReportSDL("generated %dx%d texture %d for %d line text\n", text_pixel_width, text_pixel_height, texture, strips.size());
+    img->width = text_pixel_width;
+    img->height = text_pixel_height;
+    img->internal_format = color_count ? GL_RGBA : GL_LUMINANCE_ALPHA;
+    img->format = GL_BGRA;
+    img->type = GL_UNSIGNED_BYTE;
+    img->data = (char*)intermediary->pixels;
+    img->handle = intermediary;
     return 1;
 }
 
@@ -1212,7 +1176,7 @@ int sdl_os_main(int argc, const char **argv)
                 g_windowSize = min(g_windowSize, int2(0.9f * float2(mode.w, mode.h)));
             }
         }
-        g_windowSize = max(int2(640, 480), g_windowSize);
+        g_windowSize = clamp_aspect(max(int2(640, 480), g_windowSize), 1.6, 2.f);
         ReportSDL("Requesting initial window size of %dx%d", g_windowSize.x, g_windowSize.y);
         ReportSDL("Current SDL video driver is '%s'", SDL_GetCurrentVideoDriver());
     }

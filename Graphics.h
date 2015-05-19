@@ -58,9 +58,13 @@ struct GLDisableScope {
 
 #if OPENGL_ES
 struct GLDisableAlphaTest {};
+struct GLEnableAlphaTest {};
 #else
 struct GLDisableAlphaTest : public GLDisableScope {
     GLDisableAlphaTest() : GLDisableScope(GL_ALPHA_TEST) {}
+};
+struct GLEnableAlphaTest : public GLEnableScope {
+    GLEnableAlphaTest() : GLEnableScope(GL_ALPHA_TEST) {}
 };
 #endif
 
@@ -237,11 +241,11 @@ public:
     void setFormat(GLint format) { m_format = format; }
     GLint getFormat() const { return m_format; }
     float2 size() const { return m_size; }
+    float2 tcoordmax() const { return m_size / m_texsize; }
     bool  empty() const { return m_texname == 0; } 
 
     bool loadFile(const char* fname);
-
-    OutlawTexture getTexture() const;
+    bool writeFile(const char *fname) const;
 
     void BindTexture(int slot) const
     {
@@ -256,7 +260,12 @@ public:
         glBindTexture(GL_TEXTURE_2D, 0);
     }
 
-    void TexImage2D(int2 size, GLenum format, const uint *data);
+    void TexImage2D(const OutlawImage &img)
+    {
+        TexImage2D(img.internal_format, int2(img.width, img.height), img.format, img.type, img.data);
+    }
+    
+    void TexImage2D(GLenum int_format, int2 size, GLenum format, GLenum type, const void *data);
 
     void SetTexWrap(bool enable);
     void SetTexMagFilter(GLint filter);
@@ -313,7 +322,7 @@ void GLTexture::DrawFullscreen(const Shader& shader, uint color) const
     ShaderState ss;
     ss.uColor = color;
     DrawFSBegin(ss);
-    shader.DrawRectCorners(ss, getTexture(), float2(0.f), float2(1.f));
+    shader.DrawRectCorners(ss, *this, float2(0.f), float2(1.f));
     DrawFSEnd();
 }
 
@@ -397,11 +406,6 @@ struct View {
     bool intersectSegment(float2 a, float2 b, float width=0) const
     {
         return intersectRectangleSegment(position, 0.5f * scale * sizePoints + width, a, b);
-    }
-
-    bool intersectPoint(const float2 &a) const
-    {
-        return intersectPointRectangle(a, position, 0.5f * scale * sizePoints);
     }
 
     bool intersectCircle(const float2 &a, float r) const
@@ -995,9 +999,9 @@ struct PrimMesh : public Mesh<Vtx1> {
         std::sort(primBegin(), primEnd(), SortByFirstIndex);
         IndxPrim* newEnd = std::unique(primBegin(), primEnd());
 
-        OPT_DBG(ReportMessagef("optimized out %d(%d removed)/%d verts, and %d/%d prims(%d)",
-                               replacedIndices.size(), this->m_vl.size() - maxIndex, this->m_vl.size(), 
-                               (primEnd() - newEnd), primSize(), PrimSize));
+        OPT_DBG(Reportf("optimized out %d(%d removed)/%d verts, and %d/%d prims(%d)",
+                        replacedIndices.size(), this->m_vl.size() - maxIndex, this->m_vl.size(), 
+                        (primEnd() - newEnd), primSize(), PrimSize));
 
         primErase(newEnd, primEnd());
         this->m_vl.resize(maxIndex + 1);
@@ -1573,6 +1577,7 @@ struct MeshPair {
         }
 
         void Draw(const ShaderState& ss);
+        void clear() { mp.clear(); }
     };
 
     void start()
@@ -1648,6 +1653,8 @@ void DrawFilledRect(const ShaderState &data, float2 pos, float2 r, uint bgColor,
 
 void fadeFullScreen(const ShaderState &ss, const View& view, uint color, float alpha);
 void sexyFillScreen(const ShaderState &ss, const View& view, uint color, uint color1, float alpha);
+
+void PushUnlockDial(TriMesh<VertexPosColor> &mesh, float2 pos, float rad, float progress, uint color, float alpha);
 
 void renderLoadingSpinner(LineMesh<VertexPosColor> &mesh, float2 pos, float2 size, float alpha, float progress);
 void renderLoadingSpinner(ShaderState ss, float2 pos, float2 size, float alpha, float progress);

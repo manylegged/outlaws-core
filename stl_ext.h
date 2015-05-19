@@ -836,6 +836,23 @@ inline T vec_reversed(T vec)
     return vec;
 }
 
+template <typename T>
+inline typename T::value_type vec_max(const T &vec)
+{
+    typename T::value_type mx{};
+    foreach (const auto &x, vec)
+        mx = std::max(x, mx);
+    return mx;
+}
+
+template <typename T>
+inline typename T::value_type vec_min(const T &vec)
+{
+    typename T::value_type mn{};
+    foreach (const auto &x, vec)
+        mn = std::min(x, mn);
+    return mn;
+}
 
 // return minimum element of vector, with comparison by fkey
 template <typename T, typename F>
@@ -1238,6 +1255,15 @@ template <typename K>
 inline const K &set_set(std::set<K> &m, const K& key)
 {
     return *m.insert(key).first;
+}
+
+template <typename V, typename V1>
+inline bool set_extend(V &v, const V1& t)
+{
+    foreach (auto &x, t) {
+        v.insert(x);
+    }
+    return t.size();
 }
 
 template <typename R, typename T, typename Fun>

@@ -507,27 +507,25 @@ float2 randpolar_uniform(float minradius, float maxradius)
 // adapted from http://en.literateprograms.org/Box-Muller_transform_(C)#chunk def:Apply Box-Muller transform on x, y
 float rand_normal(float mean, float stddev)
 {
-    float n2 = 0.0;
-    int n2_cached = 0;
-    if (!n2_cached)
-    {
-        float x, y, r;
-        do {
-            x = randrange(-1.f, 1.f);
-            y = randrange(-1.f, 1.f);
-            r = x*x + y*y;
-        } while (r == 0.0 || r > 1.0);
-
-        float d = sqrtf(-2.f*logf(r)/r);
-        float n1 = x*d;
-        n2 = y*d;
-        float result = n1*stddev + mean;
-        n2_cached = 1;
-        return result;
-    }
-    else
+    static THREAD_LOCAL float n2 = 0.0;
+    static THREAD_LOCAL int n2_cached = 0;
+    if (n2_cached)
     {
         n2_cached = 0;
         return n2*stddev + mean;
     }
+    
+    float x, y, r;
+    do {
+        x = randrange(-1.f, 1.f);
+        y = randrange(-1.f, 1.f);
+        r = x*x + y*y;
+    } while (r == 0.0 || r > 1.0);
+
+    float d = sqrtf(-2.f*logf(r)/r);
+    float n1 = x*d;
+    n2 = y*d;
+    n2_cached = 1;
+    float result = n1*stddev + mean;
+    return result;
 }

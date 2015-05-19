@@ -116,17 +116,18 @@ const char *OL_PathForFile(const char *fname, const char* flags)
         return sdl_os_autorelease(p);
     }
 
-    string path = str_path_join(getSaveDir(), fname);
-    if (!OLG_UseDevSavePath() && (flags[0] == 'w' || 
-                                  flags[0] == 'a' || 
-                                  fileDirectoryPathExists(path.c_str())))
+    if (flags[0] != 'p')
     {
+        string path = str_path_join(getSaveDir(), fname);
+        if (!OLG_UseDevSavePath() && (flags[0] == 'w' || 
+                                      flags[0] == 'a' || 
+                                      fileDirectoryPathExists(path.c_str())))
+        {
+            return sdl_os_autorelease(path);
+        }
     }
-    else
-    {
-        path = str_path_join(getDataDir(), fname);
-    }
-    return sdl_os_autorelease(path);
+
+    return sdl_os_autorelease(str_path_join(getDataDir(), fname));
 }
 
 static int recursive_mkdir(const char *dir)
@@ -228,24 +229,41 @@ int OL_RemoveFileOrDirectory(const char* dirname)
     return 1;
 }
 
-const char** OL_ListDirectory(const char* path1)
+static std::set<std::string> listDirectory(const char* path, const char *flags)
 {
-    // not thread safe!!
-    static vector<const char*> elements;
-    const char* path = OL_PathForFile(path1, "r");
+    const char* path = OL_PathForFile(path1, flags);
+
+    std::set<std::string> files;
+    
     DIR *dir = opendir(path);
     if (!dir) {
         // ReportLinux("Error opening directory '%s': %s", path, strerror(errno));
-        return NULL;
+        return files;
     }
-    elements.clear();
     dirent *entry = NULL;
     while ((entry = readdir(dir)))
     {
         if (entry->d_name[0] != '.')
-            elements.push_back(lstring(entry->d_name).c_str());
+            files.insert(entry->d_name);
     }
     closedir(dir);
+    return files;
+}
+
+const char** OL_ListDirectory(const char* path1)
+{
+    // not thread safe!!
+    static vector<const char*> elements;
+
+    std::set<std::string> files = listDirectory(path, "p");
+    std::set<std::string> local = listDirectory(path, "w");
+
+    foreach (const std::string &files, local)
+        files.insert(file);
+
+    elements.clear();
+    foreach (const std::string &file, files)
+        elements.push_back(lstring(file).c_str());
     elements.push_back(NULL);
     return &elements[0];
 }

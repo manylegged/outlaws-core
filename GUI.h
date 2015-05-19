@@ -44,9 +44,10 @@ extern float2      kButtonPad;
 static const uint kGUIBg       = 0xb0202020;
 static const uint kGUIBgActive = 0xf0404040;
 static const uint kGUIFg       = 0xf0909090;
+static const uint kGUIFgMid    = 0xf0b8b8b8;
 static const uint kGUIFgActive = 0xffffffff;
 static const uint kGUIText     = 0xfff0f0f0;
-static const uint kGUITextLow  = 0xffa0a0a0;
+static const uint kGUITextLow  = 0xff808080;
 static const uint kGUIInactive = 0xa0a0a0a0;
 static const uint kGUIToolBg   = 0xc0000000;
 
@@ -182,13 +183,14 @@ struct Scrollbar : public WidgetBase {
     WidgetBase *parent  = NULL;
 
     uint        defaultBGColor = kGUIBg;
-    uint        pressedBGColor = kGUIBgActive;
     uint        defaultFGColor = kGUIFg;
-    uint        hoveredFGColor = kGUIFgActive;
+    uint        hoveredFGColor = kGUIFgMid;
+    uint        pressedFGColor = kGUIFgActive;
 
     int last() const { return min(first + lines, steps); }
-    void render(DMesh &mesh) const;
+    void render(DMesh &mesh);
     bool HandleEvent(const Event *event);
+    void makeVisible(int row);
 };
 
 
@@ -267,6 +269,7 @@ struct TextInputCommandLine : public TextInputBase {
     };
 
     vector<string>            commandHistory;
+    string                    currentCommand;
     string                    lastSearch;
     int                       historyIndex = 0;
     std::map<string, Command> commands;
@@ -295,7 +298,8 @@ struct TextInputCommandLine : public TextInputBase {
 
     string getLineText() const
     {
-        return lines[lines.size()-1].substr(prompt.size());
+        const string &line = lines[lines.size()-1];
+        return line.size() > prompt.size() ? line.substr(prompt.size()) : string();
     }
 
     void setLineText(const char* text)
@@ -324,117 +328,29 @@ struct TextInputCommandLine : public TextInputBase {
     bool HandleEvent(const Event* event, bool *textChanged=NULL);
 };
 
-struct ContextMenuBase {
-    float2        position;     // upper left corner, right below title
-    float2        sizePoints;   // width x height
-    float2        titleSizePoints; // how much of sizePoints is for the title
-    string        title;
+struct ContextMenu {
+    float2         position;    // upper left corner, right below title
+    float2         size;        // width x height
     vector<string> lines;
-    int           textSize;
+    vector<bool>   enabled;
+    float          textSize = 16;
+    int            hovered  = -1;    // hovered line or -1 for not hovered
+    bool           active   = false; // is it visible?
+    float          alpha    = 1.f;
+    double         openTime = 0.f;
 
-    int           hovered;      // hovered line or -1 for not hovered
-    int           selected;     // selected line or -1 for no selection
-    bool          active;       // is it visible?
 
-    uint defaultBGColor    = ALPHA(0.5f)|COLOR_TEXT_BG;
-    uint hoveredBGColor    = ALPHA(0.65f)|COLOR_BG_GRID;
-    uint defaultLineColor  = kGUIFg;
-    uint hoveredLineColor  = kGUIFgActive;
+    uint defaultBGColor    = 0xf0202020;
+    uint hoveredBGColor    = kGUIBgActive;
+    uint defaultLineColor  = kGUIFgActive;
     uint textColor         = kGUIText;
-    uint selectedTextColor = kGUIText;
-    uint titleTextColor    = ALPHA_OPAQUE|COLOR_ORANGE;
+    uint inactiveTextColor = kGUITextLow;
     
-    ContextMenuBase()
-    {
-        title = "Menu";
-        textSize = 14;
-
-        active  = false;
-        hovered = -1;
-    }
-
-    void setLine(int line, const char* txt)
-    {
-        if (line >= lines.size())
-            lines.resize(line + 1);
-        lines[line] = txt;
-    }
-
-    float2 getCenterPos() const
-    {
-        const float2 sz = 0.5f * getMenuSizePoints();
-        return float2(position.x + sz.x, position.y - sz.y);
-    }
-
-    float2 getMenuSizePoints() const
-    {
-        return float2(sizePoints.x, sizePoints.y - titleSizePoints.y);
-    }
-
-    int getHoverSelection(float2 p) const
-    {
-        if (lines.empty() ||  !intersectPointRectangle(p, getCenterPos(), 0.5f*sizePoints)) {
-            return -1;
-        }
-
-        const float2 relp = p - position;
-        const float lineHeight = getMenuSizePoints().y / lines.size();
-        const int sel = (int) floor(-relp.y / lineHeight);
-        return sel;
-    }
-
-    bool HandleEvent(const Event* event, int* select=NULL)
-    {
-        if (event->type != Event::MOUSE_DOWN && event->type != Event::MOUSE_UP)
-            return false;
-
-        if (active)
-        {
-            int sel = getHoverSelection(event->pos);
-            if (event->type == Event::MOUSE_UP) {
-                if (select)
-                    *select = sel;
-            }
-            return sel >= 0;
-        }
-        return false;
-    }
-
-    float2 getSizePoints() const   { return sizePoints; }
-
-    void render(ShaderState *s_);
-};
-
-
-struct RightClickContextMenu : public ContextMenuBase {
-    
-    bool HandleEvent(const Event* event, int *select)
-    {
-        int select1 = -1;
-        if (ContextMenuBase::HandleEvent(event, &select1)) {
-            active = (select1 == -1); // disable on succesfull use
-            if (select)
-                *select = select1;
-            return true;
-        } else if (active && event->type == Event::MOUSE_DOWN) {
-            active = false; // disable on click outside
-        }
-        
-        if (event->type == Event::MOUSE_DOWN && event->key == 1) {
-            position = event->pos;
-            active = true; // enable on right click
-            return true;
-        }
-
-        return false;
-    }
-
-    void render(ShaderState *s_)
-    {
-        if (active) {
-            ContextMenuBase::render(s_);
-        }
-    }
+    void setLine(int line, const char* txt);
+    float2 getCenterPos() const { return position + flipY(size / 2.f); }
+    int getHoverSelection(float2 p) const;
+    bool HandleEvent(const Event* event, int* select=NULL);
+    void render(const ShaderState &s_);
 };
 
 
@@ -667,6 +583,7 @@ struct ButtonLayout {
     {
         pos.x = startPos.x;
         pos.y -= buttonFootprint.y;
+        index.x = 0;
         index.y++;
     }
 
@@ -726,19 +643,35 @@ struct ButtonLayout {
 
 };
 
-struct MessageBoxWidget : public WidgetBase {
-
+struct MessageBoxBase : public WidgetBase {
+    
     string title;
     string message;
     int    messageFont = kDefaultFont;
-    Button okbutton;
     float  alpha2   = 1.f;
 
-    MessageBoxWidget();
+    Button okbutton = Button(_("OK"));
 
     void updateFade();
     void render(const ShaderState &ss, const View& view);
+};
+
+struct MessageBoxWidget : public MessageBoxBase {
+
+    MessageBoxWidget();
+
+    void render(const ShaderState &ss, const View& view);
     bool HandleEvent(const Event* event);
+};
+
+struct ConfirmWidget : public MessageBoxBase {
+
+    Button cancelbutton;
+
+    ConfirmWidget();
+    
+    void render(const ShaderState &ss, const View& view);
+    bool HandleEvent(const Event* event, bool *selection);
 };
 
 struct TextBox {
@@ -808,6 +741,8 @@ struct ButtonWindow : public WidgetBase {
     float2               dragOffset;     // positon of dragged button relative to mouse pointer
     float2               dragPos;        // original position of dragged button
     ButtonBase **        dragPtr = NULL; // pointer to dragged button in buttons vector
+    
+    ButtonBase *         extDragPtr = NULL; // don't draw this one, will be drawn externally
 
     ButtonWindow()
     {
@@ -825,6 +760,32 @@ struct ButtonWindow : public WidgetBase {
     ButtonBase *HandleRearrange(const Event *event, ButtonBase *dragged);
 
     void computeDims(int2 mn, int2 mx);
+    void scrollfor(int idx) { scrollbar.makeVisible(idx / dims.x); }
+};
+
+// similar to above but allows keyboard selection, less rearrangement, no outline
+struct ButtonSelector : public WidgetBase {
+
+    vector<ButtonBase *> buttons;
+    Scrollbar            scrollbar;
+    int2                 dims = int2(3, 3);
+    int                  selected = 0;
+
+    void render(const ShaderState &ss);
+    bool HandleEvent(const Event *event, int *pressed);
+
+    template <typename T>
+    void setButtons(T *ptr, uint count)
+    {
+        for (int i=0; i<count; i++)
+        {
+            ptr[i]->index = i;
+            buttons.push_back(ptr[i]);
+        }
+        scrollbar.lines = dims.y;
+        scrollbar.steps = (count + dims.x-1) / dims.x;
+        scrollbar.active = scrollbar.steps >= count;
+    }
 };
 
 

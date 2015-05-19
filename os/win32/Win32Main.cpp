@@ -66,7 +66,7 @@ static std::wstring getDirname(const wchar_t *inpt)
     return std::wstring(driv) + dir;
 }
 
-// don't go through ReportMessagef/ReportMessage!
+// don't go through Reportf/ReportMessage!
 static void ReportWin32(const char *format, ...)
 {
     va_list vl;
@@ -245,11 +245,14 @@ std::wstring pathForFile(const char *fname, const char* flags)
     if (cpath.size() > 2 && cpath[1] == ':')
         return cpath;
 
-    std::wstring savepath = str_win32path_join(getSaveDir(), cpath);
-    if (!OLG_UseDevSavePath() &&
-        (flags[0] == 'w' || flags[0] == 'a' || PathFileExists(savepath.c_str())))
+    if (flags[0] != 'p')
     {
-        return savepath;
+        std::wstring savepath = str_win32path_join(getSaveDir(), cpath);
+        if (!OLG_UseDevSavePath() &&
+            (flags[0] == 'w' || flags[0] == 'a' || PathFileExists(savepath.c_str())))
+        {
+            return savepath;
+        }
     }
 
     return str_win32path_join(getDataDir(), cpath);
@@ -308,33 +311,58 @@ int OL_CopyFile(const char* source, const char* dest)
     return 0;
 }
 
-const char** OL_ListDirectory(const char* path1)
+static std::set<std::wstring> listDirectory(const char *path1, const char *mode)
 {
-    // not thread safe!!
-    static vector<const char*> elements;
-    
-    const std::wstring path = pathForFile(path1, "r") + L"\\*";
+    const std::wstring path = pathForFile(path1, mode) + L"\\*";
+
+    std::set<std::wstring> files;
 
     WIN32_FIND_DATA data;
     memset(&data, 0, sizeof(data));
 
     HANDLE hdir = FindFirstFile(path.c_str(), &data);
     if (hdir == INVALID_HANDLE_VALUE) {
-        ReportWin32ErrF(("FindFirstFile('%s')", ws2s(path).c_str()), GetLastError());
-        return NULL;
+        const DWORD err = GetLastError();
+        if (err != ERROR_PATH_NOT_FOUND)
+            ReportWin32ErrF(("FindFirstFile('%s')", ws2s(path).c_str()), err);
+        return files;
     }
-
-    elements.clear();
 
     do
     {
         if (data.cFileName[0] != '.')
-            elements.push_back(lstring(ws2s(data.cFileName)).c_str());
+            files.insert(data.cFileName);
     } while (FindNextFile(hdir, &data) != 0);
 
     FindClose(hdir);
+
+    return files;
+}
+
+const char** OL_ListDirectory(const char* path1)
+{
+    std::set<std::wstring> files = listDirectory(path1, "p");
+
+    int local_count = 0;
+    if (!OLG_UseDevSavePath())
+    {
+        std::set<std::wstring> local = listDirectory(path1, "w");
+        local_count = local.size();
+        foreach (const std::wstring &file, local)
+            files.insert(file);
+    }
+
+    Reportf("Listing %s: %d files (%d local)", path1, (int)files.size(), local_count);
+    if (files.empty())
+        return NULL;
+
+    // not thread safe!!
+    static vector<const char*> elements;
+    elements.clear();
+    foreach (const std::wstring &file, files)
+        elements.push_back(lstring(ws2s(file)).c_str());
     elements.push_back(NULL);
-    ReportMessagef("Listing %s: %d files", path1, (int) elements.size());
+    
     return &elements[0];
 }
 
@@ -788,6 +816,44 @@ string os_get_platform_info()
     
     return str_format("Windows %s %dbit (NT %d.%d build %d) %s", name, bitness,
                       major, minor, osvi.dwBuildNumber, locale.c_str());
+}
+
+const char** OL_GetOSLanguages(void)
+{
+    static char locale[LOCALE_NAME_MAX_LENGTH] = "en_US";
+    static char* ptr[] = { locale, NULL };
+    static bool setup = false;
+
+    const char ** ret = (const char**)&ptr[0];
+
+    if (setup)
+        return ret;
+
+    typedef int (*FN_GetUserDefaultLocaleName)(
+        _Out_ LPWSTR lpLocaleName,
+        _In_  int    cchLocaleName
+        );
+
+    static FN_GetUserDefaultLocaleName pfnGetUserDefaultLocaleName = 
+        (FN_GetUserDefaultLocaleName)GetModuleAddr(L"kernel32.dll", "GetUserDefaultLocaleName");
+
+    if (!pfnGetUserDefaultLocaleName)
+        return ret;
+
+    wchar_t buf[LOCALE_NAME_MAX_LENGTH];
+    if (pfnGetUserDefaultLocaleName(buf, LOCALE_NAME_MAX_LENGTH) == 0)
+    {
+        ReportWin32Err("GetUserDefaultLocaleName", GetLastError());
+        return ret;
+    }
+
+    std::string lc = str_replace(ws2s(buf), "-", "_");
+    strncpy(locale, lc.c_str(), lc.size());
+    setup = true;
+
+    ReportWin32("User Locale: %s", locale);
+    
+    return ret;
 }
 
 int os_get_system_ram()

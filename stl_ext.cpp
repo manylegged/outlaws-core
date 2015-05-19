@@ -110,7 +110,7 @@ void ReportWin32Err1(const char *msg, DWORD dwLastError, const char* file, int l
 
 static void myTerminateHandler()
 {
-    ReportMessage("terminate handler called");
+    Report("terminate handler called");
     string message = "<no info>";
     std::exception_ptr eptr = std::current_exception();
     try {
@@ -128,7 +128,8 @@ static void myTerminateHandler()
 
 void thread_setup(const char* name)
 {
-    std::set_terminate(myTerminateHandler);
+    if (OLG_EnableCrashHandler())
+        std::set_terminate(myTerminateHandler);
     // random number generator per-thread
     my_random_device() = new std::mt19937(random_seed());
     DEBUG_RAND(("create seed %d", random_seed()));
@@ -146,7 +147,7 @@ void thread_setup(const char* name)
     int status = 0;
     // 16 character maximum!
     if ((status = pthread_setname_np(pthread_self(), name)))
-        ReportMessagef("pthread_setname_np(pthread_t, const char*) failed: %s", strerror(status));
+        Reportf("pthread_setname_np(pthread_t, const char*) failed: %s", strerror(status));
 #endif
 
     {
@@ -154,7 +155,7 @@ void thread_setup(const char* name)
         _thread_name_map()[tid] = name;
     }
 
-    ReportMessagef("Thread %#llx is named '%s'", tid, name);
+    Reportf("Thread %#llx is named '%s'", tid, name);
 }
 
 const char* thread_current_name()
@@ -182,13 +183,13 @@ OL_Thread thread_create(void *(*start_routine)(void *), void *arg)
 
     err = pthread_attr_init(&attr);
     if (err)
-        ReportMessagef("pthread_attr_init error: %s", strerror(err));
+        Reportf("pthread_attr_init error: %s", strerror(err));
     err = pthread_attr_setstacksize(&attr, 8 * 1024 * 1024);
     if (err)
-        ReportMessagef("pthread_attr_setstacksize error: %s", strerror(err));
+        Reportf("pthread_attr_setstacksize error: %s", strerror(err));
     err = pthread_create(&thread, &attr, start_routine, arg);
     if (err)
-        ReportMessagef("pthread_create error: %s", strerror(err));
+        Reportf("pthread_create error: %s", strerror(err));
     return thread;
 }
 
@@ -237,9 +238,9 @@ size_t MemoryPool::create(size_t cnt)
 #else
         pool = (char*)malloc(count * element_size);
         if (!pool)
-            ReportMessagef("malloc(%#x) failed: %s", (int) (count * element_size), strerror(errno));
+            Reportf("malloc(%#x) failed: %s", (int) (count * element_size), strerror(errno));
 #endif
-        ReportMessagef("Allocating MemoryPool(%d, %d) %.1fMB: %s", 
+        Reportf("Allocating MemoryPool(%d, %d) %.1fMB: %s", 
                        (int)element_size, (int)count, 
                        (element_size * count) / (1024.0 * 1024.0),
                        pool ? "OK" : "FAILED");

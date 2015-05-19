@@ -51,7 +51,7 @@ struct FontStats {
 
 class GLText {
 
-    OutlawTexture  texture;
+    GLTexture      texture;
     string         texChars;
     float          texFontSize = 0.f;
     float          texPointSize = 0.f;
@@ -60,18 +60,13 @@ class GLText {
     int            font = kDefaultFont;
     float          fontSize = kDefaultFontSize;
 
-    GLText()
-    {
-        memset(&texture, 0, sizeof(texture));
-    }
-
     void load(const string& str, int font, float size, float pointSize);
 
 public:
 
     float2 getSize() const
     {
-        return texPointSize ? float2(texture.width, texture.height) / texPointSize : float2(0, fontSize);
+        return texPointSize ? texture.size() / texPointSize : float2(0, fontSize);
     }
 
     float getCharStart(uint chr) const;

@@ -351,8 +351,7 @@ void GLRenderTexture::RebindFramebuffer()
     ASSERT(m_size.x >= 1 && m_size.y >= 1);
     ASSERT(m_fbname && m_texname);
 
-    glActiveTexture(GL_TEXTURE0 + 0);
-    glBindTexture(GL_TEXTURE_2D, m_texname);
+    BindTexture(0);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glBindTexture(GL_TEXTURE_2D, 0);
@@ -396,19 +395,6 @@ void GLTexture::clear()
     m_texname = 0;
 }
 
-OutlawTexture GLTexture::getTexture() const 
-{
-    OutlawTexture ot;
-    memset(&ot, 0, sizeof(ot));
-    ot.width = (uint) m_size.x;
-    ot.height = (uint) m_size.y;
-    ot.texwidth = (uint) m_texsize.x;
-    ot.texheight = (uint) m_texsize.y;
-    ot.texnum = m_texname;
-    return ot;
-}
-
-
 void GLTexture::DrawFSBegin(ShaderState& ss) const
 {
     glDepthMask(GL_FALSE);
@@ -430,8 +416,9 @@ void GLTexture::DrawFSEnd() const
     glReportError();
 }
 
-void GLTexture::TexImage2D(int2 size, GLenum format, const uint *data)
+void GLTexture::TexImage2D(GLenum int_format, int2 size, GLenum format, GLenum type, const void *data)
 {
+    m_format = int_format;
     if (!m_texname) {
         glGenTextures(1, &m_texname);
     } else {
@@ -442,7 +429,7 @@ void GLTexture::TexImage2D(int2 size, GLenum format, const uint *data)
 #if OPENGL_ES
     m_texsize = float2(roundUpPower2(size.x), roundUpPower2(size.y));
     glTexImage2D(GL_TEXTURE_2D, 0, format,
-                 m_texsize.x, m_texsize.y-1, 0, format, GL_UNSIGNED_BYTE, data);
+                 m_texsize.x, m_texsize.y, 0, format, GL_UNSIGNED_BYTE, data);
     glReportError();
     
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -450,7 +437,7 @@ void GLTexture::TexImage2D(int2 size, GLenum format, const uint *data)
 #else
     m_texsize = float2(size);
     glTexImage2D(GL_TEXTURE_2D, 0, m_format,
-                 size.x, size.y-1, 0, format, GL_UNSIGNED_INT_8_8_8_8_REV, data);
+                 size.x, size.y, 0, format, type, data);
     glReportError();
 
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE_SGIS);
@@ -513,15 +500,55 @@ bool GLTexture::loadFile(const char* fname)
     
     m_size.x  = image.width;
     m_size.y  = image.height;
+    m_texsize = m_size;
     m_format  = GL_RGBA;
     return true;
 }
 
+static void invert_image(uint *pix, int width, int height)
+{
+    for (int y=0; y<height/2; y++)
+    {
+        for (int x=0; x<width; x++)
+        {
+            const int top = y * width + x;
+            const int bot = (height - y - 1) * width + x;
+            const uint temp = pix[top];
+            pix[top] = pix[bot];
+            pix[bot] = temp;
+        }
+    }
+}
+
+bool GLTexture::writeFile(const char *fname) const
+{
+    const int2 sz = ceil_int(m_texsize);
+    const size_t size = sz.x * sz.y * 4;
+    uint *pix = (uint*) malloc(size);
+
+    OutlawImage img = {};
+    img.width = sz.x;
+    img.height = sz.y;
+    img.format = GL_RGBA;
+    img.type = GL_UNSIGNED_BYTE;
+    img.data = (char*) pix;
+
+    BindTexture(0);
+    glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pix);
+    glReportError();
+
+    invert_image(pix, sz.x, sz.y);
+
+    const int success = OL_SaveImage(&img, fname);
+    free(pix);
+    return success;
+}
+
+
 GLTexture PixImage::uploadTexture() const
 {
     GLTexture tex;
-    tex.setFormat(GL_RGBA);
-    tex.TexImage2D(m_size, GL_BGRA, &m_data[0]);
+    tex.TexImage2D(GL_RGBA, m_size, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, &m_data[0]);
     return tex;
 }
 
@@ -909,6 +936,13 @@ void sexyFillScreen(const ShaderState &ss, const View& view, uint color0, uint c
     glDepthMask(GL_TRUE);
 }    
 
+void PushUnlockDial(TriMesh<VertexPosColor> &mesh, float2 pos, float rad, float progress,
+                    uint color, float alpha)
+{
+    mesh.color(color, alpha * smooth_clamp(0.f, 1.f, progress, 0.2f));
+    mesh.PushSector(pos, rad * lerp(1.3f, 1.f, progress), progress, M_PIf * progress);
+}
+
 static DEFINE_CVAR(float, kSpinnerRate, M_PI/2.f);
 
 void renderLoadingSpinner(LineMesh<VertexPosColor> &mesh, float2 pos, float2 size, float alpha, float progress)
@@ -1146,9 +1180,6 @@ const GLTexture &getDitherTex()
         glReportError();
 
         tex = new GLTexture(name, float2(8.f), GL_LUMINANCE);
-
-        // OutlawTexture t = tex->getTexture();
-        // OL_SaveTexture(&t, "~/Desktop/dither.png");
     }
     
     return *tex;

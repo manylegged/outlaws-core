@@ -100,33 +100,30 @@ static NSString* pathForFileName(const char* fname, const char* flags)
         return [fullFileName stringByStandardizingPath];
     }
 
-    NSString *path = nil;
     if (OLG_UseDevSavePath())
     {
         getBaseSavePath();      // detect bugs
         
         // read and write output files directly from source code repository
-        path = [getDevSavePath() stringByAppendingPathComponent:fullFileName];
+        return [getDevSavePath() stringByAppendingPathComponent:fullFileName];
     }
-    else
+    
+    if (flags[0] != 'p')
     {
         NSString *savepath = [getBaseSavePath() stringByAppendingPathComponent:fullFileName];
         
-        if (savepath && (flags[0] == 'w' ||
+        if (savepath && (flags[0] == 'w' || flags[0] == 'l' ||
                          [[NSFileManager defaultManager] fileExistsAtPath:savepath]))
         {
             return savepath;
         }
-
-#if NORES
-        path = [getDevSavePath() stringByAppendingPathComponent:fullFileName];
-#else
-        NSString *resourcePath = [[NSBundle mainBundle] resourcePath];
-        path = [resourcePath stringByAppendingPathComponent:fullFileName];
-#endif
     }
-    ASSERT(path);
-    return path;
+    // no resources build has nothing in the bundle!
+#if NORES
+    return [getDevSavePath() stringByAppendingPathComponent:fullFileName];
+#else
+    return [[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent:fullFileName];
+#endif
 }
 
 const char *OL_PathForFile(const char *fname, const char* mode)
@@ -142,22 +139,55 @@ int OL_DirectoryExists(const char* path)
     return exists && isdir;
 }
 
-const char** OL_ListDirectory(const char* path)
+// get case insensitive path
+static NSString *caseFilePath(NSString* path)
 {
-    NSString *nspath = pathForFileName(path, "r");
+    NSFileManager *mgr = [NSFileManager defaultManager];
+    const char *cFilePath = [mgr fileSystemRepresentationWithPath:path];
+    if (!cFilePath || *cFilePath == '\0')
+        return path;
+
+    int len = PATH_MAX + 1;
+    char cRealPath[len];
+    memset(cRealPath, 0, len);
+    char *result = realpath(cFilePath, cRealPath);
+    return result ? [mgr stringWithFileSystemRepresentation:result length:strlen(result)] : path;
+}
+
+static NSArray *listDirectory(const char* path, const char* mode)
+{
+    NSString *nspath = pathForFileName(path, mode);
+    nspath = caseFilePath(nspath);
     NSError *error = nil;
     NSArray *dirFiles = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:nspath error:&error];
     if (!dirFiles || error)
     {
-        return NULL;
+        return nil;
     }
+    return dirFiles;
+}
 
+const char** OL_ListDirectory(const char* path)
+{
+    NSArray *package = listDirectory(path, "p");
+    NSArray *local = listDirectory(path, "w");
+
+    NSMutableSet *files = package ? [NSMutableSet setWithArray:package] : nil;
+    if (package && local) {
+        [files unionSet:[NSSet setWithArray:local]];
+    } else if (local) {
+        files = [NSMutableSet setWithArray:local];
+    }
+    
+    if (!files)
+        return NULL;
+    
     static const char** array = NULL;
     static int arraysize = 0;
     
-    if (!array || arraysize <= [dirFiles count])
+    if (!array || arraysize <= [files count])
     {
-        arraysize = [dirFiles count] + 1;
+        arraysize = [files count] + 1;
         if (array)
             array = realloc(array, sizeof(const char*) * arraysize);
         else
@@ -165,7 +195,7 @@ const char** OL_ListDirectory(const char* path)
     }
     
     int i = 0;
-    for (NSString* file in dirFiles)
+    for (NSString* file in files)
     {
         array[i] = [file UTF8String];
         i++;
@@ -240,21 +270,6 @@ int OL_FileDirectoryPathExists(const char* fname)
     return exists ? 1 : 0;
 }
 
-static void invert_image(uint *pix, int width, int height)
-{
-    for (int y=0; y<height/2; y++)
-    {
-        for (int x=0; x<width; x++)
-        {
-            const int top = y * width + x;
-            const int bot = (height - y - 1) * width + x;
-            const uint temp = pix[top];
-            pix[top] = pix[bot];
-            pix[bot] = temp;
-        }
-    }
-}
-
 struct OutlawImage OL_LoadImage(const char* fname)
 {
     struct OutlawImage img;
@@ -287,6 +302,8 @@ struct OutlawImage OL_LoadImage(const char* fname)
     img.format = GL_BGRA;
     img.type = GL_UNSIGNED_INT_8_8_8_8;
     img.data = calloc(img.width * img.height, 4);
+    img.handle = img.data;
+    
     if (img.data)
     {
         CGColorSpaceRef color_space = CGColorSpaceCreateDeviceRGB();
@@ -302,35 +319,28 @@ struct OutlawImage OL_LoadImage(const char* fname)
     CFRelease(image_source);
     CFRelease(texture_url);
 
-    invert_image((uint*)img.data, img.width, img.height);
+    // invert_image((uint*)img.data, img.width, img.height);
     
     return img;
 }
 
 void OL_FreeImage(OutlawImage *img)
 {
-    free(img->data);
+    if (img->handle)
+        free(img->handle);
 }
 
-int OL_SaveTexture(const OutlawTexture *tex, const char* fname)
+int OL_SaveImage(const OutlawImage *img, const char* fname)
 {
-    if (!tex || !tex->texnum || tex->width <= 0 || tex->height <= 0)
+    if (!img || !img->data || img->width <= 0 || img->height <= 0)
         return 0;
-
-    const size_t size = tex->width * tex->height * 4;
-    uint *pix = malloc(size);
-    
-    glBindTexture(GL_TEXTURE_2D, tex->texnum);
-    glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pix);
-    glReportError();
-
-    invert_image(pix, tex->width, tex->height);
 
     CGImageRef cimg = nil;
     {
         CGColorSpaceRef color_space = CGColorSpaceCreateDeviceRGB();
-        CGDataProviderRef provider = CGDataProviderCreateWithData(NULL, pix, size, NULL);
-        cimg = CGImageCreate(tex->width, tex->height, 8, 32, tex->width * 4,
+        const int size = 4 * img->width * img->height;
+        CGDataProviderRef provider = CGDataProviderCreateWithData(NULL, img->data, size, NULL);
+        cimg = CGImageCreate(img->width, img->height, 8, 32, img->width * 4,
                              color_space, kCGImageAlphaLast, provider,
                              NULL, FALSE, kCGRenderingIntentDefault);
 
@@ -353,11 +363,10 @@ int OL_SaveTexture(const OutlawTexture *tex, const char* fname)
     }
     
     CGImageRelease(cimg);
-    free(pix);
     
     if (!success) {
-        LogMessage([NSString stringWithFormat:@"Failed to write texture %d-%dx%d to '%s'",
-                             tex->texnum, tex->width, tex->height, fname]);
+        LogMessage([NSString stringWithFormat:@"Failed to write image %dx%d to '%s'",
+                             img->width, img->height, fname]);
     }
     return success;
 }
@@ -386,7 +395,8 @@ static NSFont* getFont(int index, float size)
     if (!font)
         LogMessage([NSString stringWithFormat:@"Failed to load font %d from '%@' size %g", index, g_fontPaths[index], size]);
     [g_fontMutex unlock];
-    return (NSFont*)font;
+    NSFont *ns = [(NSFont*)font autorelease];
+    return ns;
 }
 
 void OL_SetFont(int index, const char* file)
@@ -477,7 +487,7 @@ static int appendQuake3String(NSMutableAttributedString *mstring, NSFont *font,
     return 1;
 }
 
-int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int fontName, float maxw, float maxh)
+int OL_StringImage(struct OutlawImage *img, const char* str, float size, int fontName, float maxw, float maxh)
 {
     // !!!!!
     // NSAttributedString always draws at the resolution of the highest attached monitor
@@ -518,7 +528,6 @@ int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int fontNa
         string = createColorString(str, font, [NSColor whiteColor]);
     }
         
-    NSSize previousSize = NSMakeSize(tex->width, tex->height);
     NSSize frameSize = [string size];
 
     if (frameSize.width == 0.f || frameSize.height == 0.f) 
@@ -560,39 +569,16 @@ int OL_StringTexture(OutlawTexture *tex, const char* str, float size, int fontNa
     }
 	[image unlockFocus];
 
-    NSSize texSize;
-	texSize.width = [bitmap pixelsWide];
-	texSize.height = [bitmap pixelsHigh];
+    img->width = [bitmap pixelsWide];
+    img->height = [bitmap pixelsHigh];
+    img->internal_format = mstring ? GL_RGBA : GL_LUMINANCE_ALPHA;
+    img->format = ([bitmap samplesPerPixel] == 4 ? GL_RGBA :
+                   [bitmap samplesPerPixel] == 3 ? GL_RGB :
+                   [bitmap samplesPerPixel] == 2 ? GL_LUMINANCE_ALPHA : GL_LUMINANCE);
+    img->type = GL_UNSIGNED_BYTE;
+    img->data = (char*)[bitmap bitmapData];
+    img->handle = NULL;         // autoreleased
 
-    if (!CGLGetCurrentContext())
-    {
-		NSLog (@"StringTexture -genTexture: Failure to get current OpenGL context\n");
-        return 0;        
-    }
-    
-    if (tex->texnum == 0)
-        glGenTextures (1, &tex->texnum);
-    glBindTexture (GL_TEXTURE_2D, tex->texnum);
-    GLenum format = ([bitmap samplesPerPixel] == 4 ? GL_RGBA :
-                     [bitmap samplesPerPixel] == 3 ? GL_RGB :
-                     [bitmap samplesPerPixel] == 2 ? GL_LUMINANCE_ALPHA : GL_LUMINANCE);
-    if (NSEqualSizes(previousSize, texSize)) {
-        glTexSubImage2D(GL_TEXTURE_2D,0,0,0,(GLsizei)texSize.width,(GLsizei)texSize.height,
-                        format, GL_UNSIGNED_BYTE, [bitmap bitmapData]);
-    } else {
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        // glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);             // it's already antialiased
-        // glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        GLint tfmt = mstring ? GL_RGBA : GL_LUMINANCE_ALPHA;
-        glTexImage2D(GL_TEXTURE_2D, 0, tfmt, (GLsizei)texSize.width, (GLsizei)texSize.height,
-                     0, format, GL_UNSIGNED_BYTE, [bitmap bitmapData]);
-    }
-
-    glReportError();
-	
-    tex->width = texSize.width;
-    tex->height = texSize.height;
     return 1;
 }
 
@@ -702,6 +688,26 @@ const char* OL_GetPlatformDateInfo(void)
         [buf retain];
     }
     return [buf UTF8String];
+}
+
+const char** OL_GetOSLanguages(void)
+{
+    static const int kLangMax = 10;
+    static const char *val[kLangMax];
+    if (!val)
+    {
+        NSArray *languages = [NSLocale preferredLanguages];
+        int i=0;
+        for (NSString* lang in languages)
+        {
+            if (i >= kLangMax-1)
+                break;
+            val[i] = [[lang retain] UTF8String];
+            i++;
+        }
+        val[i] = NULL;
+    }
+    return (const char**)val;
 }
 
 const char* OL_ReadClipboard()

@@ -25,7 +25,6 @@
 
 #include "StdAfx.h"
 #include "Event.h"
-#include "Unicode.h"
 
 string Event::toString() const
 {
@@ -176,34 +175,45 @@ uint KeyState::keyMods() const
     return mods;
 }
 
-static Event gamepadAxis2Button(const Event *event, float val)
+static uint gamepadAxis2Key(uint key, float val)
 {
-    Event revent;
-    // create button up or down events when each axis toggles
-    const bool isDown = val == 0.f && event->pos.y != 0.f;
-    const bool isUp   = val != 0.f && event->pos.y == 0.f;
-    if (isDown || isUp)
-    {
-        revent.type = isDown ? Event::KEY_DOWN : Event::KEY_UP;
-        revent.which = event->which;
-        const int key = event->key;
-        const bool isPlus = val > 0.f || event->pos.y > 0.f;
-        if (key == GamepadAxisLeftX && isPlus)        revent.key = GamepadLeftLeft;
-        else if (key == GamepadAxisLeftX && !isPlus)  revent.key = GamepadLeftRight;
-        else if (key == GamepadAxisLeftY && isPlus)   revent.key = GamepadLeftDown;
-        else if (key == GamepadAxisLeftY && !isPlus)  revent.key = GamepadLeftUp;
-        else if (key == GamepadAxisRightX && isPlus)  revent.key = GamepadRightLeft;
-        else if (key == GamepadAxisRightX && !isPlus) revent.key = GamepadRightRight;
-        else if (key == GamepadAxisRightY && isPlus)  revent.key = GamepadRightDown;
-        else if (key == GamepadAxisRightY && !isPlus) revent.key = GamepadRightUp;
-        else if (key == GamepadAxisTriggerLeftY)      revent.key = GamepadTriggerLeft;
-        else if (key == GamepadAxisTriggerRightY)     revent.key = GamepadTriggerRight;
-        revent.rawkey = revent.key;
+    switch (key) {
+    case GamepadAxisLeftX:         return val > 0 ? GamepadLeftRight : GamepadLeftLeft;
+    case GamepadAxisLeftY:         return val > 0 ? GamepadLeftDown : GamepadLeftUp;
+    case GamepadAxisRightX:        return val > 0 ? GamepadRightRight : GamepadRightLeft;
+    case GamepadAxisRightY:        return val > 0 ? GamepadRightDown : GamepadRightUp;
+    case GamepadAxisTriggerLeftY:  return GamepadTriggerLeft;
+    case GamepadAxisTriggerRightY: return GamepadTriggerRight;
     }
-    return revent;
+    return 0;
 }
 
-Event KeyState::OnEvent(const Event* event)
+static void gamepadAxis2Button(const Event *event, float before)
+{
+    const float current = event->pos.y;
+    if ((before == current) ||
+        (before > 0 && current > 0) ||
+        (before < 0 && current < 0))
+        return;
+
+    Event evt = *event;
+    
+    if (before != 0.f)
+    {
+        evt.type = Event::KEY_UP;
+        evt.key = gamepadAxis2Key(event->key, before);
+        pushEvent(&evt);
+    }
+
+    if (current != 0.f)
+    {
+        evt.type = Event::KEY_DOWN;
+        evt.key = gamepadAxis2Key(event->key, current);
+        pushEvent(&evt);
+    }
+}
+
+void KeyState::OnEvent(const Event* event)
 {
     KeyState &self = *this;
     switch (event->type)
@@ -263,14 +273,15 @@ Event KeyState::OnEvent(const Event* event)
         case GamepadAxisRightY:        axis = GamepadAxisRight; dim = 1; break;
         case GamepadAxisTriggerLeftY:  axis = GamepadAxisTriggerLeft; dim = 1; break;
         case GamepadAxisTriggerRightY: axis = GamepadAxisTriggerRight; dim = 1; break;
-        default: return Event();
+        default: return;
         }
 
         GamepadInstance &gi = gamepads[event->which];
         const float before = gi.axis[axis][dim];
         gi.axis[axis][dim] = event->pos.y;
         gamepadAxis[axis][dim] = event->pos.y;
-        return gamepadAxis2Button(event, before);
+        gamepadAxis2Button(event, before);
+        break;
     }
     case Event::GAMEPAD_REMOVED:
     case Event::LOST_FOCUS:
@@ -281,7 +292,6 @@ Event KeyState::OnEvent(const Event* event)
     default:
         break;
     }
-    return Event();
 }
 
 static string keyToUTF8(int key)
@@ -292,7 +302,7 @@ static string keyToUTF8(int key)
                (LeftMouseButton <= key && key < EventKeyMax)) {
         return "";
     } else { 
-        return UCS2_to_UTF8(key);
+        return utf8_encode(key);
     }
 }
 
@@ -343,7 +353,7 @@ static string rawKeyToString(int key)
     case GamepadGuide:             return _("Gamepad Guide");
     case GamepadStart:             return _("Gamepad Start");
     case GamepadLeftStick:         return _("Left Stick");
-    case GamepadRightSitck:        return _("Right Stick");
+    case GamepadRightStick:        return _("Right Stick");
     case GamepadLeftShoulder:      return _("Left Bumper");
     case GamepadRightShoulder:     return _("Right Bumper");
     case GamepadDPadUp:            return _("DPad Up");

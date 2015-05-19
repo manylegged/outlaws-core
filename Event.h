@@ -134,7 +134,7 @@ enum : uint {
     GamepadGuide,
     GamepadStart,
     GamepadLeftStick,
-    GamepadRightSitck,
+    GamepadRightStick,
     GamepadLeftShoulder,
     GamepadRightShoulder,
     GamepadDPadUp,
@@ -313,8 +313,7 @@ public:
     const char* stringDiscard() const;
 
     // update current button state
-    // returns new synthetic event to process
-    Event OnEvent(const Event* event);
+    void OnEvent(const Event* event);
 
     static KeyState &instance()
     {
@@ -337,6 +336,8 @@ inline bool isKeyMod(int key)
         return false;
     }
 }
+
+void pushEvent(const Event *ev);
 
 
 #endif // CORE_EVENT_H

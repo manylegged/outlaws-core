@@ -30,24 +30,24 @@ using std::vector;
 using std::swap;
 
 // last chance to catch log string before it hits the OS layer
-void ReportMessage(string &&str);
-void ReportMessage(const string &str);
-void ReportMessage(const char* str);
+void Report(string &&str);
+void Report(const string &str);
+void Report(const char* str);
 
-inline void vReportMessagef(const char *format, va_list vl)  __printflike(1, 0);
+inline void vReportf(const char *format, va_list vl)  __printflike(1, 0);
 
-inline void vReportMessagef(const char *format, va_list vl)
+inline void vReportf(const char *format, va_list vl)
 {
-    ReportMessage(str_vformat(format, vl));
+    Report(str_vformat(format, vl));
 }
 
-inline void ReportMessagef(const char *format, ...)  __printflike(1, 2);
+inline void Reportf(const char *format, ...)  __printflike(1, 2);
 
-inline void ReportMessagef(const char *format, ...)
+inline void Reportf(const char *format, ...)
 {
     va_list vl;
     va_start(vl, format);
-    vReportMessagef(format, vl);
+    vReportf(format, vl);
     va_end(vl);
 }
 
@@ -85,14 +85,14 @@ inline void ReportMessagef(const char *format, ...)
 #define CASE_STR(X) case X: return #X
 
 #if defined(DEBUG) || defined(DEVELOP)
-#  define WARN(X) ReportMessagef X
+#  define WARN(X) Reportf X
 template <int Y, typename T>
 void DPRINTVAR1(const char* name, const T& X)
 {
     static T _x{};
     static std::string _nm;
     if (X != _x && name != _nm) {
-        ReportMessagef("%s = %s", name, str_tostr(X).c_str());
+        Reportf("%s = %s", name, str_tostr(X).c_str());
         _x = X;
         _nm = name;
     }

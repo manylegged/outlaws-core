@@ -84,7 +84,7 @@ def countfile(fil, rev):
     if os.path.isdir(fil):
         dirn = os.path.normpath(fil)
         dr = Counts(dirn + "/")
-        for ex in ["c", "m", "cpp", "h", "hpp", "py", "sh", "cgi"]:
+        for ex in ["c", "m", "cpp", "h", "hpp", "py", "sh", "cgi", "gm"]:
             for fil in glob.glob("%s/*.%s" % (dirn, ex)):
                 dr += countfile(fil, rev)
         if recursive:

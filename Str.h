@@ -51,6 +51,37 @@ namespace std {
 }
 
 typedef unsigned long long uint64;
+#define UNKNOWN_UNICODE 0xFFFD
+
+// convert a single ucs2 character to a utf8 string
+std::string utf8_encode(int ucs2);
+
+// utf8 multi-byte sequences start with something that has two or more 11s,
+// continuation bytes all have 10 in highest position
+// ascii always has 0 in highest pos
+inline bool utf8_iscont(char byte) { return (byte&0xc0) == 0x80; }
+
+// return a single ucs2 character from a utf8 stream
+uint utf8_getch(const char **src, size_t *srclen);
+
+// return byte index after advancing LEN characters in STR, starting at START
+int utf8_advance(const std::string& str, int start, int len=0);
+
+// return substring of UTF8 starting at byte START of LEN characters (not bytes)
+std::string utf8_substr(const std::string &utf8, int start, int len=-1);
+
+// return STR with LEN characters erased starting from byte START
+std::string utf8_erase(const std::string &str, int start, int len=-1);
+
+// return length of substring in _characters_
+// POS and LEN are byte indexes
+size_t utf8_len(const std::string &str, size_t pos=0, size_t len=~0);
+
+// return length of substring in _character width_
+// (中文/한국어/日本語 characters are double width)
+// POS and LEN are byte indexes
+size_t utf8_width(const std::string &str, size_t pos=0, size_t len=~0);
+
 
 // lexicon-ized string - basically a symbol
 // very fast to copy around, compare
@@ -158,7 +189,7 @@ inline size_t str_find(const char* s, char v, size_t pos=0)
 
 inline size_t str_find(const char* s, const char* v, size_t pos=0)
 {
-    if (pos > strlen(s))
+    if (pos >= strlen(s))
         return std::string::npos;
     const char *p = strstr(s+pos, v);
     return p ? (size_t) (p - s) : std::string::npos;
@@ -200,46 +231,44 @@ inline std::string str_indent(T&& s, int amount)
     return std::string(amount, ' ') + str_replace(std::forward<T>(s), "\n", istr.c_str());
 }
 
-std::string str_align(const std::string& input, char token);
+std::string str_align(const std::string& input, char token=':');
 
 template <typename T, typename Fun>
 inline std::string str_strip(T &&s, Fun func)
 {
     const int sz = str_len(s);
     int st=0;
-    while (st < sz && func(s[st])) {
+    while (st < sz && s[st] < 128 && func(s[st])) {
         st++;
     }
     int ed=sz-1;
-    while (ed >= st && func(s[ed])) {
+    while (ed >= st && s[st] < 128 && func(s[ed])) {
         ed--;
     }
     return str_substr(s, st, ed-st+1);
 }
 
+inline bool str_isspace(int c)
+{
+    return 0 < c && c < 128 && isspace(c);
+}
+
 template <typename T>
 inline std::string str_strip(T &&s)
 {
-    return str_strip(std::forward<T>(s), isspace);
+    return str_strip(std::forward<T>(s), str_isspace);
 }
 
 template <typename T>
 inline std::string str_strip(const std::string &s)
 {
-    return str_strip(s, isspace);
-}
-
-typedef std::string (*str_strip_t)(const std::string &s);
-
-inline bool isspacequote(char c)
-{
-    return isspace(c) || strchr("\"'", c);
+    return str_strip(s, str_isspace);
 }
 
 inline std::string str_chomp(const std::string &s)
 {
     int ed=(int) s.size()-1;
-    while (isspace(s[ed])) {
+    while (str_isspace(s[ed])) {
         ed--;
     }
     return s.substr(0, ed+1);
@@ -248,7 +277,7 @@ inline std::string str_chomp(const std::string &s)
 inline std::string str_chomp(std::string &&s)
 {
     int ed=(int) s.size()-1;
-    while (isspace(s[ed])) {
+    while (str_isspace(s[ed])) {
         ed--;
     }
     s.resize(ed+1);
@@ -406,24 +435,20 @@ std::string str_join_keys(const S &sep, const A &begin, const A &end)
     return result;
 }
 
-std::string str_word_wrap(std::string str,
-                          size_t width = 70,
-                          const char* newline="\n",
-                          const char* wrap=" ");
+struct str_wrap_options_t {
+    int         width   = 70;
+    const char *newline = "\n";
+    const char *wrap    = " ";
+    bool        rewrap  = false;
 
-inline std::string str_word_rewrap(const std::string &str, size_t width)
-{
-    return str_word_wrap(str_replace(str, "\n", " "), width);
-}
+    str_wrap_options_t(int w) : width(w) {}
+    str_wrap_options_t() {}
+};
 
+std::string str_word_wrap(const std::string &str, const str_wrap_options_t &ops=str_wrap_options_t());
 
-std::string str_capitalize(const char* str);
-
-inline std::string str_capitalize(const std::string &s)
-{
-    return str_capitalize(s.c_str());
-}
-
+std::string str_capitalize(std::string s);
+std::string str_capitalize_first(std::string s);
 
 template <typename T>
 std::string str_toupper(const T &str)
@@ -482,9 +507,9 @@ long chr_unshift(long chr);
 
 std::string str_demangle(const char* str);
 
-inline bool issym(const char v)
+inline bool issym(const int c)
 {
-    return v != '\0' && (isalpha(v) || v == '_');
+    return c == '_' || (0 < c && c < 128 && isalpha(c));
 }
 
 inline std::string str_get_extension(const std::string &str)
@@ -549,6 +574,9 @@ inline std::wstring str_win32path_join(const std::wstring &a, const std::wstring
 {
     return str_path_join_(a, b, L'\\');
 }
+
+// remove characters not allowed in file names from path (including / and \!)
+std::string str_path_sanitize(std::string path);
 
 template <typename Fun>
 inline std::string str_interpolate_variables(std::string str, const Fun& fun)
