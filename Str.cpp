@@ -638,7 +638,7 @@ string str_path_sanitize(string path)
     {
         path.erase(i, 1);
     }
-    return path;
+    return str_strip(path);
 }
 
 std::string str_dirname(const std::string &str)

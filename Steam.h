@@ -99,6 +99,8 @@ const char* EPublishedFileVisibility2String(ERemoteStoragePublishedFileVisibilit
 // faster version of ISteamRemoteStorage::FileExists (actually returns file size)
 int SteamFileExists(const char* fname);
 bool SteamFileDelete(const char* fname);
+int SteamFileCount();
+void SteamForEachFile(std::function<void(const string&, int)> fun);
 
 // ISteamRemoteStorage::FileWrite / FileRead which use/maintain file index and report errors
 extern int g_steamReadsFailed;

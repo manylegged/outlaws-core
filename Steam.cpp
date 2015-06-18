@@ -252,6 +252,7 @@ bool SteamFileDelete(const char* fname)
     ISteamRemoteStorage *ss = SteamRemoteStorage();
     if (!ss)
         return false;
+    
     {
         std::lock_guard<std::mutex> m(steamIndexMutex());
         steamIndex().erase(fname);
@@ -259,6 +260,23 @@ bool SteamFileDelete(const char* fname)
     const bool success = ss->FileDelete(fname);
     ASSERTF(success, "FileDelete failed on '%s'", fname);
     return success;
+}
+
+int SteamFileCount()
+{
+    std::lock_guard<std::mutex> m(steamIndexMutex());
+    return steamIndex().size();
+}
+
+void SteamForEachFile(std::function<void(const string&, int)> fun)
+{
+    if (!SteamRemoteStorage())
+        return;
+    std::lock_guard<std::mutex> m(steamIndexMutex());
+    foreach (const auto &it, steamIndex())
+    {
+        fun(it.first, it.second);
+    }
 }
 
 bool steamFileWrite(const char* fname, const char* data, int size, int ucsize)

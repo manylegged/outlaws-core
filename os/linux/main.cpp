@@ -127,7 +127,8 @@ const char *OL_PathForFile(const char *fname, const char* flags)
         }
     }
 
-    return sdl_os_autorelease(str_path_join(getDataDir(), fname));
+    string path1 = str_path_join(getDataDir(), fname);
+    return sdl_os_autorelease(path1);
 }
 
 static int recursive_mkdir(const char *dir)
@@ -229,7 +230,7 @@ int OL_RemoveFileOrDirectory(const char* dirname)
     return 1;
 }
 
-static std::set<std::string> listDirectory(const char* path, const char *flags)
+static std::set<std::string> listDirectory(const char* path1, const char *flags)
 {
     const char* path = OL_PathForFile(path1, flags);
 
@@ -250,7 +251,7 @@ static std::set<std::string> listDirectory(const char* path, const char *flags)
     return files;
 }
 
-const char** OL_ListDirectory(const char* path1)
+const char** OL_ListDirectory(const char* path)
 {
     // not thread safe!!
     static vector<const char*> elements;
@@ -258,7 +259,7 @@ const char** OL_ListDirectory(const char* path1)
     std::set<std::string> files = listDirectory(path, "p");
     std::set<std::string> local = listDirectory(path, "w");
 
-    foreach (const std::string &files, local)
+    foreach (const std::string &file, local)
         files.insert(file);
 
     elements.clear();
@@ -275,6 +276,39 @@ string os_get_platform_info()
         return "Linux (uname failed)";
 
     return str_format("%s %s %s %s", buf.sysname, buf.release, buf.version, buf.machine);
+}
+
+const char** OL_GetOSLanguages(void)
+{
+    static const int kLanguages = 10;
+    static const char* buf[kLanguages];
+    static vector<string> langs;
+
+    const char *language = getenv("LANGUAGE");
+    const char *lang = getenv("LANG");
+    if (language)
+    {
+        langs = str_split(':', language);
+    }
+    else if (lang)
+    {
+        string l = lang;
+        l.resize(2);
+        langs.push_back(l);
+    }
+    else
+    {
+        langs.push_back("en");
+    }
+
+    const int count = min(kLanguages, (int)langs.size());
+    for (int i=0; i<count; i++)
+    {
+        langs[i].resize(2);
+        buf[i] = langs[i].c_str();
+    }
+
+    return buf;
 }
 
 int OL_CopyFile(const char* pa, const char* pb)

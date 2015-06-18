@@ -147,7 +147,7 @@ static NSString *caseFilePath(NSString* path)
     if (!cFilePath || *cFilePath == '\0')
         return path;
 
-    int len = PATH_MAX + 1;
+    const int len = PATH_MAX + 1;
     char cRealPath[len];
     memset(cRealPath, 0, len);
     char *result = realpath(cFilePath, cRealPath);
@@ -512,7 +512,7 @@ int OL_StringImage(struct OutlawImage *img, const char* str, float size, int fon
         if (*ptr == '^' && '0' <= ptr[1] && ptr[1] <= '9')
         {
             if (!mstring)
-                mstring = [[NSMutableAttributedString alloc] init];
+                mstring = [[[NSMutableAttributedString alloc] init] autorelease];
             appendQuake3String(mstring, font, lastPtr, len, lastV);
 
             lastV = ptr[1] - '0';
@@ -693,7 +693,7 @@ const char* OL_GetPlatformDateInfo(void)
 const char** OL_GetOSLanguages(void)
 {
     static const int kLangMax = 10;
-    static const char *val[kLangMax];
+    static char val[kLangMax][3];
     if (!val)
     {
         NSArray *languages = [NSLocale preferredLanguages];
@@ -702,10 +702,10 @@ const char** OL_GetOSLanguages(void)
         {
             if (i >= kLangMax-1)
                 break;
-            val[i] = [[lang retain] UTF8String];
+            strncpy(val[i], [lang UTF8String], 2);
             i++;
         }
-        val[i] = NULL;
+        val[i][2] = '\0';
     }
     return (const char**)val;
 }

@@ -1,5 +1,18 @@
 #!/usr/bin/python
 
+# This script parses Reassembly crashlog files and looks up symbols for the stack traces
+# Supports windows (visual studio) and linux
+# Also supports osx traces but assumes symbols are already looked up
+# Symbol paths are
+
+# Can also triage stack traces - generate a histogram of most stacks from hundreds of logs
+
+# It also aggregates asserts and makes playtime histograms from timestamp logs
+# symbol paths are set in the following variables
+
+# Dia2Dump is a program that converts .pdb files to various text formats
+# it comes with Visual Studio as a sample application but needs to be compiled
+
 import sys, re, os
 import gzip
 import glob
@@ -18,19 +31,19 @@ if sys.platform.startswith("darwin"):
                    "/Volumes/Users/Arthur/AppData/Local/Temp/SymbolCache"]
     OUTLAWS_WIN32 = ["win32",
                      "/Volumes/BOOTCAMP/Users/Arthur/Documents/outlaws/win32",
-                     "/Volumes/Users/Arthur/Documents/outlaws/win32"]
+                     "/Volumes/Users/Arthur/Documents/outlaws/win32"] # thor
 else:
     PDB_SYMBOLS = ["C:/symbols",
                    "//THOR/Users/Arthur/AppData/Local/Temp/SymbolCache"]
     OUTLAWS_WIN32 = ["win32", "//THOR/Users/Arthur/Documents/outlaws/win32"]
-    
+
 REL_SYM_PATH = {"ReassemblyRelease":["steam", "release"],
                 "ReassemblyBuilder":["builder"],
                 "ReassemblyRelease64":["release"],
                 "ReassemblySteam32":["steam"]}
-BOOTCAMP = "/Volumes/BOOTCAMP"
-BOOTCAMP_OUTLAWS = os.path.join(BOOTCAMP, "Users/Arthur/Documents/outlaws/")
 READELF = "readelf -lsW -wL %s | c++filt"
+
+# ignore these symbols when triaging stack traces
 TRIAGE_IGNORE_TRACE = set(["posix_signal_handler(int, siginfo_t*, void*)", # clang
                            "posix_signal_handler(int, __siginfo*, void*)", # gcc
                            "_sigtramp", "_init", "_L_unlock_13", "0x0",
@@ -197,8 +210,7 @@ def get_so_symbols(modname, version=""):
     return "elf", gzip.open(gzpath)
     
 
-def get_symbol_type_handle(modname, version):
-    
+def get_symbol_type_handle(modname, version):    
     if modname.endswith(".dll"):
         return get_dll_symbols(modname)
     elif ".so." in modname:
@@ -230,6 +242,8 @@ def parse_symbol_map(modname, version):
     typ, handle = get_symbol_type_handle(modname, version)
 
     if typ == "line":
+        # (Windows) output from Dia2Dump -l
+        # Contains line number info
         sym_re = re.compile("[*][*] (.*)")
         line_re = re.compile("line ([0-9]+) at \[([0-9A-F]+)\]\[([0-9A-F]+):([0-9A-F]+)\], len = 0x[A-F0-9]+(\t(.+) \(MD5)?")
         cursym = None
@@ -250,12 +264,14 @@ def parse_symbol_map(modname, version):
                 entry.line, entry.file = (int(lnum), curfil)
                 entries.append(entry)
     elif typ == "globals":
+        # (Windows) output from Dia2Dump -g -p
         func_re = re.compile("(Function|PublicSymbol): \[([0-9A-F]+)\]\[([0-9A-F]+):([0-9A-F]+)\] (.*)")
         for line in handle:
             m = func_re.match(line)
             if m:
                 entries.append(map_entry(m.group(5).strip(), int(m.group(2), 16)))
     elif typ == "map":
+        # (Windows) Visual Studio generated map file
         load_addr = 0
         load_re = re.compile("Preferred load address is ([a-fA-F0-9]+)")
         for line in handle:
@@ -273,6 +289,7 @@ def parse_symbol_map(modname, version):
             except Exception, e:
                 pass
     elif typ == "elf":
+        # (Linux) Output from readelf -lsW -wL 
         # Type           Offset   VirtAddr           PhysAddr           FileSiz  MemSiz   Flg Align
         load_re = re.compile(" *LOAD +0x[0-9a-f]+ (0x[0-9a-f]+)")
         #    Num:    Value          Size Type    Bind   Vis      Ndx Name
@@ -752,10 +769,10 @@ if __name__ == '__main__':
             ops.printall = True
         if opt == "-v":
             ops.versions.append(val)
-
     
     print "-*- mode: compilation -*-"
     print "ROOT=%s" % ROOT
+    print "versions=%s" % str(ops.versions)
     if len(args) == 0:
         logs = glob.glob(os.path.join(os.path.expanduser("~/Downloads"), "Reassembly_*.txt"))
         latest = os.path.join(ROOT, "data", "log_latest.txt")
@@ -776,10 +793,15 @@ if __name__ == '__main__':
         files = []
         for fil in args:
             if "*" in fil:
-                files.extend(glob.glob(fil))
+                fils = glob.glob(os.path.join(ROOT, fil))
+                files.extend(fils)
+                print "globbing '%s' resulted in %d files" % (fil, len(fils))
             else:
                 files.append(fil)
-        print "processing %d logs" % (len(args))
+        if len(files) == 1:
+            print "processing %s" % files[0]
+        else:
+            print "processing %d logs" % (len(files))
         triage = {}
         handlers = [AssertionHandler()]
         ops1 = copy(ops)

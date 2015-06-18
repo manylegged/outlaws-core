@@ -277,13 +277,6 @@ public:
     T*  get() const { return m_ptr; }
     T** getPtr()    { return &m_ptr; }
 
-    typename std::remove_const<T>::type** getWritablePtr()
-    {
-        if (m_ptr && copy_explicit_owner(m_ptr))
-            m_ptr = new T(*m_ptr);
-        return const_cast<typename std::remove_const<T>::type**>(&m_ptr);
-    }
-
     T* release()
     {
         T* ptr = m_ptr;
@@ -556,6 +549,14 @@ inline bool vec_pop(V &v, typename V::iterator it)
     std::swap(*it, v.back());
     v.pop_back();
     return true;
+}
+
+// pop empty elements from back of vector (like str chomp)
+template <typename V>
+inline void vec_chomp(V &v)
+{
+    while (v.size() && !v.back())
+        v.pop_back();
 }
 
 // remove v[i], return true if i < v.size()

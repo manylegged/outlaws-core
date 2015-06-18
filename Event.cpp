@@ -142,6 +142,11 @@ const char* KeyState::stringDiscard() const
     return gamepadActive ? "Y" : _("DELETE"); 
 }
 
+const char* KeyState::gamepadName() const
+{
+    return OL_GetGamepadName(lastGamepad);
+}
+
 bool& KeyState::operator[](int c)
 {
     if (0 <= c && c < 256) {
@@ -228,6 +233,7 @@ void KeyState::OnEvent(const Event* event)
         if (GamepadA <= event->key && event->key <= GamepadAxisTriggerRightY)
         {
             gamepads[event->which].buttons[event->key - GamepadA] = (event->type == Event::KEY_DOWN);
+            lastGamepad = event->which;
         }
         break;
 
@@ -283,6 +289,9 @@ void KeyState::OnEvent(const Event* event)
         gamepadAxis2Button(event, before);
         break;
     }
+    case Event::GAMEPAD_ADDED:
+        lastGamepad = event->which;
+        break;
     case Event::GAMEPAD_REMOVED:
     case Event::LOST_FOCUS:
         reset();

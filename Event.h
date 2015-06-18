@@ -278,6 +278,7 @@ class KeyState {
     bool                          device[EventKeyMax - LeftMouseButton];
     std::unordered_map<int, bool> misc;
     float2                        gamepadAxis[GamepadAxisCount];
+    int                           lastGamepad = -1;
 
     struct GamepadInstance {
         float2 axis[GamepadAxisCount];
@@ -289,7 +290,6 @@ public:
 
     float2 cursorPosScreen;
     bool   gamepadActive = false;
-    int    lastGamepad = -1;
 
     KeyState();
 
@@ -312,6 +312,8 @@ public:
     const char* stringNo() const;
     const char* stringDiscard() const;
 
+    const char* gamepadName() const;
+    
     // update current button state
     void OnEvent(const Event* event);
 

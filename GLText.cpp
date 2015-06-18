@@ -177,7 +177,7 @@ const GLText* GLText::get(int font, float size, const string& s)
     static int cacheSize = kGLTextCacheSize;
     static GLText *cache = new GLText[cacheSize];
     if (cacheSize != kGLTextCacheSize) {
-        delete cache;
+        delete[] cache;
         cache = new GLText[kGLTextCacheSize];
         cacheSize = kGLTextCacheSize;
     }

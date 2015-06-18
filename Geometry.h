@@ -269,7 +269,7 @@ inline float2 toGoldenRatioX(float x) { return float2(x, x / kGoldenRatio); }
 inline float cross(float2 a, float2 b) { return a.x * b.y - a.y * b.x; }
 
 inline int clamp(int v, int mn, int mx) { return min(max(v, mn), mx); }
-inline float clamp(float v, float mn, float mx) { return min(max(v, mn), mx); }
+inline float clamp(float v, float mn=0.f, float mx=1.f) { return min(max(v, mn), mx); }
 inline float2 clamp(float2 v, float2 mn, float2 mx) { return float2(clamp(v.x, mn.x, mx.x),
                                                                     clamp(v.y, mn.y, mx.y)); }
 
@@ -307,9 +307,9 @@ float2 circle_in_rect(float2 pos, float rad, float2 rcenter, float2 rrad);
 inline float max_dim(float2 v) { return max(v.x, v.y); }
 inline float min_dim(float2 v) { return min(v.x, v.y); }
 
-inline bool isZero(float2 v) { return fabsf(v.x) < epsilon && fabsf(v.y) < epsilon; }
-inline bool isZero(float3 v) { return fabsf(v.x) < epsilon && fabsf(v.y) < epsilon && fabsf(v.z) < epsilon; }
-inline bool isZero(float v)  { return fabsf(v) < epsilon; }
+inline bool isZero(float2 v) { return fabsf(v.x) <= epsilon && fabsf(v.y) <= epsilon; }
+inline bool isZero(float3 v) { return fabsf(v.x) <= epsilon && fabsf(v.y) <= epsilon && fabsf(v.z) <= epsilon; }
+inline bool isZero(float v)  { return fabsf(v) <= epsilon; }
 
 // modulo (%), but result is [0-y) even for negative numbers
 inline int modulo(int x, int y)
@@ -381,7 +381,7 @@ inline float2 normalize(float2 a)
 {
     float l = length(a);
     if (l < epsilon) {
-        ASSERT(0);
+        ASSERT_FAILED("l < epsilon", "length({%f, %f}) = %f", a.x, a.y, l);
         return a;
     } else {
         return a / l;

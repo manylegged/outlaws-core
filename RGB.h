@@ -164,7 +164,7 @@ inline uint GetContrastWhiteBlack(float3 color)
 inline uint32 argb2abgr(uint32 argb, float alpha)
 {
     float fa = (float) (argb>>24) / 255.f;
-    uint  a  = (uint) min(255.f, fa * alpha * 255.f);
+    uint  a  = clamp(round_int(fa * alpha * 255.f), 0, 0xff);
     uint  r0b = (argb&0xff00ff);
     return (a << 24) | (r0b << 16)| (argb&0x00ff00)  | (r0b >> 16);
 }

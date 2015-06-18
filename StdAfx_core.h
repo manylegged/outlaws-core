@@ -131,6 +131,7 @@ struct IDeletable {
 #endif
 
 #include "Geometry.h"
+#include "Tween.h"
 #include "stl_ext.h"
 #include "Rand.h"
 #include "SpacialHash.h"

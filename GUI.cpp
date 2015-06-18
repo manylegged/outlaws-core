@@ -160,19 +160,25 @@ void Button::renderButton(DMesh& mesh, bool selected)
     mesh.translateZ(-0.1f);
 }
 
-void Button::renderContents(const ShaderState &s_)
+void Button::renderContents(const ShaderState &ss)
 {
     if (!visible)
         return;
     const uint tcolor = MultAlphaAXXX((!active) ? inactiveTextColor : textColor, alpha);
+    const uint stc = MultAlphaAXXX(subtextColor, alpha);
     const float2 pos = position + justY(subtext.size() ? size.y * (0.5f - (textSize / (subtextSize + textSize))) : 0.f);
-    GLText::Put(s_, pos, subtext.size() ? GLText::CENTERED : GLText::MID_CENTERED,
-                textFont, tcolor, textSize, text);
-    
-    if (subtext.size())
+    const GLText::Align align = subtext.size() ? GLText::CENTERED : GLText::MID_CENTERED;
+
+    if (style&S_FIXED)
     {
-        const uint stc = MultAlphaAXXX(subtextColor, alpha);
-        GLText::Put(s_, pos , GLText::DOWN_CENTERED, textFont, stc, subtextSize, subtext);
+        renderButtonText(ss, pos, size.x, align, textFont, tcolor, &textSize, 8.f, 24.f, text);
+        renderButtonText(ss, pos, size.x, GLText::DOWN_CENTERED, textFont, stc, &subtextSize, 6.f, 16.f, subtext);
+    }
+    else
+    {
+        GLText::Put(ss, pos, align, textFont, tcolor, textSize, text);
+        if (subtext.size())
+            GLText::Put(ss, pos, GLText::DOWN_CENTERED, textFont, stc, subtextSize, subtext);
     }
 }
 
@@ -1214,13 +1220,13 @@ string OptionEditor::getTxt() const
                     val == 1 ? _("Low") : 
                     val == 2 ? _("Medium") : _("Full"));
         } else {
-            return val ? "On" : "Off";
+            return val ? _("On") : _("Off");
         }
     } else if (start != 0.f) {
         return str_format("%d", getValueInt());
     } else {
         float val = 100.f * getValueFloat();
-        return (val < 1.f) ? "Off" : str_format("%.0f%%", val);
+        return (val < 1.f) ? _("Off") : str_format("%.0f%%", val);
     }
 }
 
@@ -1328,15 +1334,13 @@ int TabWindow::addTab(string txt, int ident, ITabInterface *inf)
     TabButton &bu = buttons.back();
     bu.interface = inf;
     bu.text = txt;
-    if (idx < 9)
-        bu.keys[0] = str_format("%d", idx+1)[0];
     bu.ident = ident;
     return idx;
 }
 
 bool TabWindow::HandleEvent(const Event* event)
 {
-    if ( buttons[selected].interface->HandleEvent(event))
+    if (buttons[selected].interface->HandleEvent(event))
         return true;
     
     int i=0;
@@ -1700,8 +1704,17 @@ void OverlayMessage::render(const ShaderState &ss)
     std::lock_guard<std::mutex> l(mutex);
     if (!isVisible())
         return;
-    const float a = alpha * inv_lerp(startTime + totalTime, startTime, (float)globals.renderTime);
-    size = GLText::Put(ss, position, align, SetAlphaAXXX(color, a), textSize, message);
+    const float a = alpha * easeOutExpo(inv_lerp(startTime + totalTime, startTime, (float)globals.renderTime));
+    if (border)
+    {
+        const GLText *txt = GLText::get(font, textSize, message);
+        ShaderState s1 = ss;
+        s1.translate(position);
+        s1.translateZ(4.f);
+        ShaderUColor::instance().DrawColorRect(s1, ALPHA(a*0.75f)|COLOR_BLACK,
+                                               txt->getSize()/2.f + 2.f * kButtonPad);
+    }
+    size = GLText::Put(ss, position, align, font, SetAlphaAXXX(color, a), textSize, message);
 }
 
 bool HandleConfirmKey(const Event *event, int* slot, int selected, bool *sawUp,
@@ -1802,17 +1815,18 @@ bool ButtonHandleEvent(ButtonBase &button, const Event* event, bool* isActivate,
 }
 
 
-void ButtonText::renderText(const ShaderState &ss, float2 pos, float width,
-                GLText::Align align, uint color, float fmin, float fmax,
-                const string& text)
+float2 renderButtonText(const ShaderState &ss, float2 pos, float width,
+                        GLText::Align align, int font, uint color, float *fontSize,
+                        float fmin, float fmax, const string& text)
 {
-    if (fontSize <= 0.f)
-        fontSize = fmax;
-    float tw = GLText::Put(ss, pos, align, color, fontSize, text).x;
-    float ts = clamp(fontSize * ((width - 2.f * kButtonPad.x) / tw), fmin, fmax);
-    if (fabsf(fontSize - ts) >= 1.f)
-        fontSize = ts;
+    if (*fontSize <= 0.f)
+        *fontSize = fmax;
+    float2 tx = GLText::Put(ss, pos, align, font, color, *fontSize, text);
+    float ts = clamp(*fontSize * ((width - 2.f * kButtonPad.x) / tx.x), fmin, fmax);
+    if (fabsf(*fontSize - ts) >= 1.f)
+        *fontSize = ts;
     // FIXME word wrap
+    return tx;
 }
 
 
@@ -1841,6 +1855,8 @@ void Scrollbar::render(DMesh &mesh)
     // mesh.line.PushRect(pos, rad);
     mesh.tri.color32(pressed ? pressedFGColor : hovered ? hoveredFGColor : defaultFGColor, alpha);
     mesh.tri.PushRect(pos, rad);
+
+    mesh.translateZ(-0.5f);
 }
 
 bool Scrollbar::HandleEvent(const Event *event)

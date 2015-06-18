@@ -450,17 +450,14 @@ int OL_SaveImage(const OutlawImage *img, const char* fname)
     return success;
 }
 
-static lstring    g_fontFiles[OL_MAX_FONTS];
+static lstring                             g_fontFiles[OL_MAX_FONTS];
 static std::unordered_map<uint, TTF_Font*> g_fonts;
-static std::mutex g_fontMutex;
+static std::mutex                          g_fontMutex;
 
 TTF_Font* getFont(int index, float size)
 {
     std::lock_guard<std::mutex> l(g_fontMutex);
     if (0 > index || index > OL_MAX_FONTS)
-        return NULL;
-    lstring file = g_fontFiles[index];
-    if (!file)
         return NULL;
 
     const int   isize = round_int(size * g_scaling_factor);
@@ -469,9 +466,13 @@ TTF_Font* getFont(int index, float size)
 
     if (!font)
     {
+        lstring file = g_fontFiles[index];
+        if (!file)
+            return NULL;
+
         font = TTF_OpenFont(file.c_str(), isize);
         if (font) {
-            ReportSDL("Loaded font '%s' at size %d", file.c_str(), isize);
+            ReportSDL("Loaded font %d '%s' at size %d", index, file.c_str(), isize);
         } else {
             ReportSDL("Failed to load font '%s' at size '%d': %s",
                       file.c_str(), isize, TTF_GetError());

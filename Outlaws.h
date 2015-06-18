@@ -114,7 +114,7 @@ int OLG_UploadLog(const char* logdata, int loglen);
 // return 0xRRGGBB indexed color code 
 int OLG_GetQuake3Color(int val);
 
-// return game language (e.g. ru_RU, en_US)
+// return game language (e.g. ru, en)
 const char* OLG_GetLanguage(void);
 
  //////////////////////////////// Game calls into OS layer //////////////////////////////////
@@ -164,7 +164,7 @@ void OL_SetGamepadEnabled(int enabled);
 const char* OL_GetGamepadName(int instance_id);
 
 // get ordered list of preferred languages from OS
-// en_US, kr_KR format
+// en, kr format
 const char** OL_GetOSLanguages(void);
 
 ////////// Graphics

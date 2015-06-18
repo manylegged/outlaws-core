@@ -688,14 +688,27 @@ struct TextBox {
     void Draw(const ShaderState& ss1, float2 point, const string& text) const;
 };
 
+struct TextBoxString {
+    TextBox box;
+    float2 position;
+    string text;
+
+    void Draw(const ShaderState& ss1) const
+    {
+        box.Draw(ss1, position, text);
+    }
+};
+
 struct OverlayMessage : public WidgetBase {
     std::mutex mutex;
     string     message;
     float      startTime = 0.f;
-    float      totalTime = 1.;
+    float      totalTime = 1.f;
     uint       color     = kGUIText;
+    int        font      = kDefaultFont;
     float      textSize  = 14.f;
     GLText::Align align = GLText::MID_CENTERED;
+    bool       border = false;
     
     bool isVisible() const;
     bool setMessage(const string& msg, uint clr=0); // return true if changed
@@ -721,13 +734,21 @@ bool HandleEventSelected(int* selected, ButtonBase &current, int count, int rows
 bool ButtonHandleEvent(ButtonBase &button, const Event* event, bool* isActivate,
                        bool* isPress=NULL, int* selected=NULL);
 
+
+float2 renderButtonText(const ShaderState &ss, float2 pos, float width,
+                        GLText::Align align, int font, uint color, float *fontSize, float fmin, float fmax,
+                        const string& text);
+
 // auto-resizing text
 struct ButtonText {
     float fontSize = -1.f;
     
-    void renderText(const ShaderState &ss, float2 pos, float width,
-                    GLText::Align align, uint color, float fmin, float fmax,
-                    const string& text);
+    float2 renderText(const ShaderState &ss, float2 pos, float width,
+                      GLText::Align align, uint color, float fmin, float fmax,
+                      const string& text)
+    {
+        return renderButtonText(ss, pos, width, align, kDefaultFont, color, &fontSize, fmin, fmax, text);
+    }
 };
 
 // scrolling button container

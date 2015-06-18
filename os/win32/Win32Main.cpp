@@ -609,6 +609,21 @@ void printModulesStack(CONTEXT *ctx)
     std::time_t cstart = std::chrono::system_clock::to_time_t(start);
     ReportWin32("Time is %s", std::ctime(&cstart));
 
+    MEMORYSTATUSEX memInfo;
+    memInfo.dwLength = sizeof(MEMORYSTATUSEX);
+    if (GlobalMemoryStatusEx(&memInfo) != 0)
+    {
+        static const kDiv = 1024 * 1024;
+        ReportWin32("There is  %7d percent of memory in use.\n", statex.dwMemoryLoad);
+        ReportWin32("There are %7I64d total MB of physical memory.\n", statex.ullTotalPhys/kDiv);
+        ReportWin32("There are %7I64d free  MB of physical memory.\n", statex.ullAvailPhys/kDiv);
+        ReportWin32("There are %7I64d total MB of paging file.\n", statex.ullTotalPageFile/kDiv);
+        ReportWin32("There are %7I64d free  MB of paging file.\n", statex.ullAvailPageFile/kDiv);
+        ReportWin32("There are %7I64d total MB of virtual memory.\n", statex.ullTotalVirtual/kDiv);
+        ReportWin32("There are %7I64d free  MB of virtual memory.\n", statex.ullAvailVirtual/kDiv);
+        ReportWin32("There are %7I64d free  MB of extended memory.\n", statex.ullAvailExtendedVirtual/kDiv);
+    }
+
     fflush(NULL);
 
     ReportWin32("Dumping loaded modules");
@@ -674,7 +689,8 @@ void printModulesStack(CONTEXT *ctx)
     {
         if (!x.first || x.first == current_tid)
             continue;
-        ReportWin32("Dumping stack for thread %#x, '%s'", x.first, x.second.c_str());
+        const string name = x.second;
+        ReportWin32("Dumping stack for thread %#x, '%s'", x.first, name.c_str());
         HANDLE hthread = OpenThread(THREAD_GET_CONTEXT|THREAD_SUSPEND_RESUME|THREAD_QUERY_INFORMATION,
                                     FALSE, x.first);
         if (!hthread) {
@@ -820,11 +836,11 @@ string os_get_platform_info()
 
 const char** OL_GetOSLanguages(void)
 {
-    static char locale[LOCALE_NAME_MAX_LENGTH] = "en_US";
+    static char locale[3] = "en";
     static char* ptr[] = { locale, NULL };
     static bool setup = false;
 
-    const char ** ret = (const char**)&ptr[0];
+    const char ** ret = (const char**)ptr;
 
     if (setup)
         return ret;
@@ -840,18 +856,18 @@ const char** OL_GetOSLanguages(void)
     if (!pfnGetUserDefaultLocaleName)
         return ret;
 
-    wchar_t buf[LOCALE_NAME_MAX_LENGTH];
+    wchar_t buf[LOCALE_NAME_MAX_LENGTH] = {};
     if (pfnGetUserDefaultLocaleName(buf, LOCALE_NAME_MAX_LENGTH) == 0)
     {
         ReportWin32Err("GetUserDefaultLocaleName", GetLastError());
         return ret;
     }
 
-    std::string lc = str_replace(ws2s(buf), "-", "_");
-    strncpy(locale, lc.c_str(), lc.size());
+    const std::string lc = ws2s(buf);
+    strncpy(locale, lc.c_str(), 2);
     setup = true;
 
-    ReportWin32("User Locale: %s", locale);
+    ReportWin32("User Locale: %s (%s)", lc.c_str(), locale);
     
     return ret;
 }
