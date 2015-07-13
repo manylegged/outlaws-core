@@ -609,19 +609,26 @@ void printModulesStack(CONTEXT *ctx)
     std::time_t cstart = std::chrono::system_clock::to_time_t(start);
     ReportWin32("Time is %s", std::ctime(&cstart));
 
-    MEMORYSTATUSEX memInfo;
-    memInfo.dwLength = sizeof(MEMORYSTATUSEX);
-    if (GlobalMemoryStatusEx(&memInfo) != 0)
+    MEMORYSTATUSEX statex = {};
+    statex.dwLength = sizeof(MEMORYSTATUSEX);
+    static const double kDiv = 1024 * 1024;
+    if (GlobalMemoryStatusEx(&statex) != 0)
     {
-        static const kDiv = 1024 * 1024;
-        ReportWin32("There is  %7d percent of memory in use.\n", statex.dwMemoryLoad);
-        ReportWin32("There are %7I64d total MB of physical memory.\n", statex.ullTotalPhys/kDiv);
-        ReportWin32("There are %7I64d free  MB of physical memory.\n", statex.ullAvailPhys/kDiv);
-        ReportWin32("There are %7I64d total MB of paging file.\n", statex.ullTotalPageFile/kDiv);
-        ReportWin32("There are %7I64d free  MB of paging file.\n", statex.ullAvailPageFile/kDiv);
-        ReportWin32("There are %7I64d total MB of virtual memory.\n", statex.ullTotalVirtual/kDiv);
-        ReportWin32("There are %7I64d free  MB of virtual memory.\n", statex.ullAvailVirtual/kDiv);
-        ReportWin32("There are %7I64d free  MB of extended memory.\n", statex.ullAvailExtendedVirtual/kDiv);
+        ReportWin32("Memory is %d%% in use.", statex.dwMemoryLoad);
+        ReportWin32("%7.1f/%7.1f MB physical memory free", statex.ullAvailPhys/kDiv, statex.ullTotalPhys/kDiv);
+        ReportWin32("%7.1f/%7.1f MB paging file free", statex.ullAvailPageFile/kDiv, statex.ullTotalPageFile/kDiv);
+        ReportWin32("%7.1f/%7.1f MB virtual memory free", statex.ullAvailVirtual/kDiv, statex.ullTotalVirtual/kDiv);
+        // ReportWin32("%7.1f MB extended memory free", statex.ullAvailExtendedVirtual/kDiv);
+    }
+
+    PPROCESS_MEMORY_COUNTERS pmc;
+    memset(&pmc, 0, sizeof(pmc));
+    pmc.cb = sizeof(pmc);
+    if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc)))
+    {
+        ReportWin32("Page Faults: %d", pmc.PageFaultCount);
+        ReportWin32("Peak Working Set Size: %f MB", pmc.PeakWorkingSetSize / kDiv);
+        ReportWin32("Working Set Size: %f MB", pmc.WorkingSetSize / kDiv);
     }
 
     fflush(NULL);
@@ -877,6 +884,8 @@ int os_get_system_ram()
     return SDL_GetSystemRAM();
 }
 
+static UINT s_wTimerRes;
+
 int os_init()
 {
     // get scaling factor for retina
@@ -899,9 +908,9 @@ int os_init()
 
         if (timeGetDevCaps(&tc, sizeof(TIMECAPS)) == TIMERR_NOERROR)
         {
-            UINT wTimerRes = min(max(tc.wPeriodMin, TARGET_RESOLUTION), tc.wPeriodMax);
-            MMRESULT res = timeBeginPeriod(wTimerRes);
-            ReportWin32("Set timer resolution to %dms: %s", wTimerRes, (res == TIMERR_NOERROR) ? "OK" : "FAILED");
+            s_wTimerRes = min(max(tc.wPeriodMin, TARGET_RESOLUTION), tc.wPeriodMax);
+            MMRESULT res = timeBeginPeriod(s_wTimerRes);
+            ReportWin32("Set timer resolution to %dms: %s", s_wTimerRes, (res == TIMERR_NOERROR) ? "OK" : "FAILED");
         }
         else
         {
@@ -918,6 +927,16 @@ int os_init()
     }
 
     return 1;
+}
+
+void os_cleanup()
+{
+    if (s_wTimerRes)
+    {
+        MMRESULT res = timeEndPeriod(s_wTimerRes);
+        ReportWin32("Reset timer resolution: %s", (res == TIMERR_NOERROR) ? "OK" : "FAILED");
+        s_wTimerRes = 0;
+    }
 }
 
 int main(int argc, char* argv[])

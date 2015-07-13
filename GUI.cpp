@@ -85,7 +85,7 @@ bool ButtonBase::HandleEvent(const Event* event, bool* isActivate, bool* isPress
 
 bool ButtonBase::renderTooltip(const ShaderState &ss, const View& view, uint color, bool force) const
 {
-    if (tooltip.empty() || (!force && !hovered) || alpha < epsilon)
+    if (tooltip.empty() || !visible || (!force && !hovered) || alpha < epsilon)
         return false;
 
     TextBox dat;
@@ -533,8 +533,8 @@ void TextInputBase::render(const ShaderState &s_)
             scrollbar.alpha = alpha;
             scrollbar.first = startChars.y;
             scrollbar.sfirst = scrollbar.first;
-            scrollbar.lines = sizeChars.y;
-            scrollbar.steps = lines.size();
+            scrollbar.visible = sizeChars.y;
+            scrollbar.total = lines.size();
             scrollbar.defaultBGColor = defaultBGColor;
             scrollbar.hoveredFGColor = activeLineColor;
             scrollbar.defaultFGColor = defaultLineColor;
@@ -1838,19 +1838,19 @@ void Scrollbar::render(DMesh &mesh)
     if (size.x == 0.f)
         size.x = kScrollbarWidth;
 
-    if (first + lines > steps) {
-        first = max(0, steps - lines);
+    if (first + visible > total) {
+        first = max(0, total - visible);
         sfirst = first;
     }
 
-    const float2 rad = float2(size.x, max(kScrollbarWidth/2.f, steps ? (min(lines, steps) * size.y / steps) : size.y))
+    const float2 rad = float2(size.x, max(kScrollbarWidth/2.f, total ? (min(visible, total) * size.y / total) : size.y))
                        / 2.f - kButtonPad;
     mesh.line.color32(defaultFGColor, alpha);
     // mesh.line.translateZ(-0.1f);
     mesh.line.PushRect(position, size / 2.f);
     // mesh.line.translateZ(0.1f);
     
-    const float2 pos = steps ? position + justY(size.y/2.f * (1.f - (sfirst + min(sfirst + lines, (float)steps)) / steps)) : position;
+    const float2 pos = total ? position + justY(size.y/2.f * (1.f - (sfirst + min(sfirst + visible, (float)total)) / total)) : position;
     // mesh.line.color32(hovered ? hoveredFGColor : defaultFGColor, alpha);
     // mesh.line.PushRect(pos, rad);
     mesh.tri.color32(pressed ? pressedFGColor : hovered ? hoveredFGColor : defaultFGColor, alpha);
@@ -1865,17 +1865,17 @@ bool Scrollbar::HandleEvent(const Event *event)
         return false;
     if (event->isMouse())
         hovered = intersectPointRectangle(event->pos, position, size/2.f);
-    if (steps == 0) {
+    if (total == 0) {
         first = 0;
-        lines = 0;
+        visible = 0;
         hovered = false;
         pressed = false;
         sfirst = 0.f;
         return false;
     }
-    const int maxfirst = steps - min(lines, steps);
+    const int maxfirst = total - min(visible, total);
     const bool parentHovered = (!parent || parent->hovered || hovered);
-    const int page = min(1, lines-1);
+    const int page = min(1, visible-1);
 
     if (parentHovered)
     {
@@ -1902,7 +1902,7 @@ bool Scrollbar::HandleEvent(const Event *event)
     if (pressed)
     {
         if (event->type == Event::MOUSE_DRAGGED) {
-            sfirst = clamp(sfirst + steps * event->vel.y / size.y, 0.f, (float)maxfirst);
+            sfirst = clamp(sfirst + total * event->vel.y / size.y, 0.f, (float)maxfirst);
             first = floor_int(sfirst);
             return true;
         } else {
@@ -1912,8 +1912,8 @@ bool Scrollbar::HandleEvent(const Event *event)
     }
     if (!(hovered && event->type == Event::MOUSE_DOWN))
         return false;
-    const float2 pos = position + justY(size.y/2.f * (1.f - float(first + last()) / steps));
-    const float2 rad = float2(size.x, steps ? (min(lines, steps) * size.y / steps) : size.y) / 2.f;
+    const float2 pos = position + justY(size.y/2.f * (1.f - float(first + last()) / total));
+    const float2 rad = float2(size.x, total ? (min(visible, total) * size.y / total) : size.y) / 2.f;
     if (intersectPointRectangle(event->pos, pos, rad)) {
         pressed = true;         // start dragging thumb
     } else {
@@ -1927,12 +1927,12 @@ bool Scrollbar::HandleEvent(const Event *event)
 void Scrollbar::makeVisible(int row)
 {
     int fst = first;
-    if (fst + lines < steps-1)
+    if (visible >= total)
         fst = 0;
     else if (row < fst)
         fst = row;
-    else if (row >= fst + lines)
-        fst = row - lines + 1;
+    else if (row >= fst + visible)
+        fst = row - visible + 1;
     
     if (fst != first)
     {
@@ -1954,9 +1954,9 @@ void ButtonWindow::render(const ShaderState &ss)
 
     std::lock_guard<std::mutex> l(mutex);
 
-    scrollbar.steps = (buttons.size() + (dims.x - 1)) / dims.x;
-    scrollbar.lines = dims.y;
-    if (scrollbar.first >= scrollbar.steps)
+    scrollbar.total = (buttons.size() + (dims.x - 1)) / dims.x;
+    scrollbar.visible = dims.y;
+    if (scrollbar.first >= scrollbar.total)
         scrollbar.first = 0;
     
     const int    first = scrollbar.first * dims.x;

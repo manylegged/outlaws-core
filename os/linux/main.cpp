@@ -469,6 +469,11 @@ int os_init()
     return 1;
 }
 
+void os_cleanup()
+{
+    
+}
+
 int main(int argc, const char** argv)
 {
     g_binaryName = argv[0];

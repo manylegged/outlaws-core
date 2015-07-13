@@ -87,6 +87,9 @@ void sdl_os_oncrash(const string &message)
 {
     ReportSDL("%s\n", message.c_str());
     fflush(NULL);
+
+    os_cleanup();
+    
     if (g_logfile)
     {
         ReportSDL("crash handler closing log\n");
@@ -97,7 +100,7 @@ void sdl_os_oncrash(const string &message)
 
     string data;
     bool success = readUploadLog(data);
-    SteamAPI_SetMiniDumpComment(data.size() ? data.c_str() : "Error loading log");
+    // SteamAPI_SetMiniDumpComment(data.size() ? data.c_str() : "Error loading log");
 
     static string errorm;
     if (success)
@@ -1245,6 +1248,8 @@ int sdl_os_main(int argc, const char **argv)
     }
 
     OLG_OnQuit();
+
+    os_cleanup();
 
     if (g_logfile)
     {

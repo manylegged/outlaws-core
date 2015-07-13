@@ -775,9 +775,40 @@ void OL_ScheduleUploadLog(const char* reason)
     // nothing to do
 }
 
+// adapted from http://stackoverflow.com/questions/10301542/getting-process-base-address-in-mac-osx
+#include <mach-o/dyld.h>
+#include <mach-o/getsect.h>
+
+static uint64_t s_dyld_slide = 0;
+
 void dump_loaded_shared_objects()
 {
-    // FIXME implement me
+    const struct segment_command_64* command = getsegbyname("__TEXT");
+    const uint64_t base = command->vmaddr;
+
+    static const char *patterns[] = {
+        "GL", "SDL", "openal", "libm.", "libstd", "libc.", "libvorbis", "libogg", "pthread",
+        "drm", "gallium", "dri", "steam", "libz", "curl", NULL
+    };
+    
+    for (uint32_t i = 0; i < _dyld_image_count(); i++)
+    {
+        const char* path = _dyld_get_image_name(i);
+        for (const char** pat=patterns; *pat; ++pat)
+        {
+            if (i == 0 || strstr(path, *pat))
+            {
+                const uint64_t slide = _dyld_get_image_vmaddr_slide(i);
+                if (i == 0)
+                    s_dyld_slide = slide;
+                const void *addr = (void*)(base + slide);
+                NSString *name = [[NSString stringWithUTF8String:path] lastPathComponent];
+                LogMessage([NSString stringWithFormat:@"%2d. '%@' base address is %p (slide is %#llx)",
+                                     i, name, addr, slide]);
+                break;                
+            }
+        }
+    }
 }
 
 void posix_oncrash(const char* msg)

@@ -176,8 +176,8 @@ struct Button : public ButtonBase
 struct Scrollbar : public WidgetBase {
 
     int         first   = 0;    // first visible item
-    int         lines   = 0;    // number of visible items
-    int         steps   = 0;    // total items
+    int         visible   = 0;    // number of visible items
+    int         total   = 0;    // total items
     bool        pressed = false; // is actively dragging thumb?
     float       sfirst  = 0.f;  // float version of first for scrolling
     WidgetBase *parent  = NULL;
@@ -187,7 +187,7 @@ struct Scrollbar : public WidgetBase {
     uint        hoveredFGColor = kGUIFgMid;
     uint        pressedFGColor = kGUIFgActive;
 
-    int last() const { return min(first + lines, steps); }
+    int last() const { return min(first + visible, total); }
     void render(DMesh &mesh);
     bool HandleEvent(const Event *event);
     void makeVisible(int row);
@@ -803,9 +803,9 @@ struct ButtonSelector : public WidgetBase {
             ptr[i]->index = i;
             buttons.push_back(ptr[i]);
         }
-        scrollbar.lines = dims.y;
-        scrollbar.steps = (count + dims.x-1) / dims.x;
-        scrollbar.active = scrollbar.steps >= count;
+        scrollbar.visible = dims.y;
+        scrollbar.total = (count + dims.x-1) / dims.x;
+        scrollbar.active = scrollbar.total >= count;
     }
 };
 

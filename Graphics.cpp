@@ -524,6 +524,9 @@ bool GLTexture::writeFile(const char *fname) const
 {
     const int2 sz = ceil_int(m_texsize);
     const size_t size = sz.x * sz.y * 4;
+    if (size == 0 || m_texname == 0)
+        return false;
+    
     uint *pix = (uint*) malloc(size);
 
     OutlawImage img = {};
@@ -1089,6 +1092,8 @@ uint View::getCircleVerts(float worldRadius, int mx) const
     return verts;
 }
 
+static DEFINE_CVAR(float, kFOV, M_PI_2f);
+
 ShaderState View::getWorldShaderState(float2 zminmax) const
 {
     static DEFINE_CVAR(float, kUpAngle, M_PI_2f);
@@ -1097,25 +1102,18 @@ ShaderState View::getWorldShaderState(float2 zminmax) const
     const float2 s = 0.5f * sizePoints * float(scale);
     ShaderState ws;
 
-#if 0
-    ws.uTransform = glm::ortho(-s.x, s.x, -s.y, s.y, -10.f, 10.f);
-    ws.rotate(-angle);
-    ws.translate(-position);
-#else
-    const float fovy   = M_PI_2f;
     const float aspect = sizePoints.x / sizePoints.y;
     const float dist   = s.y;
     // const float mznear = min(1.f, dist - 100.f);
-    const float mznear = clamp(dist + zminmax.x - 10.f, 1.f, dist - 10.f);
+    const float mznear = clamp(dist + zminmax.x - 10.f, dist / 10.f, dist / 2.f);
     const float mzfar  = dist + ((zminmax.y == 0.f) ? 2000.f : clamp(zminmax.y, 5.f, 10000.f));
     ASSERT(mznear < mzfar);
 
     const glm::mat4 view = glm::lookAt(float3(position, dist),
                                        float3(position, 0.f),
                                        float3(rotate(rot, kUpAngle), 0));
-    const glm::mat4 proj = glm::perspective(fovy, aspect, mznear, mzfar);
+    const glm::mat4 proj = glm::perspective(kFOV, aspect, mznear, mzfar);
     ws.uTransform = proj * view;
-#endif
 
     ws.translateZ(z);
 
@@ -1128,13 +1126,8 @@ ShaderState View::getScreenShaderState() const
     static DEFINE_CVAR(float, kScreenFrustumDepth, 100.f);
     static DEFINE_CVAR(float, kMouseScreenSkew, -0.005f);
 
-#if 0
-    cpBB screenBB = getScreenPointBB();
-    ss.uTransform = glm::ortho((float)screenBB.l, (float)screenBB.r, (float)screenBB.b, (float)screenBB.t, -10.f, 10.f);
-#else
     const float2 offs = kMouseScreenSkew * (KeyState::instance().cursorPosScreen - 0.5f * globals.windowSizePoints);
     const float2 pos   = 0.5f * sizePoints;
-    const float fovy   = M_PI_2f;
     const float aspect = sizePoints.x / sizePoints.y;
     const float dist   = pos.y;
     const float mznear  = max(dist - kScreenFrustumDepth, 1.f);
@@ -1142,9 +1135,8 @@ ShaderState View::getScreenShaderState() const
     const glm::mat4 view = glm::lookAt(float3(pos + offs, dist),
                                        float3(pos, 0.f),
                                        float3(0, 1, 0));
-    const glm::mat4 proj = glm::perspective(fovy, aspect, mznear, dist + kScreenFrustumDepth);
+    const glm::mat4 proj = glm::perspective(M_PI_2f, aspect, mznear, dist + kScreenFrustumDepth);
     ss.uTransform = proj * view;
-#endif
 
     //ss.translate(float3(offset.x, offset.y, toScreenSize(offset.z)));
     //ss.translate(offset);

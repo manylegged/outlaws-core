@@ -36,5 +36,6 @@ int os_get_system_ram();
 void os_stacktrace();
 
 int os_init();
+void os_cleanup();
 
 #endif

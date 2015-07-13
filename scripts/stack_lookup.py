@@ -17,7 +17,7 @@ import sys, re, os
 import gzip
 import glob
 import math
-import datetime
+from datetime import datetime, date, timedelta
 from copy import copy
 import bisect
 import cProfile
@@ -56,6 +56,13 @@ ROOT = "./"
 TRIAGE_STACK_SIZE = 3
 MAX_STACK_DUMP = 30
 
+def parse_version(ver):
+    try:
+        return datetime.strptime(ver, "%Y_%m_%d")
+    except:
+        return None
+
+    
 class map_entry:
     def __init__(self, sym, base):
         self.sym = sym
@@ -219,21 +226,38 @@ def get_symbol_type_handle(modname, version):
         basename = os.path.splitext(modname)[0]
         platform = "win32" if modname.endswith(".exe") else "linux"
         dirns = REL_SYM_PATH.get(basename, "")
-        for dirn in dirns:
-            for typ in ("line", "elf"):
-                symbol_path = OUTLAWS_WIN32 if platform == "win32" else [platform]
-                # print symbol_path
-                paths = glob_files(os.path.join(ROOT, p, dirn, version, "%s.%s.gz" % (basename, typ)) for p in symbol_path)
-                if len(paths):
-                    # print "using", paths[0]
-                    return typ, gzip.open(paths[0])
-        if sys.platform.startswith("linux"):
+        symbol_path = OUTLAWS_WIN32 if platform == "win32" else [platform]
+        version_roots = [os.path.join(ROOT, p, dirn, version)
+                         for p in symbol_path
+                         for dirn in dirns]
+        typ = "line" if platform == "win32" else "elf"
+        symname = "%s.%s.gz" % (basename, typ)
+        paths = glob_files(os.path.join(b, symname) for b in version_roots)
+        if len(paths):
+            # print "using", paths[0]
+            return typ, gzip.open(paths[0])
+        if platform == "linux" and sys.platform.startswith("linux"):
             return get_so_symbols(os.path.join(ROOT, "linux", modname), version)
+        # try earlier version (Only a few days tolerance)
+        version_list = glob_files(os.path.join(os.path.dirname(x), "*_*_*/") for x in version_roots)
+        vdate = parse_version(version)
+        mn = timedelta(days=2)
+        mnpath = None
+        mnver = None
+        for fil in version_list:
+            ver = os.path.basename(fil[:-1])
+            dat = parse_version(ver)
+            if (dat and vdate - dat < mn):
+                mn = vdate - dat
+                mnpath = fil
+                mnver = ver
+        if mnpath:
+            print "WARNING: using symbols from %s for %s" % (mnver, version)
+            return typ, gzip.open(os.path.join(mnpath, symname))
     return None, []
 
 parsed = {}
 def parse_symbol_map(modname, version):
-
     key = (modname, version)
     if key in parsed:
         return parsed[key]
@@ -352,6 +376,7 @@ def parse_symbol_map(modname, version):
         return entries
 
     assert len(entries) > 0, "%s, %s, %s" % (typ, handle, entries)
+    handle.close()
     entries.sort(key=lambda x: x.base)
     return entries
 
@@ -371,6 +396,7 @@ def lookup_address(mmap, addr):
             break
         # elif addr >= entr.base:
             # print hex(addr), entr.name, hex(entr.base), hex(entr.base + entr.size)
+    # print module
     if (module is None):
         return (None, -1, None)
 
@@ -594,7 +620,7 @@ def format_address(addr, func, lino, fil):
 class extract_opts:
     def __init__(self):
         self.printall = False
-        self.versions = []
+        self.version = datetime.min;
 
             
 def extract_callstack(logf, opts, triage=None, handlers=None):
@@ -630,18 +656,20 @@ def extract_callstack(logf, opts, triage=None, handlers=None):
     # header, version
     for line in data:
         m = version_re.match(line)
-        if m:
-            platform = m.group(1)
-            build = m.group(2) + m.group(3)
-            date = datetime.datetime.strptime(m.group(4), "%b %d %Y")
-            version = datetime.date.strftime(date, "%Y_%m_%d")
-            # print "version is", version
-            if (opts.versions and version not in opts.versions):
-                return
-            if triage is None:
-                print line,
-                print data.next(), # platform info
-            break
+        if not m:
+            continue
+        platform = m.group(1)
+        build = m.group(2) + m.group(3)
+        dat = datetime.strptime(m.group(4), "%b %d %Y")
+        version = dat.strftime("%Y_%m_%d")
+        if dat < opts.version:
+            if data != sys.stdin:
+                data.close()
+            return
+        if triage is None:
+            print line,
+            print data.next(), # platform info
+        break
 
     # analytic log handlers
     for line in data:
@@ -657,7 +685,8 @@ def extract_callstack(logf, opts, triage=None, handlers=None):
         if ("Unhandled Top Level Exception" in line or \
             "Caught SIG" in line or \
             "Dumping stack for thread" in line or\
-            "Terminate Handler" in line):
+            "Terminate Handler" in line or\
+            "Time is " in line):
             break
 
     if triage is None:
@@ -672,6 +701,7 @@ def extract_callstack(logf, opts, triage=None, handlers=None):
     skipped = 0
     for line in data:
         line = line.replace("\r", "")
+        # print "LINE=", line
         m = basere.search(line)
         if m:
             mod = module_entry()
@@ -754,30 +784,73 @@ def extract_callstack(logf, opts, triage=None, handlers=None):
             if len(key) > 100:
                 key = key.replace(" <- ", "\n   <- ")
         triage.setdefault(ver, dict()).setdefault(key, []).append(logf)
+    if data != sys.stdin:
+        data.close()
 
 
-if __name__ == '__main__':
+def do_triage(files, ops):
+    triage = {}
+    handlers = [AssertionHandler()]
+    ops1 = copy(ops)
+    ops1.printall = False
+    for fil in files:
+        fil = os.path.normpath(fil)
+        extract_callstack(fil, ops1, triage, handlers)
+    tfiles = []
+    for version, data in sdict(triage, lambda x: x[0]):
+        total = sum(len(x) for x in data.itervalues())
+        print "============= %s (%d total) ================" % (version, total)
+        for stack, files in sdict(data, lambda x: len(x[1])):
+            print "%d(%.1f%%). %s" % (len(files), 100.0 * len(files) / total, stack)
+            for fl in sorted(files):
+                print "     ", fl.replace(os.path.expanduser("~"), "~")
+                tfiles.append(fl)
+    for h in handlers:
+        h.onFinish()
+    # exit(0)
 
-    ROOT = os.path.abspath(os.path.join(os.path.dirname(sys.argv[0]), ".."))
-    ROOT = ROOT.replace("/cygdrive/c/", "c:/")
+    print ""
+    print ""
+    for fl in tfiles:
+        print "#" * (len(fl) + 4)
+        print "#", fl
+        print "#" * (len(fl) + 4)
+        extract_callstack(fl, ops)
+        print ""
 
+
+def main():
     ops = extract_opts()
-    
-    opts, args = getopt.getopt(sys.argv[1:], "av:")
+
+    triage = False
+    opts, args = getopt.getopt(sys.argv[1:], "av:t")
     for (opt, val) in opts:
         if opt == "-a":
             ops.printall = True
         if opt == "-v":
-            ops.versions.append(val)
+            if len(val) <= 5:
+                val = "2015_" + val
+            ops.version = parse_version(val)
+        if opt == "-t":
+            triage = True
     
     print "-*- mode: compilation -*-"
     print "ROOT=%s" % ROOT
-    print "versions=%s" % str(ops.versions)
-    if len(args) == 0:
-        logs = glob.glob(os.path.join(os.path.expanduser("~/Downloads"), "Reassembly_*.txt"))
-        latest = os.path.join(ROOT, "data", "log_latest.txt")
-        if os.path.exists(latest):
-            logs.append(latest)
+    print "version=%s" % str(ops.version)
+    if triage:
+        base = os.path.join(ROOT, "server/server_sync/crash")
+        files = []
+        all_files = safe_listdir(base)
+        for fil in all_files:
+            date = datetime.strptime(fil.split("_")[0], "%Y%m%d")
+            if date >= ops.version:
+                files.append(os.path.join(base, fil))
+        print "Triaging over %d/%d crashlogs" % (len(files), len(all_files))
+        do_triage(files, ops)
+    elif len(args) == 0:
+        logs = glob_files([os.path.join(os.path.expanduser("~/Downloads"), "Reassembly_*.txt"),
+                           os.path.join(os.path.expanduser("~/Downloads"), "log_latest*.txt"),
+                           os.path.join(ROOT, "data", "log_latest.txt")])
         if len(logs):
             logs.sort(key=lambda x: os.path.getmtime(x))
             last = logs[-1]
@@ -802,35 +875,10 @@ if __name__ == '__main__':
             print "processing %s" % files[0]
         else:
             print "processing %d logs" % (len(files))
-        triage = {}
-        handlers = [AssertionHandler()]
-        ops1 = copy(ops)
-        ops1.printall = False
-        for fil in files:
-            fil = os.path.normpath(fil)
-            extract_callstack(fil, ops1, triage, handlers)
-        tfiles = []
-        for version, data in sdict(triage, lambda x: x[0]):
-            total = sum(len(x) for x in data.itervalues())
-            print "============= %s (%d total) ================" % (version, total)
-            for stack, files in sdict(data, lambda x: len(x[1])):
-                print "%d(%.1f%%). %s" % (len(files), 100.0 * len(files) / total, stack)
-                for fl in sorted(files):
-                    print "     ", fl.replace(os.path.expanduser("~"), "~")
-                    tfiles.append(fl)
-        for h in handlers:
-            h.onFinish()
-        # exit(0)
-
-        print ""
-        print ""
-        for fl in tfiles:
-            print "#" * (len(fl) + 4)
-            print "#", fl
-            print "#" * (len(fl) + 4)
-            extract_callstack(fl, ops)
-            print ""
+        do_triage(files, ops)
 
                 
-    
-    
+if __name__ == '__main__':
+    ROOT = os.path.abspath(os.path.join(os.path.dirname(sys.argv[0]), ".."))
+    ROOT = ROOT.replace("/cygdrive/c/", "c:/")
+    main()

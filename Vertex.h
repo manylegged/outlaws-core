@@ -55,7 +55,7 @@ struct VertexPosColor {
 struct VertexPosColorLuma {
     float3 pos;
     uint   color;
-    float  luma{1.f};          // scales color
+    float  luma = 1.f;          // scales color
 
     VertexPosColorLuma() {}
     VertexPosColorLuma(float2 p, uint c, float l=1.f) : pos(float3(p.x, p.y, 0.f)), color(c), luma(l) {}
