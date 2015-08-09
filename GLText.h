@@ -37,19 +37,7 @@ enum { kDefaultFont=0,
        kMonoFont,
        kTitleFont };
 
-struct FontStats {
-    int    font     = kDefaultFont;
-    float  fontSize = -1.f;
-    float  advancements[128];
-    float2 charMaxSize;
-    float2 charAvgSize;
-
-    FontStats() {}
-    FontStats(int ft, float sz);
-    static const FontStats &get(int font, float size);
-};
-
-class GLText {
+class GLText final {
 
     GLTexture      texture;
     string         texChars;
@@ -76,7 +64,8 @@ public:
     void render(const ShaderState* s, float2 pos=float2(0)) const;
 
     // factory
-    static const GLText* get(int font, float size, const string& str);
+    static const GLText* getUnscaled(int font, float size, const string& str);
+    static const GLText* get(int font, float size, const string& str) { return getUnscaled(font, getScaledSize(size), str); }
 
     static float getScaledSize(float sizeUnscaled);
 
@@ -126,5 +115,20 @@ public:
 // RELNORM of (0, 0) sets pos in bottom left corner, (1, 1) sets pos in upper right corner
 float2 DrawOutlinedText(const ShaderState &ss, float2 pos, float2 relnorm, uint color,
                         float alpha, float tsize, const string& str);
+
+
+struct FontStats {
+    int    font     = kDefaultFont;
+    float  fontSize = -1.f;
+    float  advancements[128];
+    float2 charMaxSize;
+    float2 charAvgSize;
+
+    FontStats() {}
+    FontStats(int ft, float sz);
+    static const FontStats &getUnscaled(int font, float size);
+    static const FontStats &get(int font, float size) { return getUnscaled(font, GLText::getScaledSize(size)); }
+};
+
 
 #endif //GLTEXT_H

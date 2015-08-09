@@ -128,7 +128,7 @@ static bool ignoreShaderLog(const char* buf)
             str_contains(buf, "shader(s) linked."));
 }
 
-static void checkProgramInfoLog(GLuint prog, const char* name)
+static void checkProgramInfoLog(GLuint prog, const char* name, LogRecorder *logger)
 {
     const uint bufsize = 2048;
     char buf[bufsize];
@@ -136,7 +136,8 @@ static void checkProgramInfoLog(GLuint prog, const char* name)
     glGetProgramInfoLog(prog, bufsize, &length, buf);
     if (length && !ignoreShaderLog(buf))
     {
-        ASSERT(length < bufsize);
+        if (logger)
+            logger->Report(buf);
         OLG_OnAssertFailed(name, -1, "", "", "GL Program Info log for '%s': %s", name, buf);
     }
 }
@@ -151,7 +152,7 @@ void glReportValidateShaderError1(const char *file, uint line, const char *funct
     glValidateProgram(program);
     GLint status = 0;
     glGetProgramiv(program, GL_VALIDATE_STATUS, &status);
-    checkProgramInfoLog(program, "validate");
+    checkProgramInfoLog(program, "validate", NULL);
     glReportError1(file, line, function);
     ASSERT_(status == GL_TRUE, file, line, function, "%s", name);
 }
@@ -354,6 +355,8 @@ void GLRenderTexture::RebindFramebuffer()
     BindTexture(0);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE_SGIS);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE_SGIS);
     glBindTexture(GL_TEXTURE_2D, 0);
 
     glBindFramebuffer(GL_FRAMEBUFFER, m_fbname);
@@ -564,7 +567,16 @@ ShaderProgramBase::~ShaderProgramBase()
     reset(); 
 }
 
-GLuint ShaderProgramBase::createShader(const char* txt, GLenum type) const
+static const char* getShaderName(GLenum type)
+{
+    switch (type) {
+    case GL_VERTEX_SHADER: return "Vertex Shader";
+    case GL_FRAGMENT_SHADER: return "Fragment Shader";
+    default: return "";
+    }        
+}
+
+GLuint ShaderProgramBase::createShader(const char* txt, GLenum type, LogRecorder *logger) const
 {
     GLuint idx = glCreateShader(type);
     glShaderSource(idx, 1, &txt, NULL);
@@ -575,10 +587,16 @@ GLuint ShaderProgramBase::createShader(const char* txt, GLenum type) const
         char buf[bufsize];
         GLsizei length = 0;
         glGetShaderInfoLog(idx, bufsize, &length, buf);
-        if (length && !ignoreShaderLog(buf)) {
+        if (length && !ignoreShaderLog(buf))
+        {
             ASSERT(length < bufsize);
-            OLG_OnAssertFailed(m_name.c_str(), -1, "", "glCompileShader", "GL Shader Info Log:\n%s\n%s",
-                               str_add_line_numbers(txt).c_str(), buf);
+            if (logger)
+                logger->ReportLines(str_format("GL %s Info Log for %s:\n%s\n%s",
+                                               getShaderName(type), m_name.c_str(),
+                                               str_add_line_numbers(txt).c_str(), buf));
+            OLG_OnAssertFailed(m_name.c_str(), -1, "", "glCompileShader",
+                               "GL %s Info Log for %s:\n%s\n%s", m_name.c_str(),
+                               str_add_line_numbers(txt).c_str(), getShaderName(type), buf);
         }
     }
     
@@ -622,7 +640,7 @@ void ShaderProgramBase::reset()
     }
 }
 
-bool ShaderProgramBase::LoadProgram(const char* name, const char* shared, const char *vertf, const char *fragf)
+bool ShaderProgramBase::LoadProgram(const char* name, const char* shared, const char *vertf, const char *fragf, LogRecorder *logger)
 {
     ASSERT_MAIN_THREAD();
 
@@ -643,13 +661,16 @@ bool ShaderProgramBase::LoadProgram(const char* name, const char* shared, const 
     header += "\n";
     static const char* vertheader =
         "attribute vec4 Position;\n"
-        "uniform mat4 Transform;\n";
+        "uniform mat4 Transform;\n"
+        "uniform float Time;\n";
+
+    static const char* fragheader = "uniform float Time;\n";
     
     string vertful = header + vertheader + vertf;
-    string fragful = header + fragf;
+    string fragful = header + fragheader + fragf;
 
-    GLuint vert = createShader(vertful.c_str(), GL_VERTEX_SHADER);
-    GLuint frag = createShader(fragful.c_str(), GL_FRAGMENT_SHADER);
+    GLuint vert = createShader(vertful.c_str(), GL_VERTEX_SHADER, logger);
+    GLuint frag = createShader(fragful.c_str(), GL_FRAGMENT_SHADER, logger);
 
     if (!vert || !frag)
         return false;
@@ -677,7 +698,7 @@ bool ShaderProgramBase::LoadProgram(const char* name, const char* shared, const 
     glDeleteShader(frag);
     glReportError();
 
-    checkProgramInfoLog(m_programHandle, name);
+    checkProgramInfoLog(m_programHandle, name, logger);
     
     GLint linkSuccess = 0;
     glGetProgramiv(m_programHandle, GL_LINK_STATUS, &linkSuccess);
@@ -688,20 +709,19 @@ bool ShaderProgramBase::LoadProgram(const char* name, const char* shared, const 
         return false;
     }
     
-    m_positionSlot = glGetAttribLocation(m_programHandle, "Position");
-    glReportError();
+    a_position = glGetAttribLocation(m_programHandle, "Position");
+    u_transform = glGetUniformLocation(m_programHandle, "Transform");
+    u_time = glGetUniformLocation(m_programHandle, "Time");
     
-    m_transformUniform = glGetUniformLocation(m_programHandle, "Transform");
-    glReportError();
     return true;
 }
 
 void ShaderProgramBase::UseProgramBase(const ShaderState& ss, uint size, const float3* pos) const
 {
     UseProgramBase(ss);
-    if (m_positionSlot >= 0) {
-        glEnableVertexAttribArray(m_positionSlot);
-        vap1(m_positionSlot, size, pos);
+    if (a_position >= 0) {
+        glEnableVertexAttribArray(a_position);
+        vap1(a_position, size, pos);
         glReportError();
     }
 }
@@ -709,9 +729,9 @@ void ShaderProgramBase::UseProgramBase(const ShaderState& ss, uint size, const f
 void ShaderProgramBase::UseProgramBase(const ShaderState& ss, uint size, const float2* pos) const
 {
     UseProgramBase(ss);
-    if (m_positionSlot >= 0) {
-        glEnableVertexAttribArray(m_positionSlot);
-        vap1(m_positionSlot, size, pos);
+    if (a_position >= 0) {
+        glEnableVertexAttribArray(a_position);
+        vap1(a_position, size, pos);
         glReportError();
     }
 }
@@ -722,7 +742,9 @@ void ShaderProgramBase::UseProgramBase(const ShaderState& ss) const
     ASSERTF(isLoaded(), "%s", m_name.c_str());
     glReportError();
     glUseProgram(m_programHandle);
-    glUniformMatrix4fv(m_transformUniform, 1, GL_FALSE, &ss.uTransform[0][0]);
+    glUniformMatrix4fv(u_transform, 1, GL_FALSE, &ss.uTransform[0][0]);
+    if (u_time >= 0)
+        glUniform1f(u_time, globals.renderTime);
     glReportError();
 }
 
@@ -730,8 +752,8 @@ void ShaderProgramBase::UnuseProgram() const
 {
     ASSERT_MAIN_THREAD();
     glReportValidateShaderError(m_programHandle, m_name.c_str());
-    if (m_positionSlot >= 0) {
-        glDisableVertexAttribArray(m_positionSlot);
+    if (a_position >= 0) {
+        glDisableVertexAttribArray(a_position);
     }
     foreach (GLuint slot, m_enabledAttribs)
         glDisableVertexAttribArray(slot);
@@ -899,22 +921,22 @@ void PushRect(TriMesh<VertexPosColor>* triP, LineMesh<VertexPosColor>* lineP, fl
     }
 }
 
-void fadeFullScreen(const ShaderState &s_, const View& view, uint color, float alpha)
+void fadeFullScreen(const View& view, uint color)
 {
-    if (alpha < epsilon)
+    if (view.alpha < epsilon)
         return;
     glDepthMask(GL_FALSE);
     glDisable(GL_DEPTH_TEST);
-    ShaderState ss = s_;
-    ss.color(color, alpha);
+    ShaderState ss = view.getScreenShaderState();
+    ss.color(color, view.alpha);
     ShaderUColor::instance().DrawRectCorners(ss, -0.1f * view.sizePoints, 1.1f * view.sizePoints);
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_TRUE);
 }
 
-void sexyFillScreen(const ShaderState &ss, const View& view, uint color0, uint color1, float alpha)
+void sexyFillScreen(const ShaderState &ss, const View& view, uint color0, uint color1)
 {
-    if (alpha < epsilon || (color0 == 0 && color1 == 0))
+    if (view.alpha < epsilon || (color0 == 0 && color1 == 0))
         return;
 
     glDepthMask(GL_FALSE);
@@ -922,7 +944,7 @@ void sexyFillScreen(const ShaderState &ss, const View& view, uint color0, uint c
     const float2 ws = 1.2f * view.sizePoints;
     const float2 ps = -0.1f * view.sizePoints;
     const float t = globals.renderTime / 20.f;
-    const uint a = ALPHAF(alpha);
+    const uint a = ALPHAF(view.alpha);
 
     // 1 2
     // 0 3
@@ -1124,12 +1146,13 @@ ShaderState View::getScreenShaderState() const
 {
     ShaderState ss;
     static DEFINE_CVAR(float, kScreenFrustumDepth, 100.f);
-    static DEFINE_CVAR(float, kMouseScreenSkew, -0.005f);
+    static DEFINE_CVAR(float, kMouseScreenSkew, /*-0.005f*/ 0.f);
+    static DEFINE_CVAR(float, kScreenZoom, 0.025f);
 
     const float2 offs = kMouseScreenSkew * (KeyState::instance().cursorPosScreen - 0.5f * globals.windowSizePoints);
     const float2 pos   = 0.5f * sizePoints;
     const float aspect = sizePoints.x / sizePoints.y;
-    const float dist   = pos.y;
+    const float dist   = pos.y + kScreenZoom * pos.y * (1.f - alpha);
     const float mznear  = max(dist - kScreenFrustumDepth, 1.f);
 
     const glm::mat4 view = glm::lookAt(float3(pos + offs, dist),

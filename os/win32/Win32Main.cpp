@@ -396,7 +396,7 @@ bool os_symlink_f(const char* source, const char* dest)
     return status ? true : false;
 }
 
-int OL_SaveFile(const char *name, const char* data, int size)
+int OL_SaveFile(const char *name, const char* data, size_t size)
 {
     const std::wstring fname = pathForFile(name, "w");
     const std::wstring wfnameb = fname + L".b";
@@ -621,14 +621,14 @@ void printModulesStack(CONTEXT *ctx)
         // ReportWin32("%7.1f MB extended memory free", statex.ullAvailExtendedVirtual/kDiv);
     }
 
-    PPROCESS_MEMORY_COUNTERS pmc;
+    PROCESS_MEMORY_COUNTERS pmc;
     memset(&pmc, 0, sizeof(pmc));
     pmc.cb = sizeof(pmc);
     if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc)))
     {
         ReportWin32("Page Faults: %d", pmc.PageFaultCount);
-        ReportWin32("Peak Working Set Size: %f MB", pmc.PeakWorkingSetSize / kDiv);
-        ReportWin32("Working Set Size: %f MB", pmc.WorkingSetSize / kDiv);
+        ReportWin32("Peak Working Set Size: %.1f MB", pmc.PeakWorkingSetSize / kDiv);
+        ReportWin32("Working Set Size: %.1f MB", pmc.WorkingSetSize / kDiv);
     }
 
     fflush(NULL);

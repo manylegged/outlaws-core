@@ -233,7 +233,7 @@ void OL_OnTerminate(const char* message);
 const char *OL_LoadFile(const char *fname);
 
 // write text file to disk, atomically. Creates directories as needed.
-int OL_SaveFile(const char* fname, const char* data, int size);
+int OL_SaveFile(const char* fname, const char* data, size_t size);
 
 int OL_CopyFile(const char* source, const char *dest);
 
@@ -251,6 +251,12 @@ int OL_RemoveFileOrDirectory(const char* dirname);
 
 // return true if path is a file or directory
 int OL_FileDirectoryPathExists(const char* fname);
+
+#if __APPLE__
+const int OL_IsSandboxed(void);
+const char* OL_SandboxSaveFile(const char* filename, const char* ext);
+const char* OL_SandboxOpenFile(void); /* always .lua or .lua.gz! */
+#endif
 
 #ifdef __cplusplus
 }

@@ -359,13 +359,18 @@ public:
 
 // camera/view data
 struct View {
-    float2 sizePixels;
+    float2 sizePixels;          // screen size
     float2 sizePoints;
     float2 position;            // in world coordinates
     float2 velocity;            // change in position
     float  scale = 1.f;               // larger values are more zoomed out
     float  z = 0.f;                   // depth of camera (related to scale)
     float2 rot = float2(1.f, 0.f);    // rotation is applied after position
+
+    float2 center;              // gui window center
+    float2 size;                // gui window size
+    float  alpha = 1.f;
+    float  introAnim = 1.f;
 
     View();
 
@@ -474,9 +479,10 @@ struct View {
 class ShaderProgramBase {
     
 private:    
-    GLuint m_programHandle    = 0;
-    GLint  m_transformUniform = -1;
-    GLint  m_positionSlot     = -1;
+    GLuint m_programHandle = 0;
+    GLint  u_transform     = -1;
+    GLint  u_time          = -1;
+    GLint  a_position      = -1;
     string m_name;
     
     mutable vector<GLuint> m_enabledAttribs;
@@ -500,9 +506,9 @@ protected:
     
     GLuint getProgram() const { return m_programHandle; }
     
-    GLuint createShader(const char* txt, GLenum type) const;
+    GLuint createShader(const char* txt, GLenum type, LogRecorder *logger) const;
     
-    bool LoadProgram(const char* name, const char* shared, const char *vert, const char *frag);
+    bool LoadProgram(const char* name, const char* shared, const char *vert, const char *frag, LogRecorder *logger=NULL);
 
     // load based on file
     bool LoadProgram(const char* name);
@@ -1583,7 +1589,7 @@ struct MeshPair {
     void start()
     {
         ASSERT(tri.empty() && line.empty());
-        line.translateZ(0.5f);
+        line.translateZ(0.1f);
     }
 
     void finish()
@@ -1651,8 +1657,8 @@ void DrawButton(const ShaderState *data, float2 pos, float2 r, uint bgColor, uin
 void PushRect(TriMesh<VertexPosColor>* triP, LineMesh<VertexPosColor>* lineP, float2 pos, float2 r, uint bgColor, uint fgColor, float alpha);
 void DrawFilledRect(const ShaderState &data, float2 pos, float2 r, uint bgColor, uint fgColor, float alpha=1);
 
-void fadeFullScreen(const ShaderState &ss, const View& view, uint color, float alpha);
-void sexyFillScreen(const ShaderState &ss, const View& view, uint color, uint color1, float alpha);
+void fadeFullScreen(const View& view, uint color);
+void sexyFillScreen(const ShaderState &ss, const View& view, uint color, uint color1);
 
 void PushUnlockDial(TriMesh<VertexPosColor> &mesh, float2 pos, float rad, float progress, uint color, float alpha);
 

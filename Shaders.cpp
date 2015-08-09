@@ -142,22 +142,7 @@ void ShaderTonemapDither::UseProgram(const ShaderState &ss, const VertexPosTex *
 
 void ShaderColorLuma::LoadTheProgram()
 {
-    LoadProgram("ShaderColorLuma",
-                //"#extension GL_EXT_gpu_shader4 : require\n"
-        //"flat varying vec4 DestinationColor;\n"
-        "varying vec4 DestinationColor;\n"
-        ,
-        "attribute vec4 SourceColor;\n"
-        "attribute float Luma;\n"
-        "void main(void) {\n"
-        "    DestinationColor = Luma * SourceColor;\n"
-        "    gl_Position = Transform * Position;\n"
-        "}\n"
-        ,
-        "void main(void) {\n"
-        "    gl_FragColor = DestinationColor;\n"
-        "}\n"
-        );
+    LoadProgram("ShaderColorLuma");
     GET_ATTR_LOC(SourceColor);
     GET_ATTR_LOC(Luma);
 }

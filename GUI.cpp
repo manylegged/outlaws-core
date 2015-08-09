@@ -117,21 +117,23 @@ void ButtonBase::render(const ShaderState &ss, bool selected)
     if (!visible)
         return;
 
-    DMesh::Handle h(theDMesh());
-    renderButton(theDMesh(), selected);
-    h.Draw(ss);
+    {
+        DMesh::Handle h(theDMesh());
+        renderButton(h.mp, selected);
+        h.Draw(ss);
+    }
     
     renderContents(ss);
 }
 
 float2 Button::getTextSize() const
 {
-    const GLText* tx = GLText::get(textFont, GLText::getScaledSize(textSize), text);
+    const GLText* tx = GLText::get(textFont, textSize, text);
     float2 sz = tx->getSize() + padding;
 
     if (subtext.size())
     {
-        const GLText* stx = GLText::get(textFont, GLText::getScaledSize(subtextSize), text);
+        const GLText* stx = GLText::get(textFont, subtextSize, text);
         sz.y += stx->getSize().y;
     }
     return sz;
@@ -182,32 +184,27 @@ void Button::renderContents(const ShaderState &ss)
     }
 }
 
-void TextInputBase::setText(const char* text, bool setSize)
+bool URLButton::HandleEvent(const Event* event, bool *isActivate, bool *isPress)
+{
+    bool activate = false;
+    if (!Button::HandleEvent(event, &activate))
+        return false;
+    if (activate) {
+        OL_OpenWebBrowser(url.c_str());
+        if (isActivate)
+            *isActivate = activate;
+    }
+    return true;
+}
+
+void TextInputBase::setText(const char* text)
 {
     std::lock_guard<std::recursive_mutex> l(mutex);
-
     lines.clear();
-    lines.push_back(string());
-    string* line = &lines.back();
-    uint longestLine = 0;
     if (text)
-    {
-        for (const char* ptr = text; *ptr != '\0'; ptr++) {
-            if (*ptr == '\n') {
-                lines.push_back(string());
-                line = &lines.back();
-            }
-            else {
-                line->push_back(*ptr);
-                longestLine = max(longestLine, (uint)line->size());
-            }
-        }
-    }
-    cursor = int2(lines[lines.size()-1].size(), lines.size()-1);
-
-    if (setSize)
-    {
-        sizeChars = int2(longestLine + 1, lines.size());
+        pushText(text);
+    if (lines.size()) {
+        cursor = int2(lines.back().size(), lines.size()-1);
     }
 }
 
@@ -383,7 +380,7 @@ bool TextInputBase::HandleEvent(const Event* event, bool *textChanged)
             break;
         case '\r':
         {
-            if (fixedSize && lines.size() >= sizeChars.y)
+            if (fixedHeight && lines.size() >= sizeChars.y)
                 return false;
             string s = utf8_substr(lines[cursor.y], cursor.x);
             lines[cursor.y] = utf8_erase(lines[cursor.y], cursor.x);
@@ -447,9 +444,11 @@ void TextInputBase::popText(int chars)
     }
 }
 
-void TextInputBase::pushText(const char *txt, int linesback)
+void TextInputBase::pushText(string txt, int linesback)
 {
-    vector<string> nlines = str_split('\n', str_word_wrap(txt, sizeChars.x));
+    if (wrapText)
+        txt = str_word_wrap(txt, sizeChars.x);
+    vector<string> nlines = str_split('\n', txt);
     
     std::lock_guard<std::recursive_mutex> l(mutex);
 
@@ -482,7 +481,7 @@ void TextInputBase::insertText(const char *txt)
 
 float2 TextInputBase::getCharSize() const
 {
-    float2 size = FontStats::get(kMonoFont, GLText::getScaledSize(textSize)).charMaxSize;
+    float2 size = FontStats::get(kMonoFont, textSize).charMaxSize;
     return size;
 }
 
@@ -498,20 +497,26 @@ void TextInputBase::render(const ShaderState &s_)
     const int2 start     = startChars;
     const int  drawLines = min((int)lines.size() - start.y, sizeChars.y);
 
-    float2 longestPointSize(0);
-    int    longestChars     = 0;
-    for (int i=start.y; i<(start.y + drawLines); i++)
+    if (!fixedWidth)
     {
-        const GLText* tx = GLText::get(kMonoFont, GLText::getScaledSize(textSize), lines[i].c_str());
-        if (tx->getSize().x > longestPointSize.x) {
-            longestPointSize = tx->getSize();
-            longestChars     = lines[i].size();
+        float longestPointWidth = 0.f;
+        int   longestChars      = 0;
+        for (int i=start.y; i<(start.y + drawLines); i++)
+        {
+            const GLText* tx = GLText::get(kMonoFont, textSize, lines[i]);
+            if (tx->getSize().x > longestPointWidth) {
+                longestPointWidth = tx->getSize().x;
+                longestChars     = lines[i].size();
+            }
+        }
+
+        sizeChars.x = max(sizeChars.x, (int)longestChars + 1);
+        if (longestChars) {
+            const float mwidth = max(longestPointWidth, sizeChars.x * (longestPointWidth / longestChars));
+            size.x = max(size.x, 2.f * kPadDist + mwidth);
         }
     }
     const float charHeight = getCharSize().y;
-    sizeChars.x = max(sizeChars.x, (int)longestChars + 1);
-        
-    //sizePoints.x = max(sizePoints.x, 2.f * kPadDist + longestPointSize.x);
     size.y = charHeight * sizeChars.y + kPadDist;
 
     const float2 sz = 0.5f * size;
@@ -553,7 +558,7 @@ void TextInputBase::render(const ShaderState &s_)
     {
 //            const string txt = lines[i].substr(start,
 //                                               min(lines[i].size(), start.x + sizeChars.x));
-        const GLText* tx = GLText::get(kMonoFont, GLText::getScaledSize(textSize), lines[i].c_str());
+        const GLText* tx = GLText::get(kMonoFont, textSize, lines[i]);
 
         if (lines[i].size())
         {
@@ -561,7 +566,7 @@ void TextInputBase::render(const ShaderState &s_)
         }
         
         // draw cursor
-        if (active && cursor.y == i) {
+        if (active && !locked && cursor.y == i) {
             ShaderState  s1    = s;
             const float  spos = tx->getCharStart(cursor.x);
             const float2 size  = tx->getCharSize(cursor.x);
@@ -582,7 +587,10 @@ void TextInputBase::render(const ShaderState &s_)
 
 TextInputCommandLine::TextInputCommandLine()
 {
-    sizeChars.y = 10;
+    sizeChars = int2(100, 10);
+    fixedHeight = false;
+    fixedWidth = true;
+    wrapText = true;
 
     registerCommand(cmd_help, comp_help, this, "help", "[command]: list help for specified command, or all commands if unspecified");
     registerCommand(cmd_find, comp_help, this, "find", "[string]: list commands matching search");
@@ -875,8 +883,8 @@ bool TextInputCommandLine::HandleEvent(const Event* event, bool *textChanged)
                 
                 if (options.size() > 1 && oline.size() == line.size())
                 {
-                    pushText((prompt + oline).c_str());
-                    pushText(str_join(" ", options).c_str());
+                    pushText(prompt + oline);
+                    pushText(str_join(" ", options));
                 }
                 setLineText(line.c_str());
                 if (textChanged)
@@ -957,8 +965,8 @@ bool ContextMenu::HandleEvent(const Event* event, int* select)
     if (!active && event->type == Event::MOUSE_DOWN && event->key == 1)
     {
         float2 pos = event->pos;
-        pos.y = max(pos.y, size.y);
-        if (pos.x + size.x > globals.windowSizePoints.x)
+        pos.y = max(pos.y, size.y + kButtonPad.y);
+        if (pos.x + size.x + kButtonPad.x > globals.windowSizePoints.x)
             pos.x = event->pos.x - size.x;
         position = pos;
         openTime = globals.updateStartTime;
@@ -1002,7 +1010,7 @@ void ContextMenu::render(const ShaderState &ss)
     float2 sz;
     for (uint i=0; i<lines.size(); i++)
     {
-        const GLText* tx = GLText::get(kDefaultFont, GLText::getScaledSize(textSize), lines[i].c_str());
+        const GLText* tx = GLText::get(kDefaultFont, textSize, lines[i]);
         sz.x = max(sz.x, tx->getSize().x);
         sz.y = lines.size() * tx->getSize().y;
     }
@@ -1272,8 +1280,9 @@ float TabWindow::getTabHeight() const
     return 2.f * kPadDist + 1.5f * GLText::getScaledSize(textSize); 
 }
 
-void TabWindow::render(const ShaderState &ss)
+void TabWindow::render(const ShaderState &ss, const View &view)
 {
+    alpha = view.alpha;
     if (alpha > epsilon)
     {
         DMesh::Handle h(theDMesh());
@@ -1324,10 +1333,14 @@ void TabWindow::render(const ShaderState &ss)
                         textSize, but.text);
         }
     }
-    buttons[selected].interface->renderTab(getContentsCenter(), getContentsSize(), alpha, alpha2);
+
+    View tview = view;
+    tview.center = getContentsCenter();
+    tview.size = getContentsSize();
+    buttons[selected].interface->renderTab(tview);
 }
 
-int TabWindow::addTab(string txt, int ident, ITabInterface *inf)
+int TabWindow::addTab(string txt, int ident, ITabInterface *inf, const KeyBinding *key)
 {
     const int idx = (int)buttons.size();
     buttons.push_back(TabButton());
@@ -1335,46 +1348,55 @@ int TabWindow::addTab(string txt, int ident, ITabInterface *inf)
     bu.interface = inf;
     bu.text = txt;
     bu.ident = ident;
+    bu.key = key;
     return idx;
 }
 
-bool TabWindow::HandleEvent(const Event* event)
+bool TabWindow::swapToTab(int next)
+{
+    if (next == selected)
+        return false;
+    buttons[selected].interface->onSwapOut();
+    buttons[next].interface->onSwapIn();
+    selected = next;            // set selected AFTER swapping out
+    globals.sound->OnButtonHover();
+    return true;
+}
+
+bool TabWindow::HandleEvent(const Event* event, bool *istoggle)
 {
     if (buttons[selected].interface->HandleEvent(event))
         return true;
     
+    bool handled = false;
     int i=0;
-    bool isActivate = false;
     foreach (TabButton& but, buttons)
     {
-        if (but.HandleEvent(event, &isActivate))
+        bool isActivate = false;
+        if (but.HandleEvent(event, &isActivate)) {
+            if (isActivate)
+                swapToTab(i);
+            handled = true;
+        }
+        if ((istoggle || i != selected) && but.key && but.key->isDownEvent(event))
         {
-            if (isActivate && selected != i &&
-                buttons[selected].interface->onSwapOut())
-            {
-                selected = i;
-                buttons[selected].interface->onSwapIn();
-                globals.sound->OnButtonHover();
-            }
+            if (!swapToTab(i) && istoggle)
+                *istoggle = true;
             return true;
         }
         i++;
     }
     
+    if (handled)
+        return true;
+
     const int dkey = KeyState::instance().getDownKey(event);
     const bool isLeft = dkey == (MOD_SHFT | '\t') || dkey == GamepadLeftShoulder;
     const bool isRight = dkey == '\t' || dkey == GamepadRightShoulder;
 
     if (isLeft || isRight)
     {
-        const int next = modulo(selected + (isLeft ? -1 : 1), buttons.size());
-        if (next != selected &&
-            buttons[selected].interface->onSwapOut())
-        {
-            selected = next;
-            buttons[selected].interface->onSwapIn();
-        }
-        globals.sound->OnButtonHover();
+        swapToTab(modulo(selected + (isLeft ? -1 : 1), buttons.size()));
         return true;
     }
 
@@ -1405,10 +1427,14 @@ void MessageBoxBase::render(const ShaderState &s1, const View& view)
 
     ShaderState ss = s1;
     ss.translateZ(2.1f);
-    fadeFullScreen(ss, view, COLOR_BLACK, alpha * 0.5f);
+    
+    {
+        View fview = view;
+        fview.alpha = 0.5f * alpha;
+        fadeFullScreen(fview, COLOR_BLACK);
+    }
 
-    const float titleSize = 36;
-    const GLText *msg = GLText::get(messageFont, GLText::getScaledSize(14), message);
+    const GLText *msg = GLText::get(messageFont, textSize, message);
     
     size = max(0.5f * view.sizePoints,
                msg->getSize() + 6.f * kBoxPad +
@@ -1436,6 +1462,17 @@ void MessageBoxBase::render(const ShaderState &s1, const View& view)
     }
 }
 
+static void renderOneButton(const ShaderState &ss, Button &bu)
+{
+    {
+        DMesh::Handle h(theDMesh());
+        h.mp.translateZ(1.f);
+        bu.renderButton(h.mp, false);
+        h.Draw(ss);
+    }
+    bu.renderContents(ss);
+}
+
 void MessageBoxWidget::render(const ShaderState &ss, const View& view)
 {
     if (!active)
@@ -1444,12 +1481,7 @@ void MessageBoxWidget::render(const ShaderState &ss, const View& view)
     
     okbutton.position = position - justY(size / 2.f) + justY(kBoxPad + 0.5f * okbutton.size.y);
     okbutton.alpha = alpha2;
-
-    DMesh::Handle h(theDMesh());
-    h.mp.translateZ(1.f);
-    okbutton.renderButton(h.mp, false);
-    h.Draw(ss);
-    okbutton.renderContents(ss);
+    renderOneButton(ss, okbutton);
 }
 
 bool MessageBoxWidget::HandleEvent(const Event* event)
@@ -1520,6 +1552,81 @@ bool ConfirmWidget::HandleEvent(const Event* event, bool *selection)
 
     // always handle when active
     return true;
+}
+
+ScrollMessageBox::ScrollMessageBox()
+{
+    title = _("Message");
+    okbutton.setReturnKeys();
+    message.sizeChars = int2(80, 30);
+    message.locked = true;
+    message.textSize = 13.f;
+    message.wrapText = true;
+    active = false;
+}
+
+void ScrollMessageBox::render(const ShaderState &s1, const View& view)
+{
+    if (alpha < epsilon || !active)
+        return;
+
+    ShaderState ss = s1;
+    ss.translateZ(2.1f);
+    
+    {
+        View fview = view;
+        fview.alpha = 0.5f * alpha;
+        fadeFullScreen(fview, COLOR_BLACK);
+    }
+
+    const float titleSize = 36;
+    message.size.x = 0.8f * view.sizePoints.x;
+    size = max(0.9f * view.sizePoints,
+               message.size + 6.f * kBoxPad +
+               justY(GLText::getScaledSize(titleSize) + okbutton.size.y));
+    
+    position = 0.5f * view.sizePoints;
+    
+    const float2 boxRad = size / 2.f;
+
+    DrawFilledRect(ss, position, boxRad, kGUIBg, kGUIFg, alpha);
+        
+    float2 pos = position + justY(boxRad) - justY(kBoxPad);
+        
+    pos.y -= GLText::Put(ss, pos, GLText::DOWN_CENTERED, MultAlphaAXXX(kGUIText, alpha),
+                         titleSize, title).y;
+
+    message.position = pos - justY(message.size/2.f + kButtonPad.y);
+    message.render(ss);
+
+    okbutton.position = position - justY(size / 2.f) + justY(kBoxPad + 0.5f * okbutton.size.y);
+    okbutton.alpha = alpha;
+    renderOneButton(ss, okbutton);
+}
+
+bool ScrollMessageBox::HandleEvent(const Event* event)
+{
+    if (!active)
+        return false;
+    if (message.HandleEvent(event))
+        return true;
+    
+    bool isActivate = false;
+    if (okbutton.HandleEvent(event, &isActivate) && isActivate)
+    {
+        active = false;
+    }
+    // always handle when active
+    return true;
+}
+
+void ScrollMessageBox::activateSetText(const char* txt)
+{
+    message.sizeChars.x = floor_int(0.8f * globals.windowSizePoints.x / message.getCharSize().x);
+    message.setText(txt);
+    message.cursor = int2(0, 0);
+    message.startChars.y = 0;
+    active = true;
 }
 
 static void setupHsvRect(VertexPosColor* verts, float2 pos, float2 rad, float alpha,
@@ -1643,7 +1750,7 @@ void TextBox::Draw(const ShaderState& ss1, float2 point, const string& text) con
         return;
 
     ShaderState ss = ss1;    
-    const GLText* st = GLText::get(font, GLText::getScaledSize(tSize), text);
+    const GLText* st = GLText::get(font, tSize, text);
     const float2 boxSz = max(5.f + 0.5f * st->getSize(), box);
 
     float2 center = point;
@@ -1718,7 +1825,7 @@ void OverlayMessage::render(const ShaderState &ss)
 }
 
 bool HandleConfirmKey(const Event *event, int* slot, int selected, bool *sawUp,
-                  int key0, int key1, bool *isConfirm)
+                      int key0, int key1, bool *isConfirm)
 {
     if (*slot >= 0 && selected != *slot) {
         *slot = -1;
@@ -1764,6 +1871,11 @@ bool HandleEventSelected(int* selected, ButtonBase &current, int count, int cols
         }
         return false;
     }
+
+    if (event->isEnterUp())
+    {
+        current.pressed = false;
+    }
     
     int2 translation = KeyBindings::instance().getMenuTranslation(event);
     if (translation != int2())
@@ -1775,18 +1887,16 @@ bool HandleEventSelected(int* selected, ButtonBase &current, int count, int cols
         }
         *selected = modulo(*selected - translation.y + translation.x * cols, count);
         globals.sound->OnButtonHover();
+        return true;
     }
 
-    if (event->type == Event::KEY_UP)
-    {
-        current.pressed = false;
-    }
-
-    return translation != int2();
+    return false;
 }
 
 bool ButtonHandleEvent(ButtonBase &button, const Event* event, bool* isActivate, bool* isPress, int *selected)
 {
+    if (!button.visible)
+        return false;
     const bool wasHovered = button.hovered;
 
     bool handled = false;
@@ -1829,6 +1939,25 @@ float2 renderButtonText(const ShaderState &ss, float2 pos, float width,
     return tx;
 }
 
+Rect2d Scrollbar::thumb() const
+{
+    Rect2d r;
+    if (total)
+    {
+        r.rad = float2(size.x, max(kScrollbarWidth/2.f, min(visible, total) * size.y / total)) / 2.f - kButtonPad;
+        r.pos = position + justY(size.y/2.f * (1.f - (sfirst + min(sfirst + visible, (float)total)) / total));
+        if (r.pos.y + r.rad.y > position.y + size.y/2.f)
+            r.pos.y = position.y + size.y/2.f - r.rad.y;
+        else if (r.pos.y - r.rad.y < position.y - size.y/2.f)
+            r.pos.y = position.y - size.y/2.f + r.rad.y;
+    }
+    else
+    {
+        r.rad = float2(size.x, max(kScrollbarWidth/2.f, size.y)) / 2.f - kButtonPad;
+        r.pos = position;
+    }
+    return r;
+}
 
 void Scrollbar::render(DMesh &mesh)
 {
@@ -1843,18 +1972,16 @@ void Scrollbar::render(DMesh &mesh)
         sfirst = first;
     }
 
-    const float2 rad = float2(size.x, max(kScrollbarWidth/2.f, total ? (min(visible, total) * size.y / total) : size.y))
-                       / 2.f - kButtonPad;
     mesh.line.color32(defaultFGColor, alpha);
     // mesh.line.translateZ(-0.1f);
     mesh.line.PushRect(position, size / 2.f);
     // mesh.line.translateZ(0.1f);
-    
-    const float2 pos = total ? position + justY(size.y/2.f * (1.f - (sfirst + min(sfirst + visible, (float)total)) / total)) : position;
+
+    const Rect2d th = thumb();
     // mesh.line.color32(hovered ? hoveredFGColor : defaultFGColor, alpha);
     // mesh.line.PushRect(pos, rad);
     mesh.tri.color32(pressed ? pressedFGColor : hovered ? hoveredFGColor : defaultFGColor, alpha);
-    mesh.tri.PushRect(pos, rad);
+    mesh.tri.PushRect(th.pos, th.rad);
 
     mesh.translateZ(-0.5f);
 }
@@ -1902,7 +2029,7 @@ bool Scrollbar::HandleEvent(const Event *event)
     if (pressed)
     {
         if (event->type == Event::MOUSE_DRAGGED) {
-            sfirst = clamp(sfirst + total * event->vel.y / size.y, 0.f, (float)maxfirst);
+            sfirst = clamp(sfirst + total * -event->vel.y / size.y, 0.f, (float)maxfirst);
             first = floor_int(sfirst);
             return true;
         } else {
@@ -1912,13 +2039,12 @@ bool Scrollbar::HandleEvent(const Event *event)
     }
     if (!(hovered && event->type == Event::MOUSE_DOWN))
         return false;
-    const float2 pos = position + justY(size.y/2.f * (1.f - float(first + last()) / total));
-    const float2 rad = float2(size.x, total ? (min(visible, total) * size.y / total) : size.y) / 2.f;
-    if (intersectPointRectangle(event->pos, pos, rad)) {
+    const Rect2d th = thumb();
+    if (intersectPointRectangle(event->pos, th.pos, th.rad)) {
         pressed = true;         // start dragging thumb
     } else {
         // clicking in bar off of thumb pages up or down
-        first = clamp(first + ((event->pos.y > pos.y) ? -page : page), 0, maxfirst);
+        first = clamp(first + ((event->pos.y > th.pos.y) ? -page : page), 0, maxfirst);
         sfirst = first;
     }
     return true;
@@ -1942,7 +2068,7 @@ void Scrollbar::makeVisible(int row)
 }
 
 
-void ButtonWindow::render(const ShaderState &ss)
+void ButtonWindowBase::render(const ShaderState &ss)
 {
     DMesh::Handle h(theDMesh());
     h.mp.translateZ(-1.f);
@@ -1965,6 +2091,9 @@ void ButtonWindow::render(const ShaderState &ss)
     const float  sw    = sbvis ? kScrollbarWidth : 0.f;
     const float2 bsize = size - kButtonPad;
 
+    ButtonBase  **pDrag = dragPtr;
+    ButtonBase  *drag  = (pDrag ? *pDrag : NULL);
+
     if (buttons.size())
     {
         const float2 bs = float2((bsize.x - sw), bsize.y) / float2(dims);
@@ -1980,13 +2109,11 @@ void ButtonWindow::render(const ShaderState &ss)
                 if (idx >= buttons.size())
                     break;
                 ButtonBase *bu = buttons[idx];
-                if (!dragPtr || bu != *dragPtr)
-                    bu->position = pos;
-                else
-                    dragPos = pos;
+                ((bu == drag) ? dragPos : bu->position) = pos;
                 bu->size = bs - 2.f * kButtonPad;
                 bu->alpha = alpha;
-                bu->renderButton(h.mp);
+                if (bu != drag)
+                    bu->renderButton(h.mp);
                 pos.x += bs.x;
             }
             pos.y -= bs.y/2.f;
@@ -1994,15 +2121,16 @@ void ButtonWindow::render(const ShaderState &ss)
     }
     
     h.Draw(ss);
-    h.mp.clear();
+    h.clear();
 
     for (int i=0; i<buttons.size(); i++)
     {
-        if (buttons[i] == extDragPtr)
+        ButtonBase *bu = buttons[i];
+        if (bu == extDragPtr)
             continue;
-        buttons[i]->visible = (first <= i && i < last);
-        if (buttons[i]->visible)
-            buttons[i]->renderContents(ss);
+        bu->visible = (first <= i && i < last);
+        if (bu->visible && bu != drag)
+            bu->renderContents(ss);
     }
 
     if (sbvis)
@@ -2013,13 +2141,22 @@ void ButtonWindow::render(const ShaderState &ss)
         scrollbar.size = float2(sw, size.y) - 2.f * kButtonPad;
         scrollbar.render(h.mp);
         h.Draw(ss);
+        h.clear();
+    }
+
+    if (drag)
+    {
+        ShaderState s1 = ss;
+        s1.translateZ(0.75f);
+        // s1.translateZ(5.f);
+        drag->render(s1);
     }
 }
 
-bool ButtonWindow::HandleEvent(const Event *event,
-                               ButtonBase **activated,
-                               ButtonBase **dragged,
-                               ButtonBase **dropped)
+bool ButtonWindowBase::HandleEvent(const Event *event,
+                                   ButtonBase **activated,
+                                   ButtonBase **dragged,
+                                   ButtonBase **dropped)
 {
     if (scrollbar.HandleEvent(event))
         return true;
@@ -2030,8 +2167,14 @@ bool ButtonWindow::HandleEvent(const Event *event,
     {
         foreach (ButtonBase *bu, buttons)
             bu->hovered = false;
+        if (rearrange)
+            dragPtr = NULL;
         return false;
     }
+
+    if (dragPtr)
+        activated = NULL;
+    ButtonBase *drag = dragPtr ? *dragPtr : NULL;
 
     bool handled = false;
     foreach (ButtonBase *&bu, buttons)
@@ -2049,7 +2192,7 @@ bool ButtonWindow::HandleEvent(const Event *event,
             *dragged = bu;
             handled = true;
         }
-        if (dropped && bu->hovered && event->type == Event::MOUSE_UP) {
+        if (dropped && bu->hovered && event->type == Event::MOUSE_UP && bu != drag) {
             *dropped = bu;
             handled = true;
         }
@@ -2058,31 +2201,45 @@ bool ButtonWindow::HandleEvent(const Event *event,
     return handled || (dropped && event->type == Event::MOUSE_UP);
 }
 
-ButtonBase *ButtonWindow::HandleRearrange(const Event *event, ButtonBase *drag)
+ButtonBase ** ButtonWindowBase::getPtr(ButtonBase *but)
 {
-    std::lock_guard<std::mutex> l(mutex);
+    if (!but)
+        return NULL;
+    foreach (ButtonBase *&bu, buttons) {
+        if (bu == but)
+            return &bu;
+    }
+    return NULL;
+}
+
+
+bool ButtonWindowBase::setupDragPtr(const Event *event, ButtonBase *drag)
+{
     if (drag && !dragPtr)
     {
         dragPos = drag->position;
         dragOffset = drag->position - event->pos;
     }
-    ButtonBase **ptr = NULL;
-    foreach (ButtonBase *&bu, buttons) {
-        if (bu == drag) {
-            ptr = &bu;
-            break;
-        }
-    }
-    dragPtr = ptr;
-    if (!drag || !dragPtr)
+    dragPtr = getPtr(drag);
+    return drag && dragPtr;
+}
+
+// dragging the button around swaps with other buttons
+// return button drag swapped with
+ButtonBase *ButtonWindowBase::HandleRearrange(const Event *event, ButtonBase *drag)
+{
+    std::lock_guard<std::mutex> l(mutex);
+    rearrange = true;
+    if (!setupDragPtr(event, drag))
         return NULL;
-    const float2 rad = size/2.f - 2.f * kButtonPad;
+    const float2 rad = size/2.f - kButtonPad;
     drag->position = clamp(event->pos + dragOffset,
                            position - rad + drag->size/2.f,
                            position + rad - drag->size/2.f);
     foreach (ButtonBase *&bu, buttons)
     {
         if (bu != drag &&
+            bu->visible &&
             distanceSqr(drag->position, bu->position) < distanceSqr(drag->position, dragPos))
         {
             std::swap(bu->position, dragPos);
@@ -2093,8 +2250,38 @@ ButtonBase *ButtonWindow::HandleRearrange(const Event *event, ButtonBase *drag)
     return NULL;
 }
 
+void ButtonWindowBase::swapButtons(ButtonBase *a, ButtonBase *b)
+{
+    ButtonBase **pa = getPtr(a);
+    ButtonBase **pb = getPtr(b);
+    if (!pa || !pb || a == b)
+        return;
+    std::swap(a->index, b->index);
+    std::swap(*pa, *pb);
+}
 
-void ButtonWindow::computeDims(int2 mn, int2 mx)
+
+// buttons can be dragged out and dropped into another widget (but not rearranged)
+bool ButtonWindowBase::HandleDragExternal(const Event *event, ButtonBase *drag, ButtonBase **drop)
+{
+    if (!event->isMouse())
+        return false;
+    if (hovered)
+        setupDragPtr(event, drag);
+    if (!dragPtr)
+        return false;
+    drag = *dragPtr;
+    drag->position = event->pos + dragOffset;
+    if (event->type != Event::MOUSE_DRAGGED && event->type != Event::MOUSE_DOWN)
+    {
+        if (dragPtr && drop)
+            *drop = *dragPtr;
+        dragPtr = NULL;
+    }
+    return true;
+}
+
+void ButtonWindowBase::computeDims(int2 mn, int2 mx)
 {
     if (buttons.empty())
         return;
@@ -2112,6 +2299,21 @@ void ButtonWindow::computeDims(int2 mn, int2 mx)
 
     dims = ds;
 }
+
+void ButtonWindowBase::popButton(ButtonBase *but)
+{
+    ASSERT(but->index >= 0 && buttons[but->index] == but);
+    {
+        std::lock_guard<std::mutex> l(mutex);
+        vec_erase(buttons, but->index);
+        for (int i=but->index; i<buttons.size(); i++)
+            buttons[i]->index--;
+        if (dragPtr && *dragPtr == but)
+            dragPtr = NULL;
+    }
+    delete but;
+}
+
 
 void ButtonSelector::render(const ShaderState &ss)
 {
@@ -2169,6 +2371,8 @@ void ButtonSelector::render(const ShaderState &ss)
 
 bool ButtonSelector::HandleEvent(const Event *event, int *pressed)
 {
+    if (event->type == Event::SCROLL_WHEEL && event->synthetic)
+        return false;           // scrolling and up/down are the same gamepad buttons
     if (scrollbar.HandleEvent(event))
         return true;
     bool isActivate = false;

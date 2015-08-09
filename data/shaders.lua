@@ -15,16 +15,31 @@
       "attribute vec4 SourceColor0;
       attribute vec4 SourceColor1;
       attribute float TimeA;
-      uniform float TimeU;
       void main(void) {
           gl_Position = Transform * Position;
-          float val = 0.5 + 0.5 * sin(0.5 * (TimeU + TimeA));
+          float val = 0.5 + 0.5 * sin(0.5 * (Time + TimeA));
           DestinationColor = mix(SourceColor0, SourceColor1, val);
       }"
       ,
       "void main(void) {
             gl_FragColor = DestinationColor;
       }"
+   },
+
+   -- draws projectiles, shields, lasers, etc
+   ShaderColorLuma = {
+      "varying vec4 DestinationColor;"
+        ,
+        "attribute vec4 SourceColor;
+        attribute float Luma;
+        void main(void) {
+            DestinationColor = Luma * SourceColor;
+            gl_Position = Transform * Position;
+        }"
+        ,
+        "void main(void) {
+            gl_FragColor = DestinationColor;
+        }" 
    },
 
    -- draws the wormhole
@@ -46,7 +61,6 @@
       ,
       "
       #include 'noise3D.glsl'
-      uniform float Time;
 
       vec2 rotate(vec2 v, float a) {
           vec2 r = vec2(cos(a), sin(a));
@@ -86,7 +100,6 @@
       ,
       "
       #include 'noise2D.glsl'
-      uniform float Time;
 
       float length2(vec2 x) { return dot(x, x); }
       vec2 rotate(vec2 v, float a) {
@@ -161,7 +174,6 @@
        uniform sampler2D warpTex;
        uniform vec2      camWorldPos;
        uniform vec2      camWorldSize;
-       uniform float     time;
       #include 'noise2D.glsl'
       void main(void) {
          vec2 texCoord = DestTexCoord;
@@ -169,7 +181,7 @@
           //texCoord += 3.0 * vec2(roll.y, -roll.x) * max(0.0, (0.5 - length(roll)));
           float warpv = length(texture2D(warpTex, texCoord).rgb);
           if (warpv > 0.0)
-              texCoord += 100.0 * warpv * snoise(camWorldPos + 0.1 * time + 0.01 * texCoord * camWorldSize) /
+              texCoord += 100.0 * warpv * snoise(camWorldPos + 0.1 * Time + 0.01 * texCoord * camWorldSize) /
                           max(camWorldSize.x, camWorldSize.y);
           gl_FragColor = DestColor * texture2D(texture1, texCoord);
       }"

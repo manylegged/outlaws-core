@@ -29,6 +29,7 @@
 struct SteamStats {
 
 private:
+    std::unordered_map<std::string, bool> m_achievements;
     std::unordered_map<std::string, int> m_stats;
     mutable std::mutex                   m_mutex;
     volatile int                         m_pending = 0;
@@ -107,5 +108,13 @@ extern int g_steamReadsFailed;
 bool steamFileWrite(const char* fname, const char* data, int size, int ucsize);
 string steamFileRead(ISteamRemoteStorage *ss, const char* fname);
 int steamDeleteRecursive(const char *path);
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+extern bool kSteamEnable;
+
+bool steamInitialize();
+
+// return 2 letter language code based on steam language
+string getSteamLanguageCode();
 
 #endif

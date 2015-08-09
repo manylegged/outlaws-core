@@ -1,6 +1,9 @@
 
 #include "StdAfx.h"
 
+DEFINE_CVAR(bool, kSteamEnable, true);
+static DEFINE_CVAR(bool, kSteamBenchmark, false);
+
 SteamStats::SteamStats() : STEAM_CALLBACK_CONS(SteamStats, UserStatsReceived)
 {
     if (SteamUserStats())
@@ -27,12 +30,13 @@ int SteamStats::GetStat(const char* name)
 void SteamStats::SetAchievement(const char* name)
 {
     ISteamUserStats *ss = SteamUserStats();
-    if (!ss)
+    if (!ss || m_achievements[name])
         return;
     const bool aok = ss->SetAchievement(name);
     DPRINT(STEAM, ("Set Achievement %s: %s", name, aok ? "OK" : "FAILED"));
-
     std::lock_guard<std::mutex> l(m_mutex);
+    if (aok)
+        m_achievements[name] = true;
     ++m_pending;
 }
 
@@ -368,4 +372,160 @@ int steamDeleteRecursive(const char *path)
     }
     DPRINT(STEAM, ("Deleted %d cloud files from '%s'", deleted, path));
     return deleted;
+}
+
+
+static void runSteamTests()
+{
+    ISteamRemoteStorage *ss = SteamRemoteStorage();
+    if (!ss)
+        return;
+
+    const double kMicroSec = 1e6;
+    const int    kIters    = 5000;
+
+    const char* testfile = "data/save0/map1.lua";
+    const char* small_testfile = "data/save0/save.lua";
+    const char* output = "data/test_dummy.txt";
+
+    DPRINT(STEAM, ("running benchmarks"));
+    
+    {
+        const double start = OL_GetCurrentTime();
+        for (int i=0; i<kIters; i++)
+            SteamRemoteStorage();
+        const double us = (OL_GetCurrentTime() - start) * kMicroSec / kIters;
+        DPRINT(STEAM, ("SteamRemoteStorage() is %.1fus/call", us));
+    }
+    
+    {
+        ss->FileExists("data/some_nonexistent_file_name");
+        
+        const double start = OL_GetCurrentTime();
+        for (int i=0; i<kIters; i++)
+            ss->FileExists("data/some_nonexistent_file_name");
+        const double us = (OL_GetCurrentTime() - start) * kMicroSec / kIters;
+        DPRINT(STEAM, ("ISteamRemoteStorage::FileExists is %.1fus/call (missing)", us));
+    }
+
+    {
+        SteamFileExists("_");
+        const double start = OL_GetCurrentTime();
+        for (int i=0; i<kIters; i++)
+            SteamFileExists("data/some_nonexistent_file_name");
+        const double us = (OL_GetCurrentTime() - start) * kMicroSec / kIters;
+        DPRINT(STEAM, ("SteamFileExists is %.1fus/call (missing)", us));
+    }
+
+    {
+        const double start = OL_GetCurrentTime();
+        for (int i=0; i<kIters; i++)
+            OL_FileDirectoryPathExists("data/some_nonexistent_file_name");
+        const double us = (OL_GetCurrentTime() - start) * kMicroSec / kIters;
+        DPRINT(STEAM, ("OL_FileDirectoryPathExists is %.1fus/call (missing)", us));
+    }
+
+    {
+        const double start = OL_GetCurrentTime();
+        for (int i=0; i<kIters; i++)
+            ss->FileExists(testfile);
+        const double us = (OL_GetCurrentTime() - start) * kMicroSec / kIters;
+        DPRINT(STEAM, ("ISteamRemoteStorage::FileExists is %.1fus/call (existing)", us));
+    }
+
+    {
+        const double start = OL_GetCurrentTime();
+        for (int i=0; i<kIters; i++)
+            SteamFileExists(testfile);
+        const double us = (OL_GetCurrentTime() - start) * kMicroSec / kIters;
+        DPRINT(STEAM, ("SteamFileExists is %.1fus/call (existing)", us));
+    }
+
+    {
+        const double start = OL_GetCurrentTime();
+        for (int i=0; i<kIters; i++)
+            OL_FileDirectoryPathExists(testfile);
+        const double us = (OL_GetCurrentTime() - start) * kMicroSec / kIters;
+        DPRINT(STEAM, ("OL_FileDirectoryPathExists is %.1fus/call (existing)", us));
+    }
+
+    {
+        const double start = OL_GetCurrentTime();
+        for (int i=0; i<kIters; i++)
+            ss->GetFileSize(testfile);
+        const double us = (OL_GetCurrentTime() - start) * kMicroSec / kIters;
+        DPRINT(STEAM, ("ISteamRemoteStorage::GetFileSize is %.1fus/call", us));
+    }
+
+    for (int j=0; j<2; j++)
+    {
+        string data;
+        const char* file = (j == 0) ? testfile : small_testfile;
+        const int size = ss->GetFileSize(file);
+        data.resize(size);
+
+        {
+            const double start = OL_GetCurrentTime();
+            for (int i=0; i<kIters; i++)
+                ss->FileRead(file, &data[0], size);
+            const double us = (OL_GetCurrentTime() - start) * kMicroSec / kIters;
+            DPRINT(STEAM, ("ISteamRemoteStorage::FileRead is %.1fus/call (%.1fk file)", us, size / 1024.0));
+        }
+
+        {
+            const double start = OL_GetCurrentTime();
+            for (int i=0; i<kIters; i++)
+                ss->FileWrite(output, &data[0], size);
+            const double us = (OL_GetCurrentTime() - start) * kMicroSec / kIters;
+            DPRINT(STEAM, ("ISteamRemoteStorage::FileWrite is %.1fus/call (%.1fk file)", us, size / 1024.0));
+        }
+    }
+}
+
+string getSteamLanguageCode()
+{
+    if (!SteamApps())
+        return string();
+    const string steamlang = SteamApps()->GetCurrentGameLanguage();
+    DPRINT(STEAM, ("Language: %s", steamlang.c_str()));
+    if      (steamlang == "german")     { return "de"; }
+    else if (steamlang == "polish")     { return "pl"; }
+    else if (steamlang == "spanish")    { return "es"; }
+    else if (steamlang == "swedish")    { return "sv"; }
+    else if (steamlang == "chinese")    { return "zh"; }
+    else if (steamlang == "portuguese") { return "pt"; }
+    return steamlang.substr(0, 2);
+}
+
+static void __cdecl SteamAPIDebugTextHook( int nSeverity, const char *pchDebugText )
+{
+    // nSeverity >= 1 is a warning
+    DPRINT(STEAM, ("%s", pchDebugText));
+}
+
+
+bool steamInitialize()
+{
+    if (!kSteamEnable)
+        return false;
+    const bool steam = SteamAPI_Init();
+    DPRINT(STEAM, ("Init: %s", steam ? "OK" : "FAILED"));
+
+    if (SteamClient())
+    {
+        SteamClient()->SetWarningMessageHook( &SteamAPIDebugTextHook );
+    }
+        
+    if (SteamUser())
+    {
+        DPRINT(STEAM, ("User '%s' %lld Logged in: %s",
+                       SteamFriends()->GetPersonaName(),
+                       SteamUser()->GetSteamID().ConvertToUint64(),
+                       SteamUser()->BLoggedOn() ? "YES" : "NO"));
+    }
+
+    if (kSteamBenchmark)
+        runSteamTests();
+
+    return steam;
 }

@@ -33,3 +33,5 @@ type summary add --summary-string "addr=${var%V} ${var.sb}" Block
 # type summary add --summary-string "il=${var.m_il} ibo=${var.m_ibo}" -x "Mesh<.+>(( )?&)?$" 
 # type summary add --inline-children -x "^MeshPair<.+>(( )?&)?$"
 type summary add --summary-string "pos=${var.pos}" -x "^VertexPos.+"
+
+set set target.max-string-summary-length 10000

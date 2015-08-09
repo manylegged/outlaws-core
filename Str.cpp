@@ -160,6 +160,13 @@ Uint32 utf8_getch(const char **src, size_t *srclen)
     return ch;
 }
 
+uint utf8_getch(const string &str)
+{
+    const char *ptr = &str[0];
+    size_t len = str.size();
+    return utf8_getch(&ptr, &len);
+}
+
 int utf8_advance(const string& str, int start, int len)
 {
     while (utf8_iscont(str[start]) && start > 0)
@@ -516,6 +523,16 @@ std::string str_reltime_format(float seconds)
         return str_time_format(-seconds) + " ago";
 }
 
+std::string str_timestamp()
+{
+    std::chrono::time_point<std::chrono::system_clock> start = std::chrono::system_clock::now();
+    const std::time_t cstart = std::chrono::system_clock::to_time_t(start);
+    char mbstr[100];
+    std::strftime(mbstr, sizeof(mbstr), "%Y%m%d_%I.%M.%S.%p", std::localtime(&cstart));
+    return mbstr;    
+}
+
+
 std::string str_numeral_format(int num)
 {
     if (!str_equals(OLG_GetLanguage(), "en_US"))
@@ -709,6 +726,7 @@ std::string str_capitalize_first(std::string s)
 bool str_runtests()
 {
 #if IS_DEVEL
+    Report("Beginning String Tests");
     // str_w32path_standardize(L"C:/foo/bar");
     TEST(str_path_standardize("/foo/../.."), "/");
     TEST(str_path_standardize("~/Foo//Bar.lua"), "~/Foo/Bar.lua");
@@ -792,7 +810,16 @@ bool str_runtests()
 
     TEST(str_chomp("스텔라 "), "스텔라");
     TEST(str_strip(" применить\n"), "применить");
+
+    TEST(str_replace("12aa345aa67aa89", "aa", "b"), "12b345b67b89");
+    TEST(str_replace("12a345a67a", "a", "bb"), "12bb345bb67bb");
+    TEST(str_join(" ", vector<string>({"abc", "d", "ef"})), "abc d ef");
+    TEST(str_chomp(""), "");
+    TEST(str_chomp(" foo  "), " foo");
+    string foo = " foo  ";
+    TEST(str_chomp(std::move(foo)), " foo");
     
+    Report("Ending String Tests");
 #endif
     return 1;
 }
@@ -823,7 +850,7 @@ std::string str_demangle(const char *str)
 {
     int status;
     char* result = abi::__cxa_demangle(str, NULL, NULL, &status);
-    ASSERTF(status == 0, "__cxa_demangle:%d: %s", status,
+    ASSERTF(status == 0 || status == -2, "__cxa_demangle:%d: %s", status,
             ((status == -1) ? "memory allocation failed" :
              (status == -2) ? "input not valid name under C++ ABI mangling rules" :
              (status == -3) ? "invalid argument" : "unexpected error code"));
@@ -833,10 +860,13 @@ std::string str_demangle(const char *str)
     free(result);
     name = str_replace(name, "std::__1::", "std::");
     name = str_replace(name, "unsigned long long", "uint64");
+    name = str_replace(name, "unsigned int", "uint");
     name = str_replace(name, "basic_string<char, std::char_traits<char>, std::allocator<char> >", "string");
 #if __APPLE__
     name = str_replace(name, "glm::detail::tvec2<float, (glm::precision)0>", "float2");
     name = str_replace(name, "glm::detail::tvec3<float, (glm::precision)0>", "float3");
+    name = str_replace(name, "glm::detail::tvec2<int, (glm::precision)0>", "int2");
+    name = str_replace(name, "glm::detail::tvec3<int, (glm::precision)0>", "int3");
 #else
     name = str_replace(name, "glm::detail::tvec2<float,0>", "float2");
     name = str_replace(name, "glm::detail::tvec3<float,0>", "float3");

@@ -23,6 +23,7 @@ static int          g_supportsTearControl = -1;
 static bool         g_wantsLogUpload = false;
 
 static DEFINE_CVAR(bool, kOpenGLDebug, IS_DEVEL);
+static DEFINE_CVAR(bool, kTTFDebug, false);
 
 #if OL_WINDOWS
 #define OL_ENDL "\r\n"
@@ -56,6 +57,12 @@ static void ReportSDL(const char *format, ...)
     const string buf = "\n[SDL] " + str_vformat(format, vl);
     OL_ReportMessage(buf.c_str());
     va_end(vl);
+}
+
+static void ReportSDLErr(const char* func)
+{
+    const string buf = str_format("\n[SDL] %s failed: %s", func, SDL_GetError());
+    OL_ReportMessage(buf.c_str());
 }
 
 static const string loadFile(SDL_RWops *io, const char* name)
@@ -316,7 +323,7 @@ const char* OL_GetPlatformDateInfo(void)
     std::chrono::time_point<std::chrono::system_clock> start = std::chrono::system_clock::now();
     std::time_t cstart = std::chrono::system_clock::to_time_t(start);
     str += std::ctime(&cstart);
-    str.pop_back();             // eat ctime newline
+    str = str_strip(str);
 
     return str.c_str();
 }
@@ -505,7 +512,11 @@ void OL_SetFont(int index, const char* file)
             }
         }
     }
-    ReportSDL("Found font %d at '%s': %s", index, fname, getFont(index, 12) ? "OK" : "FAILED");
+    TTF_Font *font = getFont(index, 12);
+    ReportSDL("Found font %d at '%s': %s family:'%s' style:'%s'",
+              index, fname, font ? "OK" : "FAILED",
+              font ? TTF_FontFaceFamilyName(font) : "",
+              font ? TTF_FontFaceStyleName(font) : "");
 }
 
 void OL_FontAdvancements(int fontName, float size, struct OLSize* advancements)
@@ -535,15 +546,7 @@ float OL_FontHeight(int fontName, float size)
     return font ? TTF_FontLineSkip(font) / g_scaling_factor : 0.f;
 }
 
-
-struct Strip {
-    TTF_Font    *font;
-    int          pixel_width;
-    SDL_Color    color;
-    std::string  text;
-};
-
-SDL_Color getQuake3Color(int val)
+static SDL_Color getQuake3Color(int val)
 {
     const uint color = OLG_GetQuake3Color(val);
     SDL_Color sc;
@@ -554,142 +557,194 @@ SDL_Color getQuake3Color(int val)
     return sc;
 }
 
-int OL_StringImage(OutlawImage *img, const char* str, float size, int _font, float maxw, float maxh)
-{
-    TTF_Font* font = getFont(_font, size);
-    if (!font)
-        return 0;
+struct Strip {
+    TTF_Font    *font = NULL;
+    int          pixel_width = 0;
+    SDL_Color    color;
+    std::string  text;
+};
 
-    TTF_Font *fallback_font = NULL;
+struct StringRenderer {
 
-    int text_pixel_width = 0;
+    const int font_index = 0;
+    const float font_size = 0;
+    TTF_Font* const orig_font;
+    TTF_Font* last_font = NULL;
+    int last_font_index = 0;
+
     vector< Strip > strips;
 
     int strip_start = 0;
-    int newlines = 0;
-    bool last_was_fallback = false;
     int line_pixel_width = 0;
 
-    int  color_count = 0;
-
-    size_t textlen = SDL_strlen(str);
-    const size_t totallen = textlen;
-    const char* text = str;
+    size_t textlen;
+    const size_t totallen;
+    const char* text_remaining;
+    const char * const text;
 
     SDL_Color color;
-    memset(&color, 0xff, sizeof(color));
-    
+
+    size_t chr_start = 0;
+    size_t chr_end = 0;
+
+    StringRenderer(const char* str, float size, int font) :
+        font_index(font), font_size(size), orig_font(getFont(font, size)),
+        last_font(orig_font),
+        textlen(SDL_strlen(str)), totallen(textlen), text_remaining(str), text(str)
+    {
+        memset(&color, 0xff, sizeof(color));
+    }
+
+    int StringImage(OutlawImage *img);
+
+    TTF_Font *findFont(Uint32 chr) const
+    {
+        if (TTF_GlyphIsProvided(orig_font, chr))
+            return orig_font;
+        else if (orig_font != last_font && TTF_GlyphIsProvided(last_font, chr))
+            return last_font;
+        
+        for (int j=0; j<arraySize(g_fontFiles); j++)
+        {
+            if (j == font_index)
+                continue;
+            TTF_Font *fnt = getFont(j, font_size);
+            if (!fnt)
+                break;
+            if (TTF_GlyphIsProvided(fnt, chr)) {
+                return fnt;
+            }
+        }
+        ReportSDL("No font for %#x", chr);
+        return orig_font;  // just use boxes, oh well...
+    }
+
+    Uint32 getChr()
+    {
+        chr_start = totallen - textlen;        
+        Uint32 chr = textlen ? utf8_getch(&text_remaining, &textlen) : '\0';
+        chr_end = totallen - textlen;
+        return chr;
+    }
+
+    void pushStrip(bool newline)
+    {
+        if (!newline && chr_start <= strip_start)
+            return;
+        Strip st;
+        st.font = last_font;
+        st.color = color;
+        st.text = string(&text[strip_start], chr_start - strip_start);
+
+        if (st.text.size()) {
+            int pixel_height;
+            if (TTF_SizeUTF8(st.font, st.text.c_str(), &st.pixel_width, &pixel_height)) {
+                ReportSDLErr("TTF_SizeUTF8");
+                st.text = string();
+                st.pixel_width = 0;
+            }
+        }
+
+        line_pixel_width += st.pixel_width;
+        if (newline)
+            st.pixel_width = -1;
+        if (st.pixel_width) {
+            if (kTTFDebug) {
+                const uint color = (st.color.a<<24)|(st.color.r<<16)|(st.color.g<<8)|(st.color.b);
+                ReportSDL("Strip %d '%s' %#x %dpx %#x %s", (int)strips.size(),
+                          st.text.c_str(), utf8_getch(st.text),
+                          st.pixel_width, color, TTF_FontFaceFamilyName(st.font));
+            }
+            strips.push_back(std::move(st));
+        }
+        strip_start = chr_start;
+    }
+
+};
+
+static bool ignoreCharacter(Uint32 chr)
+{
+    // combining characters not rendered correctly: https://en.wikipedia.org/wiki/Combining_character
+    return ((0x0300 <= chr && chr < 0x036F) ||
+            (0x1AB0 <= chr && chr < 0x1AFF) || 
+            (0x1DC0 <= chr && chr < 0x1DFF) || 
+            (0x20D0 <= chr && chr < 0x20FF) ||
+            (0xFE20 <= chr && chr < 0xFE2F));
+}
+
+int StringRenderer::StringImage(OutlawImage *img)
+{
+    if (!orig_font)
+        return 0;
+
+    int color_count = 0;
+    int newlines = 0;
+    int text_pixel_width = 0;
+
     // split string up by lines, fallback font
     while (1)
     {
-        const size_t chr_start = totallen - textlen;        
-        const Uint32 chr = textlen ? utf8_getch(&text, &textlen) : '\0';
-        const size_t chr_end = totallen - textlen;
+        const Uint32 chr = getChr();
 
-        int pixel_width, pixel_height;
-
-        if (chr == '^' && textlen > 0 && '0' <= str[chr_end] && str[chr_end] <= '9')
+        if (ignoreCharacter(chr))
         {
-            Strip st = { font, 0, color, string(&str[strip_start], chr_start - strip_start) };
-            if (st.text.size()) {
-                TTF_SizeUTF8(font, st.text.c_str(), &st.pixel_width, &pixel_height);
-                strips.push_back(std::move(st));
-            }
-
-            line_pixel_width += st.pixel_width;
-
-            const Uint64 num = utf8_getch(&text, &textlen);
-
-            strip_start = totallen - textlen;
+            pushStrip(false);
+            strip_start = chr_end;
+        }
+        else if (chr == '^' && textlen > 0 && '0' <= text[chr_end] && text[chr_end] <= '9')
+        {
+            pushStrip(false);
+            const Uint32 num = getChr();
+            strip_start = chr_end;
             color_count++;
             color = getQuake3Color(num - '0');
         }
         else if (chr == '\n' || chr == '\0' || chr == UNKNOWN_UNICODE)
         {
-            Strip st = { font, -1, color, string(&str[strip_start], chr_start - strip_start) };
-            if (st.text.size())
-                TTF_SizeUTF8(font, st.text.c_str(), &pixel_width, &pixel_height);
-            else
-                pixel_width = 0;
-            strips.push_back(std::move(st));
-            
-            text_pixel_width = max(text_pixel_width, line_pixel_width + pixel_width);
-            strip_start = chr_end;
+            pushStrip(true);
             newlines++;
+            text_pixel_width = max(text_pixel_width, line_pixel_width);
             line_pixel_width = 0;
-
+            strip_start = chr_end;
             if (chr == '\0' || chr == UNKNOWN_UNICODE)
                 break;
         }
-        else if (!TTF_GlyphIsProvided(font, chr))
-        {
-            if (!last_was_fallback && chr_start > strip_start) {
-                string strip(&str[strip_start], chr_start - strip_start);
-                TTF_SizeUTF8(font, strip.c_str(), &pixel_width, &pixel_height);
-                line_pixel_width += pixel_width;
-                Strip st = { font, pixel_width, color, strip };
-                strips.push_back(std::move(st));
-            }
-
-            if (!fallback_font || !TTF_GlyphIsProvided(fallback_font, chr))
-            {
-                for (int j=0; j<arraySize(g_fontFiles); j++)
-                {
-                    if (j == _font)
-                        continue;
-                    TTF_Font *fnt = getFont(j, size);
-                    if (!fnt)
-                        break;
-                    if (TTF_GlyphIsProvided(fnt, chr))
-                    {
-                        fallback_font = fnt;
-                        break;
-                    }
-                }
-                if (!fallback_font)
-                    fallback_font = font; // just use boxes, oh well...
-            }
-
-            const string c8(&str[chr_start], chr_end - chr_start);
-            TTF_SizeUTF8(fallback_font, c8.c_str(), &pixel_width, &pixel_height);
-            line_pixel_width += pixel_width;
-            strip_start = chr_end;
-
-            if (last_was_fallback && strips.back().font == fallback_font)
-            {
-                strips.back().pixel_width += pixel_width;
-                strips.back().text += c8;
-            }
-            else
-            {
-                Strip st = { fallback_font, pixel_width, color, c8 };
-                strips.push_back(std::move(st));
-            }
-            last_was_fallback = true;
-        }
         else
         {
-            last_was_fallback = false;
+            TTF_Font *fnt = findFont(chr);
+            if (fnt != last_font)
+            {
+                pushStrip(false);
+                last_font = fnt;
+            }
         }
     }
 
-    const int font_pixel_height = max(TTF_FontLineSkip(font), fallback_font ? TTF_FontLineSkip(fallback_font) : 0);
-    const int text_pixel_height = newlines * font_pixel_height;
+    int line_pixel_height = 0;
+    foreach (const Strip &st, strips)
+        line_pixel_height = max(line_pixel_height, TTF_FontLineSkip(st.font));
+    const int text_pixel_height = newlines * line_pixel_height + 1; // blended text sometimes slightly higher than expected
 
     SDL_Surface *intermediary = SDL_CreateRGBSurface(0, text_pixel_width, text_pixel_height, 32, 0x00ff0000, 0x0000ff00, 0x000000ff, 0xff000000);
+    SDL_Rect dstrect = {};
 
-    SDL_Rect dstrect;
-    memset(&dstrect, 0, sizeof(dstrect));
-
+    int i=0;
     foreach (const Strip &st, strips)
     {
+        if (kTTFDebug)
+            ReportSDL("Rendering strip %d/%d", i, (int)strips.size());
         if (st.text.size())
         {
+            ASSERT(st.font);
             SDL_Surface* initial = TTF_RenderUTF8_Blended(st.font, st.text.c_str(), st.color);
             if (initial)
             {
-                SDL_SetSurfaceBlendMode(initial, SDL_BLENDMODE_NONE);
-                SDL_BlitSurface(initial, 0, intermediary, &dstrect);
+                ASSERT(initial->w == st.pixel_width || st.pixel_width == -1);
+                ASSERT(initial->h <= line_pixel_height + 1);
+                if (SDL_SetSurfaceBlendMode(initial, SDL_BLENDMODE_NONE))
+                    ReportSDLErr("SDL_SetSurfaceBlendMode");
+                if (SDL_BlitSurface(initial, NULL, intermediary, &dstrect))
+                    ReportSDLErr("SDL_BlitSurface");
                 SDL_FreeSurface(initial);
             }
             else
@@ -698,12 +753,13 @@ int OL_StringImage(OutlawImage *img, const char* str, float size, int _font, flo
             }
         }
 
-        if (st.pixel_width < 0.f) {
-            dstrect.y += font_pixel_height;
+        if (st.pixel_width < 0) {
+            dstrect.y += line_pixel_height;
             dstrect.x = 0;
         } else {
             dstrect.x += st.pixel_width;
         }
+        i++;
     }
 
     img->width = text_pixel_width;
@@ -717,6 +773,11 @@ int OL_StringImage(OutlawImage *img, const char* str, float size, int _font, flo
 }
 
 
+int OL_StringImage(OutlawImage *img, const char* str, float size, int font, float maxw, float maxh)
+{
+    StringRenderer ss(str, size, font);
+    return ss.StringImage(img);
+}
 
 static int keysymToKey(const SDL_Keysym &keysym)
 {
@@ -800,6 +861,7 @@ static int keysymToKey(const SDL_Keysym &keysym)
     case SDLK_KP_DIVIDE: return '/';
     case SDLK_KP_MULTIPLY: return '*';
     case SDLK_KP_PERIOD: return '.';
+    case SDLK_APPLICATION: return NSMenuFunctionKey;
     case SDLK_RSHIFT:   // fallthrough
     case SDLK_LSHIFT:   return OShiftKey;
     case SDLK_CAPSLOCK: // fallthrough

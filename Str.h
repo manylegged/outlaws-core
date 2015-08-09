@@ -63,6 +63,7 @@ inline bool utf8_iscont(char byte) { return (byte&0xc0) == 0x80; }
 
 // return a single ucs2 character from a utf8 stream
 uint utf8_getch(const char **src, size_t *srclen);
+uint utf8_getch(const std::string &str);
 
 // return byte index after advancing LEN characters in STR, starting at START
 int utf8_advance(const std::string& str, int start, int len=0);
@@ -81,7 +82,6 @@ size_t utf8_len(const std::string &str, size_t pos=0, size_t len=~0);
 // (中文/한국어/日本語 characters are double width)
 // POS and LEN are byte indexes
 size_t utf8_width(const std::string &str, size_t pos=0, size_t len=~0);
-
 
 // lexicon-ized string - basically a symbol
 // very fast to copy around, compare
@@ -211,26 +211,6 @@ inline std::string str_substr(const char* st, size_t idx, size_t len=std::string
     return std::string(st + idx, len != std::string::npos ? len : strlen(st) - idx);
 }
 
-template <typename T, typename S1, typename S2>
-inline std::string str_replace(T&& s, const S1 &a, const S2 &b)
-{
-    std::string r(std::forward<T>(s));
-    std::string::size_type n = str_len(a);
-    std::string::size_type bn = str_len(b);
-    for (std::string::size_type i = r.find(a); i != r.npos; i = r.find(a, i + bn))
-    {
-        r.replace(i, n, b);
-    }
-    return r;
-}
-
-template <typename T>
-inline std::string str_indent(T&& s, int amount)
-{
-    std::string istr = '\n' + std::string(amount, ' ');
-    return std::string(amount, ' ') + str_replace(std::forward<T>(s), "\n", istr.c_str());
-}
-
 std::string str_align(const std::string& input, char token=':');
 
 template <typename T, typename Fun>
@@ -248,10 +228,10 @@ inline std::string str_strip(T &&s, Fun func)
     return str_substr(s, st, ed-st+1);
 }
 
-inline bool str_isspace(int c)
-{
-    return 0 < c && c < 128 && isspace(c);
-}
+inline bool str_isspace(int c) { return 0 < c && c < 128 && isspace(c); }
+inline bool str_isalnum(int c) { return 0 < c && c < 128 && isalnum(c); }
+inline bool str_isalpha(int c) { return 0 < c && c < 128 && isalpha(c); }
+inline bool str_isdigit(int c) { return 0 < c && c < 128 && isdigit(c); }
 
 template <typename T>
 inline std::string str_strip(T &&s)
@@ -268,7 +248,7 @@ inline std::string str_strip(const std::string &s)
 inline std::string str_chomp(const std::string &s)
 {
     int ed=(int) s.size()-1;
-    while (str_isspace(s[ed])) {
+    while (ed < s.size() && str_isspace(s[ed])) {
         ed--;
     }
     return s.substr(0, ed+1);
@@ -277,11 +257,26 @@ inline std::string str_chomp(const std::string &s)
 inline std::string str_chomp(std::string &&s)
 {
     int ed=(int) s.size()-1;
-    while (str_isspace(s[ed])) {
+    while (ed < s.size() && str_isspace(s[ed])) {
         ed--;
     }
     s.resize(ed+1);
     return s;
+}
+
+
+inline const char* str_tocstr(const char *v) { return v; }
+inline const char* str_tocstr(const std::string &v) { return v.c_str(); }
+inline const char* str_tocstr(const lstring &v) { return v.c_str(); }
+
+inline bool str_equals(const char* a, const char* b)
+{
+    return (!a && !b) || (a && b && strcmp(a, b) == 0);
+}
+
+inline bool str_equals(const std::string &a, const std::string &b)
+{
+    return a == b;
 }
 
 inline bool str_startswith(const char* str, const char* prefix)
@@ -298,24 +293,36 @@ inline bool str_startswith(const char* str, const char* prefix)
     return true;
 }
 
-inline const char* str_tocstr(const char *v) { return v; }
-inline const char* str_tocstr(const std::string &v) { return v.c_str(); }
-inline const char* str_tocstr(const lstring &v) { return v.c_str(); }
-
-inline bool str_equals(const char* a, const char* b)
-{
-    return (!a && !b) || (a && b && strcmp(a, b) == 0);
-}
-
-inline bool str_equals(const std::string &a, const std::string &b)
-{
-    return a == b;
-}
-
 template <typename S1, typename S2>
 inline bool str_startswith(const S1& s1, const S2& s2)
 {
     return str_startswith(str_tocstr(s1), str_tocstr(s2));
+}
+
+template <typename T, typename S1, typename S2>
+inline std::string str_replace(const T &s, const S1 &a, const S2 &b)
+{
+    std::string r;
+    const std::string::size_type sn = str_len(s);
+    const std::string::size_type n = str_len(a);
+    for (std::string::size_type i = 0; i != sn; )
+    {
+        if (str_startswith(&s[i], a)) {
+            r += b;
+            i += n;
+        } else {
+            r += s[i];
+            i++;
+        }
+    }
+    return r;
+}
+
+template <typename T>
+inline std::string str_indent(T&& s, int amount)
+{
+    std::string istr = '\n' + std::string(amount, ' ');
+    return std::string(amount, ' ') + str_replace(std::forward<T>(s), "\n", istr.c_str());
 }
 
 inline bool str_endswith(const char* str, const char* pfx)
@@ -435,6 +442,12 @@ std::string str_join_keys(const S &sep, const A &begin, const A &end)
     return result;
 }
 
+template <class S, class A>
+std::string str_join_keys(const S &sep, const A &vec)
+{
+    return str_join_keys(sep, std::begin(vec), std::end(vec));
+}
+
 struct str_wrap_options_t {
     int         width   = 70;
     const char *newline = "\n";
@@ -507,9 +520,9 @@ long chr_unshift(long chr);
 
 std::string str_demangle(const char* str);
 
-inline bool issym(const int c)
+inline bool str_issym(int c)
 {
-    return c == '_' || (0 < c && c < 128 && isalpha(c));
+    return c == '_' || str_isalpha(c);
 }
 
 inline std::string str_get_extension(const std::string &str)
@@ -584,7 +597,7 @@ inline std::string str_interpolate_variables(std::string str, const Fun& fun)
     for (size_t idx = str.find("$"); idx != std::string::npos; idx=str.find("$", idx))
     {
         int len=1;
-        for (; idx+len<str.size() && issym(str[idx+len]); len++);
+        for (; idx+len<str.size() && str_issym(str[idx+len]); len++);
         std::string fname = str.substr(idx+1, len-1);
         str.replace(idx, len, fun(fname));
     }
@@ -597,6 +610,8 @@ std::string str_urldecode(const std::string &value);
 
 std::string str_time_format(float seconds);
 std::string str_reltime_format(float seconds);
+std::string str_timestamp();
+
 
 // return one, two, three, etc
 std::string str_numeral_format(int num);

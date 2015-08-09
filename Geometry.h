@@ -223,7 +223,7 @@ inline int2 round_int(float2 f) { return int2(round_int(f.x), round_int(f.y)); }
 inline float2 angleToVector(float angle) { return float2(std::cos(angle), std::sin(angle)); }
 inline float vectorToAngle(float2 vec) { return std::atan2(vec.y, vec.x); }
 
-// return [-1, 1] indicating how closely the angles are alligned
+// return [-1, 1] indicating how closely the angles are aligned
 inline float dotAngles(float a, float b)
 {
     //return dot(angleToVector(a), angleToVector(b));
@@ -247,6 +247,17 @@ template <typename T>
 inline T sign(T val)
 {
     return (T(0) < val) - (val < T(0));
+}
+
+inline float2 sign(float2 v) { return float2(sign(v.x), sign(v.y)); }
+inline float3 sign(float3 v) { return float3(sign(v.x), sign(v.y), sign(v.z)); }
+inline float4 sign(float4 v) { return float4(sign(v.x), sign(v.y), sign(v.z), sign(v.w)); }
+
+
+template <typename T>
+inline int sign_int(T val, T threshold=epsilon)
+{
+    return (val > threshold) ? 1 : (val < -threshold) ? -1 : 0;
 }
 
 inline float2 rotate90(float2 v)  { return float2(-v.y, v.x); }
@@ -273,7 +284,7 @@ inline float clamp(float v, float mn=0.f, float mx=1.f) { return min(max(v, mn),
 inline float2 clamp(float2 v, float2 mn, float2 mx) { return float2(clamp(v.x, mn.x, mx.x),
                                                                     clamp(v.y, mn.y, mx.y)); }
 
-inline float2 clamp_length(float2 v, float mn, float mx)
+inline float2 clamp_length(float2 v, float mn=0.f, float mx=1.f)
 {
     const float len = length(v);
     if (len < mn)
@@ -398,6 +409,16 @@ inline float2 normalize_orzero(float2 a)
         float l = length(a);
         return a / l;
     }
+}
+
+inline float2 pow(float2 v, float e)
+{
+    return float2(std::pow(v.x, e), std::pow(v.y, e));
+}
+
+inline float3 pow(const float3 &v, float e)
+{
+    return float3(std::pow(v.x, e), std::pow(v.y, e), std::pow(v.z, e));
 }
 
 inline float2 maxlen(float max, float2 v)
@@ -923,6 +944,11 @@ inline bool containedCircleInRectangle(const float2 &circle, float circleR, cons
 {
     return intersectPointRectangle(circle, rectP, rectR - float2(circleR));
 }
+
+struct Rect2d {
+    float2 pos;
+    float2 rad;
+};
 
 struct AABBox {
     

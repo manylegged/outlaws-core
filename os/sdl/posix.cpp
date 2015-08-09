@@ -103,14 +103,18 @@ static void print_backtrace()
     memset(buffer, 0, sizeof(buffer));
     const int count = backtrace(buffer, maxbuf);
 
-    char **strings = backtrace_symbols(buffer, count);
+    char **strings = get_backtrace_symbols(buffer, count);
 
     const uint64 current_tid = get_current_tid();
     ReportPOSIX("Dumping stack for thread %#llx '%s'", (uint64)current_tid,
                 map_get(_thread_name_map(), (uint64)current_tid).c_str());
     for (int i=0; i<count; i++) {
         string func;
+        
         if (strings && strings[i]) {
+#if __APPLE__
+            func = strings[i];
+#else
             vector<string> fields = str_split(' ', strings[i]);
             for (int j=0; j<fields.size(); ) {
                 if (fields[j].size() == 0)
@@ -133,6 +137,7 @@ static void print_backtrace()
             } else {
                 func = strings[i];
             }
+#endif
         }
         ReportPOSIX("%2d. Called from %p %s", i, buffer[i], func.c_str());
     }
@@ -232,7 +237,7 @@ static void posix_signal_handler(int sig, siginfo_t *siginfo, void *context)
     if (sig == SIGTERM || sig == SIGINT)
     {
         if (OLG_OnClose()) {
-            ReportPOSIX("Caught Control-C and already closing - Calling exit()");
+            ReportPOSIX("Caught Control-C and already closing - Calling exit()\n");
             exit(1);
         }
         g_signaldepth--;

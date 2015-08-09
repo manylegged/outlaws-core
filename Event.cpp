@@ -26,22 +26,28 @@
 #include "StdAfx.h"
 #include "Event.h"
 
+static DEFINE_CVAR(float, kGamepadKeyThreshold, 0.5f);
+
 string Event::toString() const
 {
     const string skey = keyToString(key);
-    switch(type)
+    string str;
+    switch (type)
     {
-    case KEY_DOWN:      return str_format("KEY_DOWN %s (pad %d)", skey.c_str(), which);
-    case KEY_UP:        return str_format("KEY_UP %s", skey.c_str());
-    case MOUSE_DOWN:    return str_format("MOUSE_DOWN %d (%.f, %.f)", (int)key, pos.x, pos.y);
-    case MOUSE_UP:      return str_format("MOUSE_UP %d (%.f, %.f)", (int)key, pos.x, pos.y);
-    case MOUSE_DRAGGED: return str_format("MOUSE_DRAGGED %d (%.f, %.f)",(int)key, pos.x, pos.y);
-    case MOUSE_MOVED:   return str_format("MOUSE_MOVED, (%.f, %.f)", pos.x, pos.y);
-    case SCROLL_WHEEL:  return str_format("SCROLL_WHEEL %g", vel.y);
-    case GAMEPAD_AXIS:  return str_format("GAMEPAD_AXIS %s %g (pad %d)", skey.c_str(), pos.y, which);
-    case LOST_FOCUS:    return str_format("LOST_FOCUS");
-    default:            return "unknown";
+    case KEY_DOWN:      str = str_format("KEY_DOWN %s (pad %d)", skey.c_str(), which); break;
+    case KEY_UP:        str = str_format("KEY_UP %s", skey.c_str()); break;
+    case MOUSE_DOWN:    str = str_format("MOUSE_DOWN %d (%.f, %.f)", (int)key, pos.x, pos.y); break;
+    case MOUSE_UP:      str = str_format("MOUSE_UP %d (%.f, %.f)", (int)key, pos.x, pos.y); break;
+    case MOUSE_DRAGGED: str = str_format("MOUSE_DRAGGED %d (%.f, %.f)",(int)key, pos.x, pos.y); break;
+    case MOUSE_MOVED:   str = str_format("MOUSE_MOVED, (%.f, %.f)", pos.x, pos.y); break;
+    case SCROLL_WHEEL:  str = str_format("SCROLL_WHEEL %g", vel.y); break;
+    case GAMEPAD_AXIS:  str = str_format("GAMEPAD_AXIS %s %g (pad %d)", skey.c_str(), pos.y, which); break;
+    case LOST_FOCUS:    str = str_format("LOST_FOCUS"); break;
+    default:            str = "unknown"; break;
     }
+    if (synthetic)
+        str += " (synthetic)";
+    return str;
 }
 
 bool Event::isMouse() const
@@ -122,29 +128,98 @@ int KeyState::getModKey(int key) const
     return mkey;
 }
 
+static DEFINE_CVAR(bool, kGamepadButtonColors, false);
+
+static string unicode_key(int color, int chr)
+{
+    string s = utf8_encode(chr);
+    if (kGamepadButtonColors)
+        s = str_format("^%c", ('0' + color)) + s + "^7";
+    return s;
+}
+
+static const char* getGamepadKey(uint key)
+{
+    const KeyState::GamepadStyle style = KeyState::instance().getStyle();
+    if (style == KeyState::DEFAULT)
+    {
+        switch (key) {
+        case GamepadA:             return kGamepadButtonColors ? "^2A^7" : "A";
+        case GamepadB:             return kGamepadButtonColors ? "^1B^7" : "B";
+        case GamepadX:             return kGamepadButtonColors ? "^4X^7" : "X";
+        case GamepadY:             return kGamepadButtonColors ? "^3Y^7" : "Y";
+        case GamepadLeftShoulder:  return _("Left Bumper");
+        case GamepadRightShoulder: return _("Right Bumper");
+        case GamepadTriggerLeft:   return _("Left Trigger");
+        case GamepadTriggerRight:  return _("Right Trigger");
+        case GamepadBack:          return _("Back");
+        }
+    }
+    else if (style == KeyState::PLAYSTATION)
+    {
+        static const string gamepadA = unicode_key(4, 0x2715); // ✕
+        // static const string gamepadB = unicode_key(1, 0x25CB) + "^7"; // ○
+        static const string gamepadB = unicode_key(1, 0x25EF); // ◯
+        // static const string gamepadX = unicode_key(6, 0x25A1) + "^7"; // □
+        static const string gamepadX = unicode_key(6, 0x25FB); // ◻
+        static const string gamepadY = unicode_key(5, 0x25B3); // △
+        switch (key) {
+        case GamepadA:             return gamepadA.c_str();
+        case GamepadB:             return gamepadB.c_str();
+        case GamepadX:             return gamepadX.c_str();
+        case GamepadY:             return gamepadY.c_str();
+        case GamepadLeftShoulder:  return "L1";
+        case GamepadRightShoulder: return "R1";
+        case GamepadTriggerLeft:   return "L2";
+        case GamepadTriggerRight:  return "R2";
+        case GamepadBack:          return _("Share");
+        }
+    }
+    return "";
+}
+
 const char* KeyState::stringNext() const
 {
-    return gamepadActive ? "B" : _("ENTER/Click"); 
+    return gamepadActive ? getGamepadKey(GamepadB) : _("ENTER/Click"); 
 }
 
 const char* KeyState::stringYes() const
 {
-    return gamepadActive ? "A" : _("ENTER"); 
+    return gamepadActive ? getGamepadKey(GamepadA) : _("ENTER"); 
 }
 
 const char* KeyState::stringNo() const
 {
-    return gamepadActive ? "B" : _("ESC"); 
+    return gamepadActive ? getGamepadKey(GamepadB) : _("ESC"); 
 }
 
 const char* KeyState::stringDiscard() const
 {
-    return gamepadActive ? "Y" : _("DELETE"); 
+    return gamepadActive ? getGamepadKey(GamepadY) : _("DELETE"); 
 }
+
+const char* KeyState::stringStart() const
+{
+    return gamepadActive ? getGamepadKey(GamepadStart) : _("ENTER");
+}
+
 
 const char* KeyState::gamepadName() const
 {
     return OL_GetGamepadName(lastGamepad);
+}
+
+void KeyState::setLastGamepad(const Event *evt)
+{
+    const int prev = lastGamepad;
+    lastGamepad = evt->which;
+    if (prev != lastGamepad)
+    {
+        const char* name = gamepadName();
+        lastStyle = (str_contains(name, "PS4") ||
+                     str_contains(name, "PS3") ||
+                     str_contains(name, "Playstation")) ? PLAYSTATION : DEFAULT;
+    }
 }
 
 bool& KeyState::operator[](int c)
@@ -180,7 +255,7 @@ uint KeyState::keyMods() const
     return mods;
 }
 
-static uint gamepadAxis2Key(uint key, float val)
+static int gamepadAxis2Key(int key, int val)
 {
     switch (key) {
     case GamepadAxisLeftX:         return val > 0 ? GamepadLeftRight : GamepadLeftLeft;
@@ -193,24 +268,24 @@ static uint gamepadAxis2Key(uint key, float val)
     return 0;
 }
 
-static void gamepadAxis2Button(const Event *event, float before)
+static void gamepadAxis2Event(const Event *event, float last_val)
 {
-    const float current = event->pos.y;
-    if ((before == current) ||
-        (before > 0 && current > 0) ||
-        (before < 0 && current < 0))
+    const int last = sign_int(last_val, kGamepadKeyThreshold);
+    const int current = sign_int(event->pos.y, kGamepadKeyThreshold);
+    
+    if (last == current)
         return;
 
     Event evt = *event;
     
-    if (before != 0.f)
+    if (last != 0)
     {
         evt.type = Event::KEY_UP;
-        evt.key = gamepadAxis2Key(event->key, before);
+        evt.key = gamepadAxis2Key(event->key, last);
         pushEvent(&evt);
     }
 
-    if (current != 0.f)
+    if (current != 0)
     {
         evt.type = Event::KEY_DOWN;
         evt.key = gamepadAxis2Key(event->key, current);
@@ -233,7 +308,7 @@ void KeyState::OnEvent(const Event* event)
         if (GamepadA <= event->key && event->key <= GamepadAxisTriggerRightY)
         {
             gamepads[event->which].buttons[event->key - GamepadA] = (event->type == Event::KEY_DOWN);
-            lastGamepad = event->which;
+            setLastGamepad(event);
         }
         break;
 
@@ -247,7 +322,7 @@ void KeyState::OnEvent(const Event* event)
         if (!self[event->key + LeftMouseButton] ||
             self[OControlKey])
         {
-            self.cancelMouseDown();
+            cancelMouseDown();
         }
         self[event->key + LeftMouseButton] = false;
         cursorPosScreen = event->pos;
@@ -257,7 +332,7 @@ void KeyState::OnEvent(const Event* event)
     case Event::MOUSE_DRAGGED:
     {
         cursorPosScreen = event->pos;
-        if (event->type == Event::MOUSE_MOVED)
+        if (event->type == Event::KEY_DOWN && !event->synthetic && !event->isGamepad())
             gamepadActive = false;
         break;
     }
@@ -266,7 +341,8 @@ void KeyState::OnEvent(const Event* event)
         if (abs(event->pos.y) > epsilon)
         {
             gamepadActive = true;
-            lastGamepad = event->which;
+            setLastGamepad(event);
+            cancelMouseDown();
         }
 
         GamepadAxis axis;
@@ -283,14 +359,14 @@ void KeyState::OnEvent(const Event* event)
         }
 
         GamepadInstance &gi = gamepads[event->which];
-        const float before = gi.axis[axis][dim];
+        const float last = gi.axis[axis][dim];
         gi.axis[axis][dim] = event->pos.y;
         gamepadAxis[axis][dim] = event->pos.y;
-        gamepadAxis2Button(event, before);
+        gamepadAxis2Event(event, last);
         break;
     }
     case Event::GAMEPAD_ADDED:
-        lastGamepad = event->which;
+        setLastGamepad(event);
         break;
     case Event::GAMEPAD_REMOVED:
     case Event::LOST_FOCUS:
@@ -317,7 +393,7 @@ static string keyToUTF8(int key)
 
 static string rawKeyToString(int key)
 {
-    switch (key) 
+    switch (key)
     {
     case LeftMouseButton:          return _("Left Mouse");
     case RightMouseButton:         return _("Right Mouse");
@@ -354,17 +430,21 @@ static string rawKeyToString(int key)
     case NSF10FunctionKey:         return "F10";
     case NSF11FunctionKey:         return "F11";
     case NSF12FunctionKey:         return "F12";
-    case GamepadA:                 return _("Gamepad A");
-    case GamepadB:                 return _("Gamepad B");
-    case GamepadX:                 return _("Gamepad X");
-    case GamepadY:                 return _("Gamepad Y");
-    case GamepadBack:              return _("Gamepad Back");
-    case GamepadGuide:             return _("Gamepad Guide");
+    case GamepadA:
+    case GamepadB:
+    case GamepadX:
+    case GamepadY:
+    case GamepadBack:
+        return string(_("Gamepad")) + " " + getGamepadKey(key);
+    case GamepadLeftShoulder:
+    case GamepadRightShoulder:
+    case GamepadTriggerLeft:
+    case GamepadTriggerRight:
+        return getGamepadKey(key);
     case GamepadStart:             return _("Gamepad Start");
+    case GamepadGuide:             return _("Gamepad Guide");
     case GamepadLeftStick:         return _("Left Stick");
     case GamepadRightStick:        return _("Right Stick");
-    case GamepadLeftShoulder:      return _("Left Bumper");
-    case GamepadRightShoulder:     return _("Right Bumper");
     case GamepadDPadUp:            return _("DPad Up");
     case GamepadDPadDown:          return _("DPad Down");
     case GamepadDPadLeft:          return _("DPad Left");
@@ -383,8 +463,6 @@ static string rawKeyToString(int key)
     case GamepadRightDown:         return _("Right Stick Down");
     case GamepadRightLeft:         return _("Right Stick Left");
     case GamepadRightRight:        return _("Right Stick Right");
-    case GamepadTriggerLeft:       return _("Left Trigger");
-    case GamepadTriggerRight:      return _("Right Trigger");
     case Keypad0:                  return _("Keypad 0");
     case Keypad1:                  return _("Keypad 1");
     case Keypad2:                  return _("Keypad 2");
@@ -395,6 +473,7 @@ static string rawKeyToString(int key)
     case Keypad7:                  return _("Keypad 7");
     case Keypad8:                  return _("Keypad 8");
     case Keypad9:                  return _("Keypad 9");
+    case NSMenuFunctionKey:        return _("Menu");
     case KeyVolumeDown:            return _("Volume Down");
     case KeyVolumeUp:              return _("Volume Up");
     case KeyAudioNext:             return _("Play Next");
@@ -403,8 +482,33 @@ static string rawKeyToString(int key)
     case KeyAudioStop:             return _("Stop");
     case KeyAudioMute:             return _("Mute");
     case 0:                        return " ";
-    default:                       return or_(keyToUTF8(key), str_format("%#x", key));
     }
+
+    const KeyState::GamepadStyle style = KeyState::instance().getStyle();
+    if (style == KeyState::DEFAULT)
+    {
+        switch (key) {
+        case GamepadA: return _("Gamepad A");
+        case GamepadB: return _("Gamepad B");
+        case GamepadX: return _("Gamepad X");
+        case GamepadY: return _("Gamepad Y");
+        }
+    }
+    else if (style == KeyState::PLAYSTATION)
+    {
+        static const string gamepadA = "Gamepad ^5" + utf8_encode(0x2715) + "^7"; // ✕
+        static const string gamepadB = "Gamepad ^1" + utf8_encode(0x25CB) + "^7"; // ○
+        static const string gamepadX = "Gamepad ^6" + utf8_encode(0x25A1) + "^7"; // □
+        static const string gamepadY = "Gamepad ^5" + utf8_encode(0x25B3) + "^7"; // △
+        switch (key) {
+        case GamepadA: return gamepadA.c_str();
+        case GamepadB: return gamepadB.c_str();
+        case GamepadX: return gamepadX.c_str();
+        case GamepadY: return gamepadY.c_str();
+        }
+    }
+
+    return or_(keyToUTF8(key), str_format("%#x", key));
 }
 
 string keyToString(int key)

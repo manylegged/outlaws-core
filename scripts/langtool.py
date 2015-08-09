@@ -18,16 +18,16 @@ from slpp import slpp as lua
 
 import polib
 
-all_languages = [ "de", "fr", "ru", "nl", "pl", "sv", "ko", "ja", "zh" ]
+all_languages = [ "ru", "fr", "de", "es", "pt", "pl", "ja" ]
 steam_languages = {"ru":"russian", "en":"english", "de":"german", "fr":"french", "pl":"polish", "sv":"swedish",
-                   "ko":"korean", "ja":"japanese", "zh":"chinese"}
+                   "ko":"korean", "ja":"japanese", "zh":"chinese", "es":"spanish", "pt":"portugese"}
 languages = all_languages
 luafiles = ["tips", "popups", "messages", "tutorial"] # text.lua is special
 txtfiles = ["ships"]
 
 imprt = False
 export = False
-
+uselua = False
 
 def mkdir_p(path):
     try:
@@ -146,10 +146,10 @@ def po2txt(outtxt, pof):
     
     
 def printhelp():
-    print """%s
+    print """%s [-ielh] <langage0> [language1...]
 -i : import .po files to game format
 -e : export .po files from game source
--l <lang> : select language (e.g. en_US)
+-l : export translated lua files
 -h : print this message""" % sys.argv[0]
     exit(0)
 
@@ -162,6 +162,8 @@ for (opt, val) in opts:
         imprt = True
     elif opt == "-e":
         export = True
+    elif opt == "-l":
+        uselua = True
 
 if cargs:
     languages = cargs

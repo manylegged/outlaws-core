@@ -275,7 +275,7 @@ static void doMouseEvent(enum EventType type, NSEvent *theEvent)
     e.x = location.x;
     e.y = location.y;
     e.dx = [theEvent deltaX];
-    e.dy = [theEvent deltaY];
+    e.dy = -[theEvent deltaY];
     
     OLG_OnEvent(&e);
 }
@@ -379,23 +379,24 @@ static NSCursor* invisibleCursor()
     return invisibleCursor;
 }
 
-- (void)resetCursorRects
+- (void)cursorUpdate:(NSEvent *)event
 {
-    [super resetCursorRects];
-
-    [self addCursorRect:[self bounds] cursor:invisibleCursor()];
+    [invisibleCursor() set];
+    LogMessage(@"cursorUpdate");
 }
 
-- (void)updateTrackingAreas 
+- (void)updateTrackingAreas
 {
     [super updateTrackingAreas];
     [self removeTrackingArea:trackingArea];
     [trackingArea release];
     trackingArea = [[NSTrackingArea alloc] initWithRect:[self frame]
-       options: (/*NSTrackingMouseEnteredAndExited |*/
-                  NSTrackingMouseMoved |
-                  NSTrackingActiveInActiveApp)
-        owner:self userInfo:nil];
+                                                options: (//NSTrackingMouseEnteredAndExited |
+                                                    NSTrackingCursorUpdate|
+                                                    // NSTrackingInVisibleRect|
+                                                    NSTrackingMouseMoved |
+                                                    NSTrackingActiveInActiveApp)
+                                                  owner:self userInfo:nil];
     [self addTrackingArea:trackingArea];
 }
 
@@ -413,11 +414,17 @@ static NSCursor* invisibleCursor()
             Controller_HandleEvent(&evt);
         
         NSRect rectView = [self convertRectToBacking:[self bounds]];
-        glViewport (0, 0, rectView.size.width, rectView.size.height);
+        glViewport(0, 0, rectView.size.width, rectView.size.height);
         // draw the whole game
 
         @try 
         {
+            if (self->fullscreen && [NSCursor currentSystemCursor] != invisibleCursor())
+            {
+                [invisibleCursor() set];
+                // LogMessage(@"cursor hack");
+            }
+
             OLG_Draw();
         } 
         @catch (NSException* exception)
@@ -498,7 +505,6 @@ static void setupPresentationOptions(BOOL fullscreen)
     NSApplicationPresentationOptions opts = fullscreen ? kFullscreenPresentationOptions :
                                             NSApplicationPresentationDefault;
     [[NSApplication sharedApplication] setPresentationOptions:opts];
-    [[gView window] invalidateCursorRectsForView: gView];
 }
 
 - (void)windowDidEnterFullScreen:(NSNotification *)notification
@@ -573,6 +579,8 @@ static void setupPresentationOptions(BOOL fullscreen)
            selector:@selector(handleBecomeKeyNotification:)
                name:NSWindowDidBecomeKeyNotification
              object:nil ];
+
+    
 
     gView = self;
     self->fullscreen = NO;

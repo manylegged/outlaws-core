@@ -178,7 +178,7 @@ bool os_symlink_f(const char* source, const char* dest)
     return true;
 }
 
-int OL_SaveFile(const char *name, const char* data, int size)
+int OL_SaveFile(const char *name, const char* data, size_t size)
 {
     const char* fname = OL_PathForFile(name, "w");
     os_create_parent_dirs(fname);
@@ -365,18 +365,19 @@ static int so_callback(struct dl_phdr_info *info, size_t size, void *data)
     };
 
     const char* name = info->dlpi_name;
-    if (!name || name[0] == '\0')
+    if (!name || name[0] == '\0') {
         name = ((SoCallbackData*) data)->binname.c_str();
-
-    bool found = false;
-    foreach (const char* pat, patterns) {
-        if (str_contains(info->dlpi_name, pat) || info->dlpi_name[0]  == '\0') {
-            found = true;
-            break;
+    } else {
+        bool found = false;
+        foreach (const char* pat, patterns) {
+            if (str_contains(str_basename(name), pat)) {
+                found = true;
+                break;
+            }
         }
+        if (!found)
+            return 0;
     }
-    if (!found)
-        return 0;
 
     for (int j = 0; j < info->dlpi_phnum; j++) 
     {

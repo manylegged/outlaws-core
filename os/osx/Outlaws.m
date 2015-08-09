@@ -208,32 +208,38 @@ const char** OL_ListDirectory(const char* path)
  
 const char *OL_LoadFile(const char *fname)
 {
-    NSError *error = nil;
     NSString *path = pathForFileName(fname, "r");
+#if 1
+    NSError *error = nil;
     NSString *contents = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:&error];
-    
-    if (contents == nil)
-    {
-        //   NSLog(@"Error reading file at %@: %@",
-        //                          path, [error localizedFailureReason]);
+    return contents ? [contents UTF8String] : NULL;
+#else
+    NSData *data = [NSData dataWithContentsOfFile:path];
+    if (!data || [data length] == 0)
         return NULL;
-    }
-
-    // LogMessage([NSString stringWithFormat:@"load %@", path]);
-    return [contents UTF8String];
+    const char *bytes = (const char*) [data bytes];
+    if (bytes[ [data length] - 1 ] != '\0')
+        return NULL;            // FIXME never true
+    return bytes;
+#endif
 }
 
-int OL_SaveFile(const char *fname, const char* data, int size)
+int OL_SaveFile(const char *fname, const char* data, size_t size)
 {
     NSString *path = pathForFileName(fname, "w");
-    NSError *error = nil;
 
     if (!createParentDirectories(path))
         return 0;
 
-    NSString *nsdata = [NSString stringWithUTF8String:data];
+    NSError *error = nil;
+#if 0
+    // NSString *nsdata = [NSString stringWithUTF8String:data];
+    NSString *nsdata = [NSString initWithBytes:data length:size encoding:NSUTF8StringEncoding];
     BOOL success = nsdata && [nsdata writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:&error];
-    
+#else
+    NSData *nsdata = [NSData dataWithBytesNoCopy:(void*)data length:size freeWhenDone:NO];
+    BOOL success = nsdata && [nsdata writeToFile:path options:NSDataWritingAtomic error:&error];
+#endif    
     if (!success)
     {
         LogMessage([NSString stringWithFormat:@"Error writing to file at %@: %@", 
@@ -693,8 +699,8 @@ const char* OL_GetPlatformDateInfo(void)
 const char** OL_GetOSLanguages(void)
 {
     static const int kLangMax = 10;
-    static char val[kLangMax][3];
-    if (!val)
+    static char *val[kLangMax];
+    if (!val[0])
     {
         NSArray *languages = [NSLocale preferredLanguages];
         int i=0;
@@ -702,12 +708,11 @@ const char** OL_GetOSLanguages(void)
         {
             if (i >= kLangMax-1)
                 break;
-            strncpy(val[i], [lang UTF8String], 2);
+            val[i] = strndup([lang UTF8String], 2);
             i++;
         }
-        val[i][2] = '\0';
     }
-    return (const char**)val;
+    return (const char**) val;
 }
 
 const char* OL_ReadClipboard()
@@ -765,6 +770,72 @@ int OL_OpenWebBrowser(const char* url)
     return 1;
 }
 
+const int OL_IsSandboxed(void)
+{
+    static int sandboxed = -1;
+    if (sandboxed == -1)
+    {
+        NSRange r = [getBaseSavePath() rangeOfString:@"/Library/Containers/"];
+        sandboxed = (r.length != 0);
+    }
+    return sandboxed;
+}
+
+const char* OL_SandboxSaveFile(const char* filename, const char* ext)
+{
+    NSOpenGLContext *glctx = [NSOpenGLContext currentContext];
+
+    if (!glctx)
+        return NULL;
+
+    NSSavePanel *save = [NSSavePanel savePanel];
+
+    NSString *next = [NSString stringWithUTF8String:ext];
+    NSString *fname = [NSString stringWithUTF8String:filename];
+
+    // hack ahacka hackity...
+    if ([next isEqualToString:@"lua.gz"])
+    {
+        fname = [fname stringByAppendingString:@".lua"];
+        next = @"gz";
+    }
+    
+    [save setNameFieldStringValue:fname];
+    [save setAllowedFileTypes:[NSArray arrayWithObject:next]];
+    [save setAllowsOtherFileTypes:NO];
+
+    NSInteger result = [save runModal];
+    const char* res = (result == NSOKButton) ? [[[save URL] path] UTF8String] : NULL;
+
+    if (glctx)
+        [glctx makeCurrentContext];
+    return res;
+}
+
+const char* OL_SandboxOpenFile(void)
+{
+    NSOpenGLContext *glctx = [NSOpenGLContext currentContext];
+
+    if (!glctx)
+        return NULL;
+
+    NSOpenPanel *open = [NSOpenPanel openPanel];
+
+    [open setCanChooseDirectories:NO];
+    [open setAllowsMultipleSelection:NO];
+    
+    [open setAllowedFileTypes:@[@"lua", @"gz"]];
+    [open setAllowsOtherFileTypes:NO];
+
+    NSInteger result = [open runModal];
+    const char* res = (result == NSOKButton) ? [[[open URL] path] UTF8String] : NULL;
+
+    if (glctx)
+        [glctx makeCurrentContext];
+    return res;
+}
+
+
 int OL_HasTearControl(void)
 {
     return 0;
@@ -809,6 +880,39 @@ void dump_loaded_shared_objects()
             }
         }
     }
+}
+
+char **get_backtrace_symbols(void **buffer, int count)
+{
+    static const int bufsize = 1024;
+    char path[bufsize];
+    uint32_t size = bufsize;
+    if (_NSGetExecutablePath(path, &size) != 0)
+        return NULL;
+
+    char command[bufsize];
+    char* ptr = command + sprintf(command, "atos -o %s -s %#llx", path, s_dyld_slide);
+    for (int i=0; i<count; i++)
+        ptr += sprintf(ptr, " %#llx", (uint64_t)buffer[i]);
+
+    FILE *fil = popen(command, "r");
+    if (!fil)
+        return NULL;
+
+    char **buf = calloc(count, sizeof(void*));
+
+    char outp[bufsize];
+    for (int i=0; i<count && fgets(outp, bufsize, fil) != NULL; i++)
+    {
+        const int len = strlen(outp);
+        if (len < 2) {
+            buf[i] = NULL;
+            continue;
+        }
+        outp[len-1] = '\0';     // remove newline
+        buf[i] = strdup(outp);
+    }
+    return buf;
 }
 
 void posix_oncrash(const char* msg)

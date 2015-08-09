@@ -23,6 +23,7 @@ import bisect
 import cProfile
 import getopt
 import subprocess
+import shutil
 
 UNDNAME = "C:/Program Files (x86)/Microsoft Visual Studio 12.0/VC/bin/undname.exe"
 DIA2DUMP = "C:/Users/Arthur/Documents/DIA2Dump/Release/Dia2Dump.exe"
@@ -32,10 +33,12 @@ if sys.platform.startswith("darwin"):
     OUTLAWS_WIN32 = ["win32",
                      "/Volumes/BOOTCAMP/Users/Arthur/Documents/outlaws/win32",
                      "/Volumes/Users/Arthur/Documents/outlaws/win32"] # thor
+    OUTLAWS_LINUX = ["linux", "linux/symbols", "/Volumes/arthur/outlaws/linux"]
 else:
     PDB_SYMBOLS = ["C:/symbols",
                    "//THOR/Users/Arthur/AppData/Local/Temp/SymbolCache"]
     OUTLAWS_WIN32 = ["win32", "//THOR/Users/Arthur/Documents/outlaws/win32"]
+    OUTLAWS_LINUX = ["linux", "linux/symbols"]
 
 REL_SYM_PATH = {"ReassemblyRelease":["steam", "release"],
                 "ReassemblyBuilder":["builder"],
@@ -48,8 +51,16 @@ TRIAGE_IGNORE_TRACE = set(["posix_signal_handler(int, siginfo_t*, void*)", # cla
                            "posix_signal_handler(int, __siginfo*, void*)", # gcc
                            "_sigtramp", "_init", "_L_unlock_13", "0x0",
                            "posix_print_stacktrace", "print_backtrace()", "OL_OnTerminate",
-                           "void terminate()", "_Call_func"
-                       ])
+                           "void terminate()", "_Call_func",
+                           
+                          "_callthreadstartex", "_threadstartex",
+                           "kernel32.dll", "ntdll.dll",
+
+                           # always together with mtx_do_lock
+                          "__Mtx_lock",
+                           "bool Concurrency::critical_section::_Acquire_lock",
+                           "void Concurrency::critical_section::lock()",
+                           "void Concurrency::details::LockQueueNode::UpdateQueuePosition"])
 
 ROOT = "./"
 
@@ -62,6 +73,14 @@ def parse_version(ver):
     except:
         return None
 
+def mkdir_p(path):
+    try:
+        os.makedirs(path)
+    except OSError as exc: # Python >2.5
+        import errno
+        if exc.errno == errno.EEXIST and os.path.isdir(path):
+            pass
+        else: raise
     
 class map_entry:
     def __init__(self, sym, base):
@@ -206,16 +225,16 @@ def get_dll_symbols(modname):
 
 
 def get_so_symbols(modname, version=""):
-    gzpath = os.path.join(ROOT, "linux", "symbols", os.path.basename(modname) + version + ".elf.gz")
-    if not os.path.exists(gzpath):
+    for base in OUTLAWS_LINUX:
+        gzpath = os.path.join(ROOT, base, os.path.basename(modname) + version + ".elf.gz")
+        if os.path.exists(gzpath):
+            return "elf", gzip.open(gzpath)        
         if os.path.exists(modname):
             fil = gzip.open(gzpath, "w")
             fil.write(subprocess.check_output(READELF % modname, shell=True))
             fil.close()
-        else:
-            return None, []
-    return "elf", gzip.open(gzpath)
-    
+    return None, []
+
 
 def get_symbol_type_handle(modname, version):    
     if modname.endswith(".dll"):
@@ -226,7 +245,7 @@ def get_symbol_type_handle(modname, version):
         basename = os.path.splitext(modname)[0]
         platform = "win32" if modname.endswith(".exe") else "linux"
         dirns = REL_SYM_PATH.get(basename, "")
-        symbol_path = OUTLAWS_WIN32 if platform == "win32" else [platform]
+        symbol_path = OUTLAWS_WIN32 if platform == "win32" else OUTLAWS_LINUX
         version_roots = [os.path.join(ROOT, p, dirn, version)
                          for p in symbol_path
                          for dirn in dirns]
@@ -237,7 +256,9 @@ def get_symbol_type_handle(modname, version):
             # print "using", paths[0]
             return typ, gzip.open(paths[0])
         if platform == "linux" and sys.platform.startswith("linux"):
-            return get_so_symbols(os.path.join(ROOT, "linux", modname), version)
+            ret = get_so_symbols(modname, version)
+            if ret[0]:
+                return ret
         # try earlier version (Only a few days tolerance)
         version_list = glob_files(os.path.join(os.path.dirname(x), "*_*_*/") for x in version_roots)
         vdate = parse_version(version)
@@ -375,6 +396,7 @@ def parse_symbol_map(modname, version):
         print "WARNING: No symbols found for %s@%s" % (modname, version)
         return entries
 
+    # print "%d entries from %s@%s" % (len(entries), modname, version)
     assert len(entries) > 0, "%s, %s, %s" % (typ, handle, entries)
     handle.close()
     entries.sort(key=lambda x: x.base)
@@ -745,18 +767,17 @@ def extract_callstack(logf, opts, triage=None, handlers=None):
                 line = line[:m.start()] + fmt + line[m.end():]
                 line = line.replace("[win32] ", "").replace("called from", "from")
 
-            if (triage != None and \
-                func and func not in TRIAGE_IGNORE_TRACE and
-                (len(stacktrace) == 0 or stacktrace[-1] != func)):
-                if has_game:
-                    trace_has_game = True
+            if (triage != None and func):
                 if func.endswith (".DLL"):
                     func = func.lower()
                 if "(" in func:
                     func = func[:func.index("(")]
-                stacktrace.append(func)
-                if len(stacktrace) > TRIAGE_STACK_SIZE and trace_has_game:
-                    break
+                if func not in TRIAGE_IGNORE_TRACE and (len(stacktrace) == 0 or stacktrace[-1] != func):
+                    if has_game:
+                        trace_has_game = True
+                    stacktrace.append(func)
+                    if len(stacktrace) > TRIAGE_STACK_SIZE and trace_has_game:
+                        break
         elif triage is None:
             m = hexre.search(line)
             if m:
@@ -778,15 +799,14 @@ def extract_callstack(logf, opts, triage=None, handlers=None):
 
     if triage != None:
         ver = version or "<unknown>"
-        key = "<no stack>"
-        if stacktrace:
-            key = " <- ".join(stacktrace)
-            if len(key) > 100:
-                key = key.replace(" <- ", "\n   <- ")
+        key = tuple(stacktrace)
         triage.setdefault(ver, dict()).setdefault(key, []).append(logf)
     if data != sys.stdin:
         data.close()
 
+TOP_FUNC_COUNT = 10
+TOP_LOGS_PER_STACK_COUNT = 5
+TRIAGE_NOISE_THRESHOLD = 1
 
 def do_triage(files, ops):
     triage = {}
@@ -798,18 +818,39 @@ def do_triage(files, ops):
         extract_callstack(fil, ops1, triage, handlers)
     tfiles = []
     for version, data in sdict(triage, lambda x: x[0]):
+        # data is dict(stacktrace -> list of logs)
         total = sum(len(x) for x in data.itervalues())
         print "============= %s (%d total) ================" % (version, total)
+        func_counts = {}
+        for stack, files in data.iteritems():
+            for func in stack:
+                func_counts[func] = func_counts.get(func, 0) + len(files)
+        for func, count in sdict(func_counts, lambda x: x[1])[:TOP_FUNC_COUNT]:
+            print "%d. %s" % (count, func)
+        print ""
         for stack, files in sdict(data, lambda x: len(x[1])):
-            print "%d(%.1f%%). %s" % (len(files), 100.0 * len(files) / total, stack)
-            for fl in sorted(files):
+            pstack = "<no stack>"
+            if stack:
+                pstack = " <- ".join(stack)
+                if len(pstack) > 100:
+                    pstack = pstack.replace(" <- ", "\n   <- ")
+            perc = 100.0 * len(files) / total
+            print "%d(%.1f%%). %s" % (len(files), perc, pstack)
+            if (perc < TRIAGE_NOISE_THRESHOLD):
+                print "stopping - below noise threshold"
+                break
+            for fl in sorted(files, reverse=True)[:TOP_LOGS_PER_STACK_COUNT]:
                 print "     ", fl.replace(os.path.expanduser("~"), "~")
                 tfiles.append(fl)
+            if len(files) > TOP_LOGS_PER_STACK_COUNT:
+                print "    ..."
     for h in handlers:
         h.onFinish()
     # exit(0)
 
     print ""
+    print ""
+    print "printing %d logs" % len(tfiles)
     print ""
     for fl in tfiles:
         print "#" * (len(fl) + 4)
@@ -823,7 +864,8 @@ def main():
     ops = extract_opts()
 
     triage = False
-    opts, args = getopt.getopt(sys.argv[1:], "av:t")
+    copy = False
+    opts, args = getopt.getopt(sys.argv[1:], "av:tc")
     for (opt, val) in opts:
         if opt == "-a":
             ops.printall = True
@@ -833,11 +875,44 @@ def main():
             ops.version = parse_version(val)
         if opt == "-t":
             triage = True
+        if opt == "-c":
+            copy = True
     
     print "-*- mode: compilation -*-"
     print "ROOT=%s" % ROOT
     print "version=%s" % str(ops.version)
-    if triage:
+
+    if copy:
+        print "copying symbols from network"
+        paths = glob_files([os.path.join(p, "steam/*/") for p in (OUTLAWS_WIN32 + OUTLAWS_LINUX) if p.startswith("/")])
+        # print "checking", paths
+        verignore = 0
+        exists = 0
+        for p in paths:
+            base, ver = os.path.split(p[:-1])
+            base, typ = os.path.split(base)
+            base, osd = os.path.split(base)
+            # print ver, typ, osd
+
+            if ops.version == datetime.min:
+                ops.version = datetime.now() - timedelta(weeks=1)
+            vtime = parse_version(ver)
+            if vtime < ops.version:
+                verignore += 1
+                continue
+            lpath = os.path.join(ROOT, osd, typ, ver)
+            if os.path.exists(lpath):
+                exists += 1
+                continue
+            print "copy", p, "to", lpath
+            # mkdir_p(lpath)
+            try:
+                shutil.copytree(p, lpath)
+            except Exception as e:
+                print e
+            print "done"
+        print "%d total builds, %d ignored based on date, %d already local" % (len(paths), verignore, exists)
+    elif triage:
         base = os.path.join(ROOT, "server/server_sync/crash")
         files = []
         all_files = safe_listdir(base)

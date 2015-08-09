@@ -204,7 +204,6 @@ struct ShaderIridescent final : public ShaderProgramBase, public ShaderBase<Shad
 
     int SourceColor0;
     int SourceColor1;
-    int TimeU;
     int TimeA;
 
     void LoadTheProgram()
@@ -213,7 +212,6 @@ struct ShaderIridescent final : public ShaderProgramBase, public ShaderBase<Shad
         GET_ATTR_LOC(SourceColor0);
         GET_ATTR_LOC(SourceColor1);
         GET_ATTR_LOC(TimeA);
-        GET_UNIF_LOC(TimeU);
     }
 
     void UseProgram(const ShaderState& input, const VertexPos2ColorTime* ptr, const VertexPos2ColorTime* base) const
@@ -222,14 +220,13 @@ struct ShaderIridescent final : public ShaderProgramBase, public ShaderBase<Shad
         vertexAttribPointer(SourceColor0, &ptr->color, base);
         vertexAttribPointer(SourceColor1, &ptr->color1, base);
         vertexAttribPointer(TimeA, &ptr->time, base);
-        glUniform1f(TimeU, globals.renderTime);
     }
 };
 
 struct ShaderResource : public ShaderProgramBase, public ShaderBase<ShaderResource> {
 
     int SourceColor0, SourceColor1, Radius;
-    int ToPixels, Time;
+    int ToPixels;
     
     void LoadTheProgram()
     {
@@ -238,7 +235,6 @@ struct ShaderResource : public ShaderProgramBase, public ShaderBase<ShaderResour
         GET_ATTR_LOC(SourceColor1);
         GET_ATTR_LOC(Radius);
         GET_UNIF_LOC(ToPixels);
-        GET_UNIF_LOC(Time);
     }
 
     mutable float pointsToPixels = 1.f;
@@ -250,27 +246,23 @@ struct ShaderResource : public ShaderProgramBase, public ShaderBase<ShaderResour
         vertexAttribPointer(SourceColor1, &ptr->color1, base);
         vertexAttribPointer(Radius, &ptr->time, base);
         glUniform1f(ToPixels, pointsToPixels);
-        glUniform1f(Time, globals.renderTime);
     }
 };
 
 struct ShaderWormhole : public ShaderProgramBase, public ShaderBase<ShaderWormhole> {
 
     int SourceColor0, SourceColor1, TexCoord;
-    int Time;
     
     void LoadTheProgram()
     {
         LoadProgram("ShaderWormhole");
         GET_ATTR_LOC(TexCoord);
-        GET_UNIF_LOC(Time);
     }
 
     void UseProgram(const ShaderState& input, const VertexPos2ColorTex* ptr, const VertexPos2ColorTex* base) const
     {
         UseProgramBase(input, &ptr->pos, base);
         vertexAttribPointer(TexCoord, &ptr->tex, base);
-        glUniform1f(Time, globals.renderTime);
     }
 };
 
@@ -361,7 +353,7 @@ struct ShaderTexture final : public ShaderTextureBase, public ShaderBase<ShaderT
 
 struct ShaderTextureWarp final : public ShaderTextureBase, public ShaderBase<ShaderTextureWarp> {
 
-    GLuint texture1, warpTex, SourceColor, SourceTexCoord, camWorldPos, camWorldSize, time;
+    GLuint texture1, warpTex, SourceColor, SourceTexCoord, camWorldPos, camWorldSize;
 
     mutable float2 camPos;
     mutable float2 camSize;
@@ -374,7 +366,6 @@ struct ShaderTextureWarp final : public ShaderTextureBase, public ShaderBase<Sha
         GET_UNIF_LOC(SourceColor);
         GET_UNIF_LOC(camWorldPos);
         GET_UNIF_LOC(camWorldSize);
-        GET_UNIF_LOC(time);
         GET_ATTR_LOC(SourceTexCoord);
     }
 
@@ -393,7 +384,6 @@ struct ShaderTextureWarp final : public ShaderTextureBase, public ShaderBase<Sha
         glUniform1i(warpTex, 1);
         glUniform2fv(camWorldPos, 1, &camPos[0]);
         glUniform2fv(camWorldSize, 1, &camSize[0]);
-        glUniform1f(time, globals.renderTime);
 
         float4 c = abgr2rgbaf(ss.uColor);
         glUniform4fv(SourceColor, 1, &c[0]); 

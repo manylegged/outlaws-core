@@ -67,7 +67,12 @@ struct WidgetBase {
 
     void setAdjacent(const WidgetBase &last, float2 rpos)
     {
-        position = last.position + (last.size + size + 2.f * kButtonPad) * (rpos / 2.f);
+        position = last.position + (last.size + size + 4.f * kButtonPad) * (rpos / 2.f);
+    }
+
+    void setAboveBelow(const WidgetBase &last, float2 rpos)
+    {
+        position = last.position + (last.size + flipX(size) + justY(4.f * kButtonPad)) * (rpos / 2.f);
     }
 };
 
@@ -158,7 +163,7 @@ struct Button : public ButtonBase
     float2 getTextSize() const;
     virtual void renderButton(DMesh& mesh, bool selected=false);
     virtual void renderContents(const ShaderState &s_);
-    
+
     void setEscapeKeys() { setKeys({ EscapeCharacter, GamepadB });
                            subtext = KeyState::instance().stringNo(); }
     void setReturnKeys() { setKeys({ EscapeCharacter, '\r', GamepadA, GamepadB });
@@ -172,8 +177,15 @@ struct Button : public ButtonBase
 
 };
 
+struct URLButton : public Button {
+    string url;
+    URLButton() : Button() {}
+    URLButton(const string &name, const string &u) : Button(name), url(u) {}
+    bool HandleEvent(const Event* event, bool *isActivate, bool *isPress=NULL);
+};
 
-struct Scrollbar : public WidgetBase {
+
+struct Scrollbar final : public WidgetBase{
 
     int         first   = 0;    // first visible item
     int         visible   = 0;    // number of visible items
@@ -191,6 +203,8 @@ struct Scrollbar : public WidgetBase {
     void render(DMesh &mesh);
     bool HandleEvent(const Event *event);
     void makeVisible(int row);
+
+    Rect2d thumb() const;
 };
 
 
@@ -199,10 +213,12 @@ struct TextInputBase : public WidgetBase {
     deque<string>        lines;
     std::recursive_mutex mutex; // for lines
     float                textSize  = 12;
-    bool                 fixedSize = false;
+    bool                 fixedWidth = true;
+    bool                 fixedHeight = true;
+    bool                 wrapText = false;
     Scrollbar            scrollbar;
     
-    int2 sizeChars = int2(80, 2);
+    int2 sizeChars = int2(20, 1);
     int2 startChars;
     int2 cursor;
     bool active      = false;   // is currently editable?
@@ -232,15 +248,16 @@ struct TextInputBase : public WidgetBase {
         }
         return s;
     }
+    
+    string str() { return getText(); }
 
-    void setText(const char* text, bool setSize=false);
+    void setText(const char* text);
     void setLines(const vector<string> &lines);
 
     bool HandleEvent(const Event* event, bool *textChanged=NULL);
 
     void popText(int chars);          // remove at end
-    void pushText(const char *txt, int linesback=1);   // insert at end
-    void pushText(const string& str, int linesback=1) { pushText(str.c_str(), linesback); }
+    void pushText(string str, int linesback=1);
     void insertText(const char *txt); // insert at cursor
 
     void scrollForInput()
@@ -446,7 +463,7 @@ struct OptionEditor {
     OptionEditor(int *u, const char* lbl, int states, const vector<const char*> tt)
     {
         init(INT, (void*) u, lbl, tt, 0.f, (float) states-1, states);
-    } 
+    }
 
     OptionEditor(int *u, const char* lbl, int low, int increment, int states, const vector<const char*> tt)
     {
@@ -494,9 +511,11 @@ struct ColorPicker : public WidgetBase {
 
 struct ITabInterface {
 
+    bool m_isActiveTab = false;
+
     virtual bool HandleEvent(const Event* event)=0;
-    virtual void renderTab(float2 center, float2 size, float foreground, float introAnim)=0;
-    virtual bool onSwapOut() { return true; }
+    virtual void renderTab(const View &view)=0;
+    virtual void onSwapOut() { }
     virtual void onSwapIn() {}
     virtual void onStep() {}
     
@@ -505,12 +524,15 @@ struct ITabInterface {
 };
 
 
+struct KeyBinding;
+
 struct TabWindow : public WidgetBase {
 
     struct TabButton final : public ButtonBase {
-        string         text;
-        ITabInterface *interface = NULL;
-        int            ident     = -1;
+        const KeyBinding *key = NULL;
+        string            text;
+        ITabInterface    *interface = NULL;
+        int               ident     = -1;
 
         void renderButton(DMesh &mesh, bool selected=false);
     };
@@ -525,9 +547,8 @@ struct TabWindow : public WidgetBase {
 
     vector<TabButton> buttons;
     int               selected = 0;
-    float             alpha2 = 1.f;
 
-    int addTab(string txt, int ident, ITabInterface *inf);
+    int addTab(string txt, int ident, ITabInterface *inf, const KeyBinding *key=NULL);
 
     int getTab() const { return selected; }
     ITabInterface* getActive() { return buttons[selected].interface; }
@@ -537,10 +558,11 @@ struct TabWindow : public WidgetBase {
     float2 getContentsSize() const { return size - float2(4.f * kPadDist) - float2(0.f, getTabHeight()); }
     float2 getContentsStart() const { return getContentsCenter() - 0.5f * getContentsSize(); }
     
-    void render(const ShaderState &ss);
+    void render(const ShaderState &ss, const View &view);
 
-    bool HandleEvent(const Event* event);
+    bool HandleEvent(const Event* event, bool *istoggle=NULL);
 
+    bool swapToTab(int next);
 };
 
 
@@ -648,6 +670,8 @@ struct MessageBoxBase : public WidgetBase {
     string title;
     string message;
     int    messageFont = kDefaultFont;
+    float  titleSize = 36.f;
+    float  textSize = 16.f;
     float  alpha2   = 1.f;
 
     Button okbutton = Button(_("OK"));
@@ -672,6 +696,20 @@ struct ConfirmWidget : public MessageBoxBase {
     
     void render(const ShaderState &ss, const View& view);
     bool HandleEvent(const Event* event, bool *selection);
+};
+
+struct ScrollMessageBox : public WidgetBase {
+
+    string        title;
+    TextInputBase message;
+    
+    Button okbutton = Button(_("OK"));
+
+    ScrollMessageBox();
+    void render(const ShaderState &ss, const View &view);
+    bool HandleEvent(const Event *event);
+
+    void activateSetText(const char* txt);
 };
 
 struct TextBox {
@@ -752,25 +790,21 @@ struct ButtonText {
 };
 
 // scrolling button container
-struct ButtonWindow : public WidgetBase {
+struct ButtonWindowBase : public WidgetBase {
 
     vector<ButtonBase *> buttons;
     Scrollbar            scrollbar;
     int2                 dims = int2(2, 8);
+    bool                 rearrange = false;
 
-    std::mutex           mutex;
-    float2               dragOffset;     // positon of dragged button relative to mouse pointer
-    float2               dragPos;        // original position of dragged button
-    ButtonBase **        dragPtr = NULL; // pointer to dragged button in buttons vector
-    
     ButtonBase *         extDragPtr = NULL; // don't draw this one, will be drawn externally
 
-    ButtonWindow()
+    ButtonWindowBase()
     {
         scrollbar.parent = this;
     }
 
-    ~ButtonWindow()
+    ~ButtonWindowBase()
     {
         vec_clear_deep(buttons);
     }
@@ -779,9 +813,85 @@ struct ButtonWindow : public WidgetBase {
     bool HandleEvent(const Event *event, ButtonBase **activated=NULL,
                      ButtonBase **dragged=NULL, ButtonBase **dropped=NULL);
     ButtonBase *HandleRearrange(const Event *event, ButtonBase *dragged);
+    void swapButtons(ButtonBase *a, ButtonBase *b);
+    bool HandleDragExternal(const Event *event, ButtonBase *dragged, ButtonBase **drop=NULL);
 
     void computeDims(int2 mn, int2 mx);
     void scrollfor(int idx) { scrollbar.makeVisible(idx / dims.x); }
+
+    void popButton(ButtonBase *but);
+    
+protected:
+    std::mutex           mutex;
+    float2               dragOffset;     // positon of dragged button relative to mouse pointer
+    float2               dragPos;        // original position of dragged button
+    ButtonBase **        dragPtr = NULL; // pointer to dragged button in buttons vector
+
+    ButtonBase **getPtr(ButtonBase *but);
+    bool setupDragPtr(const Event *event, ButtonBase *dragged);
+};
+
+template <typename T>
+struct ButtonWindow final : public ButtonWindowBase {
+
+    pair<T**, T**> button_iter()
+    {
+        if (buttons.empty())
+            return make_pair((T**)NULL, (T**)NULL);
+        T** first = (T**)&buttons[0];
+        return make_pair(first, first + buttons.size());
+    }
+
+    pair<const T**, const T**> button_iter() const
+    {
+        if (buttons.empty())
+            return make_pair((const T**)NULL, (const T**)NULL);
+        const T** first = (const T**)&buttons[0];
+        return make_pair(first, first + buttons.size());
+    }
+
+    T* getDragged() const
+    {
+        return dragPtr ? static_cast<T*>(*dragPtr) : NULL;
+    }
+
+    T *getDropped(const Event *event) const
+    {
+        return (event->type == Event::MOUSE_UP && dragPtr) ? static_cast<T*>(*dragPtr) : NULL;
+    }
+
+    T *consumeDropped(const Event *event)
+    {
+        T* dropd = getDropped(event);
+        if (dropd) {
+            dropd->pressed = false;
+            dropd->hovered = false;
+            dragPtr = NULL;
+        }
+        return dropd;
+    }
+
+    void pushButton(T *but)
+    {
+        std::lock_guard<std::mutex> l(mutex);
+        but->index = buttons.size();
+        buttons.push_back(but);
+    }
+
+    bool HandleDragExternal(const Event *event, T *dragged, T **drop=NULL)
+    {
+        return ButtonWindowBase::HandleDragExternal(event, (ButtonBase*)dragged, (ButtonBase**)drop);
+    }
+
+    bool HandleEvent(const Event *event, T **activated=NULL, T **dragged=NULL, T **dropped=NULL)
+    {
+        return ButtonWindowBase::HandleEvent(event, (ButtonBase**)activated, (ButtonBase**)dragged, (ButtonBase**)dropped);
+    }
+
+    T *HandleRearrange(const Event *event, T *dragged)
+    {
+        return (T*)ButtonWindowBase::HandleRearrange(event, dragged);
+    }
 };
 
 // similar to above but allows keyboard selection, less rearrangement, no outline

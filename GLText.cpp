@@ -52,7 +52,7 @@ FontStats::FontStats(int ft, float sz) : font(ft), fontSize(sz)
     charAvgSize.x /= printable;
 }
 
-const FontStats & FontStats::get(int font, float size)
+const FontStats & FontStats::getUnscaled(int font, float size)
 {
     static std::map<pair<int, int>, FontStats> map;
     FontStats &fs = map[make_pair(font, round_int(size))];
@@ -110,7 +110,7 @@ void GLText::render(const ShaderState* s, float2 pos) const
 const GLText* GLText::vget(int font, float size, const char *format, va_list vl)
 {
     string s = str_vformat(format, vl);
-    return get(font, size, s);
+    return getUnscaled(font, size, s);
 }
 
 float2 GLText::Draw(const ShaderState &s_, float2 p, Align align, int font, uint color,
@@ -118,7 +118,7 @@ float2 GLText::Draw(const ShaderState &s_, float2 p, Align align, int font, uint
 {
     if (str.empty())
         return float2(0.f);
-    const GLText* st = get(font, sizeUnscaled, str);
+    const GLText* st = getUnscaled(font, sizeUnscaled, str);
 
 #if __APPLE__
     const float mid_y = 0.60f;
@@ -150,14 +150,14 @@ float GLText::getCharStart(uint chr) const
 {
     if (chr == 0)
         return 0.f;
-    const GLText *st = get(font, fontSize, chars.substr(0, chr));
+    const GLText *st = getUnscaled(font, fontSize, chars.substr(0, chr));
     return st->getSize().x;
 }
     
 float2 GLText::getCharSize(uint chr) const
 {
     string cr = (chr < chars.size()) ? utf8_substr(chars, chr, 1) : "a";
-    const GLText *st = get(font, fontSize, cr);
+    const GLText *st = getUnscaled(font, fontSize, cr);
     return st->getSize();
 }
 
@@ -167,7 +167,7 @@ float GLText::getScaledSize(float sizeUnscaled)
     return sizeUnscaled * ws.y / kTextScaleHeight;
 }
 
-const GLText* GLText::get(int font, float size, const string& s)
+const GLText* GLText::getUnscaled(int font, float size, const string& s)
 {
     float pointSize = OL_GetCurrentBackingScaleFactor();
     //Reportf("scale: %g", pointSize);
@@ -239,7 +239,7 @@ float2 DrawOutlinedText(const ShaderState &s_, float2 pos, float2 relnorm, uint 
         return float2();
     ShaderState ss = s_;
     const int font = tsize > 24 ? kTitleFont : kDefaultFont;
-    const GLText* txt = GLText::get(font, GLText::getScaledSize(tsize), str);
+    const GLText* txt = GLText::get(font, tsize, str);
     ss.translate(pos - relnorm * txt->getSize());
     ss.color(color, alpha);
     txt->render(&ss);

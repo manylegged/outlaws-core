@@ -196,6 +196,7 @@ struct Event {
     int    key = 0;
     int    rawkey = 0;
     int    which = 0;           // which gamepad
+    bool   synthetic = false;
     float2 pos;
     float2 vel;
 
@@ -242,6 +243,11 @@ struct Event {
     {
         return type == KEY_DOWN && (key == '\r' || key == GamepadA);
     }
+    
+    bool isEnterUp() const
+    {
+        return type == KEY_UP && (key == '\r' || key == GamepadA);
+    }
 
     bool isNext() const
     {
@@ -273,18 +279,24 @@ inline bool isGamepadKey(int key)
 }
 
 class KeyState {
+public:
+    enum GamepadStyle { DEFAULT, XBOX, PLAYSTATION };
+private:
     bool                          ascii[256];
     bool                          function[SpecialKeyMax - NSUpArrowFunctionKey];
     bool                          device[EventKeyMax - LeftMouseButton];
     std::unordered_map<int, bool> misc;
     float2                        gamepadAxis[GamepadAxisCount];
     int                           lastGamepad = -1;
+    GamepadStyle                  lastStyle   = DEFAULT;
 
     struct GamepadInstance {
         float2 axis[GamepadAxisCount];
         bool   buttons[GamepadAxisTriggerRightY - GamepadA];
     };
     std::unordered_map<int, GamepadInstance> gamepads;
+
+    void setLastGamepad(const Event *evt);
 
 public:
 
@@ -294,6 +306,7 @@ public:
     KeyState();
 
     float2 &getAxis(GamepadAxis axis) { return gamepadAxis[axis]; }
+    float2 getAxis(GamepadAxis axis) const { return gamepadAxis[axis]; }
     bool anyAxis() const;
 
     bool& operator[](int c);
@@ -302,6 +315,7 @@ public:
     void reset();
     void cancelMouseDown();
     uint keyMods() const;
+    GamepadStyle getStyle() const { return lastStyle; }
 
     int getUpKey(const Event *evt) const;
     int getDownKey(const Event *evt) const;
@@ -311,6 +325,7 @@ public:
     const char* stringYes() const;
     const char* stringNo() const;
     const char* stringDiscard() const;
+    const char* stringStart() const;
 
     const char* gamepadName() const;
     

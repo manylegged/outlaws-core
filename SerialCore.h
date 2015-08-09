@@ -155,10 +155,10 @@ struct SerialEnum : public T {
 
 template <typename T>
 struct GetFieldVisitor {
-    T*           value;
+    T*           value = NULL;
     const string field;
 
-    GetFieldVisitor(const char* name) : value(), field(name) {}
+    GetFieldVisitor(const string &name) : field(name) {}
 
     bool visit(const char* name, T& val, const T& def=T())
     {
@@ -180,30 +180,19 @@ struct GetFieldVisitor {
 };
 
 // get a reference to a field in OBJ named FIELD (the same as getattr in Python).
-// will crash if field does not exist or type is slightly wrong
+// Return NULL if not found or type is wrong
 template <typename U, typename T>
-U& getField(T& obj, const char* field)
+U* getField(T& obj, const string &field)
 {
     GetFieldVisitor<U> vs(field);
     obj.accept(vs);
-    return *vs.value;
-}
-
-template <typename U, typename T>
-const U& getField(const T& obj, const char* field)
-{
-    GetFieldVisitor<U> vs(field);
-    const_cast<T&>(obj).accept(vs);
-    return *vs.value;
-}
-
-// Return true if OBJ has a fields name FIELD of type U (just like hasattr in Python).
-template <typename U, typename T>
-bool hasField(const T& obj, const char* field)
-{
-    GetFieldVisitor<U> vs(field);
-    const_cast<T&>(obj).accept(vs);
     return vs.value;
+}
+
+template <typename U, typename T>
+const U* getField(const T& obj, const string &field)
+{
+    return getField<U>(const_cast<T&>(obj), field);
 }
 
 #define DECLARE_SERIAL_STRUCT_OPS(STRUCT_NAME)                          \

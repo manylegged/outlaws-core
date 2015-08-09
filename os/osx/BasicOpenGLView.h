@@ -7,6 +7,7 @@
 void LogMessage(NSString *str);
 GLenum glReportError(void);
 float getBackingScaleFactor(void);
+int doDeferredPanel(void);
 
 @interface BasicOpenGLView : NSOpenGLView<NSWindowDelegate>
 {

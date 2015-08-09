@@ -5,6 +5,8 @@
 #include <zlib.h>
 #include "../minizip/unzip.h"
 
+static DEFINE_CVAR(bool, kReadZipFiles, false);
+
 #if WIN32
 
 #define GZ_OPEN(F, M) gzopen_w(s2ws(F).c_str(), (M))
@@ -166,6 +168,8 @@ string ZF_LoadFile(const char* path)
     if (fl)
         return fl;
 
+    if (!kReadZipFiles)
+        return string();
 
     // 3. read zip file
     const ZipDirectory *zd = getZipDir(path);
@@ -223,6 +227,9 @@ ZFDirMap ZF_LoadDirectory(const char* path, float* progress)
         }
         return dir;
     }
+
+    if (!kReadZipFiles)
+        return dir;
 
     string zipf = getZipFileName(path);
     if (!zipf.size())

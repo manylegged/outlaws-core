@@ -182,7 +182,7 @@ void* copy_explicit_owner(const T* ptr) { return NULL; }
 // if explicitOwner field is set, share the pointer, never delete
 // otherwise copy the object around and delete on destruction
 template <typename T>
-class copy_ptr {
+class copy_ptr final {
     
     T* m_ptr = NULL;
 
@@ -326,7 +326,7 @@ struct Watchable : public IDeletable {
 
 // smart pointer that automatically becomes NULL when it's pointee is deleted
 template <typename T>
-struct watch_ptr : public watch_ptr_base {
+struct watch_ptr final : public watch_ptr_base {
 
     ~watch_ptr() 
     {
@@ -939,6 +939,15 @@ inline bool vec_any(const T& v)
     return false;
 }
 
+template <typename T>
+inline T vec_sum(const std::vector<T>& v)
+{
+    T r{};
+    for_ (x, v) { r += x; }
+    return r;
+}
+
+
 template <typename T, typename F>
 inline bool vec_all(const T& v, const F& f)
 {
@@ -1394,9 +1403,9 @@ private:
 };
 
 // pooled memory allocator
-class MemoryPool {
+class MemoryPool final {
 
-    struct Chunk {
+    struct Chunk final {
         Chunk *next;
     };
 
