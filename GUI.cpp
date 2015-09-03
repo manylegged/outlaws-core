@@ -173,8 +173,8 @@ void Button::renderContents(const ShaderState &ss)
 
     if (style&S_FIXED)
     {
-        renderButtonText(ss, pos, size.x, align, textFont, tcolor, &textSize, 8.f, 24.f, text);
-        renderButtonText(ss, pos, size.x, GLText::DOWN_CENTERED, textFont, stc, &subtextSize, 6.f, 16.f, subtext);
+        renderButtonText(ss, pos, size.x, align, textFont, tcolor, &dynamicTextSize, 8.f, textSize, text);
+        renderButtonText(ss, pos, size.x, GLText::DOWN_CENTERED, textFont, stc, &dynamicSubtextSize, 6.f, subtextSize, subtext);
     }
     else
     {
@@ -933,7 +933,7 @@ bool TextInputCommandLine::HandleEvent(const Event* event, bool *textChanged)
     return handled;
 }
 
-void ContextMenu::setLine(int line, const char* txt)
+void ContextMenu::setLine(int line, const string &txt)
 {
     if (line >= lines.size()) {
         lines.resize(line + 1);
@@ -957,6 +957,16 @@ int ContextMenu::getHoverSelection(float2 p) const
     return sel;
 }
 
+void ContextMenu::openMenu(float2 pos)
+{
+    pos.y = max(pos.y, size.y + kButtonPad.y);
+    if (pos.x + size.x + kButtonPad.x > globals.windowSizePoints.x)
+        pos.x -= size.x;
+    position = pos;
+    openTime = globals.updateStartTime;
+    active = true;
+}
+
 bool ContextMenu::HandleEvent(const Event* event, int* select)
 {
     if (!event->isMouse())
@@ -964,13 +974,7 @@ bool ContextMenu::HandleEvent(const Event* event, int* select)
 
     if (!active && event->type == Event::MOUSE_DOWN && event->key == 1)
     {
-        float2 pos = event->pos;
-        pos.y = max(pos.y, size.y + kButtonPad.y);
-        if (pos.x + size.x + kButtonPad.x > globals.windowSizePoints.x)
-            pos.x = event->pos.x - size.x;
-        position = pos;
-        openTime = globals.updateStartTime;
-        active = true;
+        openMenu(event->pos);
         return true;
     }
 
@@ -1080,6 +1084,64 @@ bool OptionButtons::HandleEvent(const Event* event, int* butActivate, int* butPr
         buttons[j].pressed = (selected == j);
     return handled;
 }
+
+BContext::BContext()
+{
+    
+}
+
+// key is displayed, val is what selection is set to
+void BContext::pushItem(const string &key, const string &val)
+{
+    const int i = menu.lines.size();
+    vec_set_index(vals, i, val);
+    menu.setLine(i, key.c_str());
+}
+
+void BContext::setSelection(int index)
+{
+    index = clamp(index, 0, vals.size()-1);
+    selection = vals[index];
+    // FIXME bug, text is read in render thread!
+    text = title + ": " + menu.lines[index];
+}
+
+
+bool BContext::HandleEventMenu(const Event* event, bool* changed)
+{
+    bool isPress = false;
+    if (menu.active)
+    {
+        int selected = -1;
+        if (menu.HandleEvent(event, &selected))
+        {
+            if (selected >= 0)
+            {
+                string last = selection;
+                setSelection(selected);
+                if (changed && last != selection)
+                    *changed = true;
+            }
+            return true;
+        }
+    }
+    else if (ButtonHandleEvent(*this, event, NULL, &isPress))
+    {
+        if (isPress)
+        {
+            menu.openMenu(position);
+        }
+        return true;
+    }
+    return false;
+}
+
+void BContext::renderContents(const ShaderState &ss)
+{
+    Button::renderContents(ss);
+    menu.render(ss);
+}
+
 
 void OptionButtons::render(ShaderState *s_, const View& view)
 {
@@ -1193,6 +1255,26 @@ void OptionSlider::render(const ShaderState &s_)
     }
 }
 
+OptionEditor::OptionEditor(float *f, const char* lbl, float mn, float mx, const vector<const char*> tt) 
+{
+    init(FLOAT, (void*) f, lbl, tt, mn, mx, 100 * (mx - mn));
+}
+
+OptionEditor::OptionEditor(int *u, const char* lbl, int states, const vector<const char*> tt)
+{
+    init(INT, (void*) u, lbl, tt, 0.f, (float) states-1, states);
+}
+
+OptionEditor::OptionEditor(int *u, const char* lbl, int low, int increment, int states, const vector<const char*> tt)
+{
+    init(INT, (void*) u, lbl, tt, low, increment * states, states + 1);
+}
+
+float OptionEditor::getValueFloat() const
+{
+    return ((type == FLOAT) ? *(float*) value : ((float) *(int*) value));
+}
+
 void OptionEditor::setValueFloat(float v)
 {
     if (type == FLOAT)
@@ -1201,6 +1283,13 @@ void OptionEditor::setValueFloat(float v)
         *(int*) value = round_int(v);
     txt = str_format("%s: %s", label, getTxt().c_str());
 }
+
+void OptionEditor::updateSlider()
+{
+    slider.setValueFloat((getValueFloat() - start) / mult);
+    txt = str_format("%s: %s", label, getTxt().c_str());
+}
+
 
 void OptionEditor::init(Type t, void *v, const char* lbl, const vector<const char*> &tt, float st, float mu, int states)
 {
@@ -1233,8 +1322,8 @@ string OptionEditor::getTxt() const
     } else if (start != 0.f) {
         return str_format("%d", getValueInt());
     } else {
-        float val = 100.f * getValueFloat();
-        return (val < 1.f) ? _("Off") : str_format("%.0f%%", val);
+        const int val = floor_int(100.f * getValueFloat());
+        return (val < 1.f) ? _("Off") : str_format("%d%%", val);
     }
 }
 
@@ -1929,6 +2018,8 @@ float2 renderButtonText(const ShaderState &ss, float2 pos, float width,
                         GLText::Align align, int font, uint color, float *fontSize,
                         float fmin, float fmax, const string& text)
 {
+    if (text.empty())
+        return float2();
     if (*fontSize <= 0.f)
         *fontSize = fmax;
     float2 tx = GLText::Put(ss, pos, align, font, color, *fontSize, text);

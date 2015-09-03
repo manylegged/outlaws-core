@@ -123,7 +123,6 @@ static void myTerminateHandler()
 
     ASSERT_FAILED("Terminate Handler", "Exception: %s", message.c_str());
     OL_OnTerminate(message.c_str());
-    exit(1);
 }
 
 void thread_setup(const char* name)

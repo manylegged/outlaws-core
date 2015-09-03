@@ -51,6 +51,8 @@ namespace std {
 }
 
 typedef unsigned long long uint64;
+typedef std::basic_string<uint32_t> ustring;
+
 #define UNKNOWN_UNICODE 0xFFFD
 
 // convert a single ucs2 character to a utf8 string
@@ -232,6 +234,7 @@ inline bool str_isspace(int c) { return 0 < c && c < 128 && isspace(c); }
 inline bool str_isalnum(int c) { return 0 < c && c < 128 && isalnum(c); }
 inline bool str_isalpha(int c) { return 0 < c && c < 128 && isalpha(c); }
 inline bool str_isdigit(int c) { return 0 < c && c < 128 && isdigit(c); }
+inline bool str_ispunct(int c) { return 0 < c && c < 128 && ispunct(c); }
 
 template <typename T>
 inline std::string str_strip(T &&s)
@@ -451,7 +454,6 @@ std::string str_join_keys(const S &sep, const A &vec)
 struct str_wrap_options_t {
     int         width   = 70;
     const char *newline = "\n";
-    const char *wrap    = " ";
     bool        rewrap  = false;
 
     str_wrap_options_t(int w) : width(w) {}
@@ -615,6 +617,12 @@ std::string str_timestamp();
 
 // return one, two, three, etc
 std::string str_numeral_format(int num);
+
+// apply adjective, using word order based on language
+std::string lang_concat_adj(const std::string &adj, const std::string &noun);
+
+// language sensitive plural
+std::string lang_plural(const std::string &noun);
 
 // return data byte size in MB, KB, etc
 std::string str_bytes_format(int bytes);

@@ -59,7 +59,7 @@ static const float kOverlayBGAlpha    = 0.6f;
 struct WidgetBase {
     float2      position;       // center of button
     float2      size;           // width x height in points
-    bool        hovered = false;
+    int         hovered = false;
     bool        active  = true;
     float       alpha   = 1.f;
 
@@ -125,6 +125,13 @@ struct ButtonBase : public WidgetBase {
         }
     }
 
+    void setKeys(int *vec, int count)
+    {
+        for (int i = 0; i < arraySize(keys); i++) {
+            keys[i] = i < count ? vec[i] : 0;
+        }
+    }
+
 };
 
 struct Button : public ButtonBase
@@ -141,6 +148,9 @@ struct Button : public ButtonBase
     uint   inactiveTextColor = kGUIInactive;
     uint   style             = S_CORNERS;
     float2 padding           = float2(4.f * kPadDist, 4.f * kPadDist);
+
+    float dynamicTextSize    = 0.f;
+    float dynamicSubtextSize = 0.f;
 
     Button() {}
     Button(const string& str, const char* keys=NULL, int ky=0) : ButtonBase(keys), text(str) { ident = ky; }
@@ -345,29 +355,41 @@ struct TextInputCommandLine : public TextInputBase {
     bool HandleEvent(const Event* event, bool *textChanged=NULL);
 };
 
-struct ContextMenu {
-    float2         position;    // upper left corner, right below title
-    float2         size;        // width x height
+struct ContextMenu : public WidgetBase {
+    // position is upper left corner, right below title
     vector<string> lines;
     vector<bool>   enabled;
     float          textSize = 16;
-    int            hovered  = -1;    // hovered line or -1 for not hovered
-    bool           active   = false; // is it visible?
-    float          alpha    = 1.f;
     double         openTime = 0.f;
-
 
     uint defaultBGColor    = 0xf0202020;
     uint hoveredBGColor    = kGUIBgActive;
     uint defaultLineColor  = kGUIFgActive;
     uint textColor         = kGUIText;
     uint inactiveTextColor = kGUITextLow;
-    
-    void setLine(int line, const char* txt);
+
+    ContextMenu() { active = false; hovered = -1; }
+    void setLine(int line, const string &txt);
     float2 getCenterPos() const { return position + flipY(size / 2.f); }
     int getHoverSelection(float2 p) const;
+    void openMenu(float2 pos);
     bool HandleEvent(const Event* event, int* select=NULL);
     void render(const ShaderState &s_);
+};
+
+struct BContext : public Button {
+    vector<string> vals;
+    ContextMenu    menu;
+    string         title;
+    string         selection;
+
+    BContext();
+    void pushItem(const string &key, const string &val);
+    void setSelection(int index);
+    bool HandleEventMenu(const Event* event, bool* selectionChanged);
+    void renderContents(const ShaderState &ss);
+private:
+    using ButtonBase::HandleEvent;
 };
 
 
@@ -439,36 +461,17 @@ struct OptionEditor {
     float        mult;
     string       txt;
 
-    float getValueFloat() const
-    {
-        return ((type == FLOAT) ? *(float*) value : ((float) *(int*) value));
-    }
-
+    float getValueFloat() const;
     void setValueFloat(float v);
     int getValueInt() const { return *(int*) value; }
 
-    void updateSlider()
-    {
-        slider.setValueFloat((getValueFloat() - start) / mult);
-        txt = str_format("%s: %s", label, getTxt().c_str());
-    }
+    void updateSlider();
 
     void init(Type t, void *v, const char* lbl, const vector<const char*> &tt, float st, float mu, int states);
     
-    OptionEditor(float *f, const char* lbl, float mn, float mx, const vector<const char*> tt) 
-    {
-        init(FLOAT, (void*) f, lbl, tt, mn, mx, 100);
-    }
-
-    OptionEditor(int *u, const char* lbl, int states, const vector<const char*> tt)
-    {
-        init(INT, (void*) u, lbl, tt, 0.f, (float) states-1, states);
-    }
-
-    OptionEditor(int *u, const char* lbl, int low, int increment, int states, const vector<const char*> tt)
-    {
-        init(INT, (void*) u, lbl, tt, low, increment * states, states + 1);
-    }
+    OptionEditor(float *f, const char* lbl, float mn, float mx, const vector<const char*> tt) ;
+    OptionEditor(int *u, const char* lbl, int states, const vector<const char*> tt);
+    OptionEditor(int *u, const char* lbl, int low, int increment, int states, const vector<const char*> tt);
 
     string getTxt() const;
     float2 render(const ShaderState &ss, float alpha);

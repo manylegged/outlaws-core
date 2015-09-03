@@ -21,7 +21,20 @@ static void ReportGP(const char *format, ...)
     va_end(vl);
 }
 
-static SDL_JoystickID initGamepad()
+static void sendToggleEvent(std::unique_lock<std::mutex> &l, int which, EventType type)
+{
+    OLEvent e;
+    memset(&e, 0, sizeof(e));
+    e.which = which;
+    e.type = type;
+
+    l.unlock();
+    OLG_OnEvent(&e);
+    l.lock();
+}
+
+// should be holding mutex when called
+static void initGamepad()
 {
     static bool loadedMappings = true; // disable loading!
     if (!loadedMappings)
@@ -37,14 +50,15 @@ static SDL_JoystickID initGamepad()
         loadedMappings = true;
     }
 
-    SDL_JoystickID changed = 0;
+    std::unique_lock<std::mutex> l(s_mutex);
 
     // close unattached controllers
     for (ControllerMap::iterator it=s_controllers.begin(); it != s_controllers.end(); )
     {
-        if (!SDL_GameControllerGetAttached(it->second))
+        if (!SDL_GameControllerGetAttached(it->second) || !s_gamepad_enabled)
         {
-            changed = it->first;
+            ReportGP("Closed controller %d", it->first);
+            sendToggleEvent(l, it->first, OL_GAMEPAD_REMOVED);
             SDL_GameControllerClose(it->second);
             it = s_controllers.erase(it);
         }
@@ -53,6 +67,9 @@ static SDL_JoystickID initGamepad()
             ++it;
         }
     }
+
+    if (!s_gamepad_enabled)
+        return;
 
     // open new controllers
     for (int i=0; i<SDL_NumJoysticks(); i++)
@@ -71,26 +88,22 @@ static SDL_JoystickID initGamepad()
             continue;
 
         ReportGP("Opened controller %d, named: %s", jid, SDL_GameControllerName(ctrl));
+        sendToggleEvent(l, jid, OL_GAMEPAD_ADDED);
         s_controllers.insert(make_pair(jid, ctrl));
-        changed = jid;
     }
-
-    return changed;
 }
 
 void OL_SetGamepadEnabled(int enabled)
 {
-    std::lock_guard<std::mutex> l(s_mutex);
-    
-    s_gamepad_enabled = enabled;
-    if (!enabled)
+    bool changed = false;
     {
-        for_ (it, s_controllers)
-        {
-            SDL_GameControllerClose(it.second);
-        }
-        s_controllers.clear();
+        std::lock_guard<std::mutex> l(s_mutex);
+        changed = s_gamepad_enabled != (bool)enabled;
+        s_gamepad_enabled = enabled;
     }
+    
+    if (changed)
+        initGamepad();
 }
 
 const char* OL_GetGamepadName(int instance_id)
@@ -102,28 +115,14 @@ const char* OL_GetGamepadName(int instance_id)
 
 int Controller_HandleEvent(const SDL_Event *evt)
 {
-    std::lock_guard<std::mutex> l(s_mutex);
-    
     OLEvent e;
     memset(&e, 0, sizeof(e));
     
     switch (evt->type) {
-    case SDL_CONTROLLERDEVICEADDED:
-    {
-        ReportGP("SDL_CONTROLLERDEVICEADDED");
-        e.which = initGamepad();
-        e.type = OL_GAMEPAD_ADDED;
-        OLG_OnEvent(&e);
-        return 1;
-    }
+    case SDL_CONTROLLERDEVICEADDED: // fallthrough
     case SDL_CONTROLLERDEVICEREMOVED:
-    {
-        ReportGP("SDL_CONTROLLERDEVICEREMOVED");
-        e.which = initGamepad();
-        e.type = OL_GAMEPAD_REMOVED;
-        OLG_OnEvent(&e);
-        return 1;
-    }
+        initGamepad();
+        break;
     case SDL_CONTROLLERAXISMOTION: 
     {
         const SDL_ControllerAxisEvent &caxis = evt->caxis;
@@ -159,8 +158,6 @@ int Controller_HandleEvent(const SDL_Event *evt)
 
 int Controller_Init()
 {
-    std::lock_guard<std::mutex> l(s_mutex);
-    
     SDL_Init(SDL_INIT_GAMECONTROLLER);
     return 1;
     

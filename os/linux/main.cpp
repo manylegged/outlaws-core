@@ -12,6 +12,7 @@
 #include <dirent.h>
 #include <dlfcn.h>
 #include <link.h>
+#include <execinfo.h>
 
 #include "../sdl_os/posix.h"
 #include <X11/Xlib.h>
@@ -474,6 +475,12 @@ void os_cleanup()
 {
     
 }
+
+char** get_backtrace_symbols(void **backtrace, int count)
+{
+    return backtrace_symbols(backtrace, count);
+}
+
 
 int main(int argc, const char** argv)
 {

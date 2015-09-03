@@ -397,7 +397,8 @@ def parse_symbol_map(modname, version):
         return entries
 
     # print "%d entries from %s@%s" % (len(entries), modname, version)
-    assert len(entries) > 0, "%s, %s, %s" % (typ, handle, entries)
+    if len(entries) == 0:
+        print "WARNING: loaded 0 symbols from .%s %s" % (typ, handle)
     handle.close()
     entries.sort(key=lambda x: x.base)
     return entries
@@ -755,10 +756,11 @@ def extract_callstack(logf, opts, triage=None, handlers=None):
         if m:
             stacklines += 1
             addr = int(m.group(1), 16)
+            has_game = False
             n = mac_stack_re.search(line)
             if n:
                 func, module = n.groups()
-                has_game = module == "Reassembly"
+                has_game = (module == "Reassembly")
                 line = line.replace("[POSIX] ", "").replace("called from", "from")
             else:
                 func, lino, fil = lookup_address(module_map, addr)
@@ -789,7 +791,7 @@ def extract_callstack(logf, opts, triage=None, handlers=None):
                 else:
                     exception_lines.append((line[:m.start()], addr, line[m.end():]))
 
-        if stacklines > MAX_STACK_DUMP:
+        if stacklines > MAX_STACK_DUMP and trace_has_game:
             skipped += 1
         elif triage is None:
             print line,
@@ -888,6 +890,7 @@ def main():
         # print "checking", paths
         verignore = 0
         exists = 0
+        updated = 0
         for p in paths:
             base, ver = os.path.split(p[:-1])
             base, typ = os.path.split(base)
@@ -902,16 +905,17 @@ def main():
                 continue
             lpath = os.path.join(ROOT, osd, typ, ver)
             if os.path.exists(lpath):
-                exists += 1
-                continue
+                if os.path.getmtime(lpath) >= os.path.getmtime(p):
+                    exists += 1
+                    continue
+                shutil.rmtree(lpath, True)
+                updated += 1
             print "copy", p, "to", lpath
-            # mkdir_p(lpath)
-            try:
-                shutil.copytree(p, lpath)
-            except Exception as e:
-                print e
+            mkdir_p(lpath)
+            for fl in glob.glob(p + "/*"):
+                shutil.copyfile(fl, os.path.join(lpath, os.path.basename(fl)))
             print "done"
-        print "%d total builds, %d ignored based on date, %d already local" % (len(paths), verignore, exists)
+        print "%d total builds, %d ignored based on date, %d already local, %d updated" % (len(paths), verignore, exists, updated)
     elif triage:
         base = os.path.join(ROOT, "server/server_sync/crash")
         files = []

@@ -238,7 +238,7 @@ static void posix_signal_handler(int sig, siginfo_t *siginfo, void *context)
     {
         if (OLG_OnClose()) {
             ReportPOSIX("Caught Control-C and already closing - Calling exit()\n");
-            exit(1);
+            std::_Exit(1);
         }
         g_signaldepth--;
         return;
@@ -248,7 +248,7 @@ static void posix_signal_handler(int sig, siginfo_t *siginfo, void *context)
     g_signaldepth--;
 
     posix_oncrash(str_format("Reassembly Caught Signal\n%s", message.c_str()).c_str());
-    exit(1);
+    std::_Exit(1);
 }
 
 void posix_set_signal_handler()
@@ -298,6 +298,5 @@ void OL_OnTerminate(const char* message)
 {
     posix_print_stacktrace();
     posix_oncrash(str_format("Terminated: %s\n", message).c_str());
-    exit(1);
+    std::_Exit(1);
 }
-

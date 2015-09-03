@@ -30,7 +30,6 @@
 #include "Shaders.h"
 #include "GLText.h"
 
-static const uint kGraphItems    = 240;
 static const uint kGraphColors[] = {
     0xff0000,
     0xff8000,
@@ -55,7 +54,10 @@ struct FrameLogger {
     struct Stats     { double mean = 0.f, stddev = 0.f; }; // seconds
     struct PhaseData { uint color = 0; bool stacked = true; };
 
-    bool                                         m_paused  = true;
+    const char*                                  m_title = NULL;
+    int                                          m_graphMaxItems = 240;
+    int                                          m_graphItems = 240;
+    bool                                         m_paused = true;
 
     // must be called from the same thread
     double                                       m_frameStartTime;
@@ -67,32 +69,39 @@ struct FrameLogger {
     // shared, mutex protected
     std::mutex                                   m_mutex;
     std::deque< Dict >                           m_log;
-    std::unordered_map<lstring, PhaseData >      m_phaseData;
+    std::unordered_map<lstring, PhaseData>       m_phaseData;
 
     // render thread
-    TriMesh<VertexPosColor>                      m_tri;
-    LineMesh<VertexPosColor>                     m_line;
     double                                       m_curMaxTimeMs = 16.0;
     double                                       m_maxTimeMs = 16.0;
     std::vector<VDict>                           m_sortLog;
+    std::unordered_set<lstring>                  m_phases;
     uint                                         m_frame = 0;
     
     // RAII phase timing wrapper
     struct Phase {
-        FrameLogger &logger;
+        FrameLogger *logger;
         const char  *name;
-        Phase(FrameLogger& l, const char *n) : logger(l), name(n)
+        Phase(FrameLogger& l, const char *n) : logger(&l), name(n) { l.beginPhase(name); }
+        Phase(FrameLogger* l, const char *n) : logger(l), name(n) { if (l) l->beginPhase(name); }
+        ~Phase() { end(); }
+        void end() { if (logger) logger->endPhase(name); logger = NULL; }
+        void phase(const char* nm)
         {
-            logger.beginPhase(name);
+            if (!logger)
+                return;
+            logger->endPhase(name);
+            logger->beginPhase(nm);
+            name = nm;
         }
-        ~Phase()
-        {
-            logger.endPhase(name);
-        }
+            
     };
 
-    void beginFrame(double deadline)
+    FrameLogger(const char* ttl) : m_title(ttl) {}
+
+    void beginFrame(bool active, double deadline)
     {
+        m_paused = !active;
         if (m_paused)
             return;
         m_frameStartTime = OL_GetCurrentTime();
@@ -147,12 +156,12 @@ struct FrameLogger {
         }
         
         m_log.push_back(m_current);
-        while (m_log.size() > kGraphItems)
+        while (m_log.size() > m_graphItems)
             m_log.pop_front();
         m_current.clear();
     }
 
-    void renderGraph(const ShaderState& screenSS, float2 graphStart, float2 graphSize)
+    void renderGraph(const ShaderState& ss, DMesh &mesh, float2 graphStart, float2 graphSize)
     {
         std::lock_guard<std::mutex> l(m_mutex);
 
@@ -193,26 +202,29 @@ struct FrameLogger {
 
         //m_maxTimeMs = lerp(m_maxTimeMs, m_curMaxTimeMs, 0.01);
         m_maxTimeMs = m_curMaxTimeMs;
+        m_phases.clear();
         foreach (VDict& vec, m_sortLog) {
             std::sort(vec.begin(), vec.end(), [&](const PhaseTime& a, const PhaseTime& b) { 
                     return m_stats[a.first].stddev < m_stats[b.first].stddev;
                 });
+            foreach (const PhaseTime &phase, vec)
+                m_phases.insert(phase.first);
         }
 
 
         // draw labels
-        vector<double> heights;
-        double         ystart = 0;
-        uint           pindex     = 0;
+        std::set<double> heights;
+        double           ystart = 0;
+        uint             pindex = 0;
 
-        foreach (const PhaseTime &phase, m_sortLog[0]) 
+        foreach (const lstring phase, m_phases) 
         {
-            const Stats  stat       = m_stats[phase.first];
+            const Stats  stat       = m_stats[phase];
             const double y          = 1000.f * stat.mean * (graphSize.y / m_maxTimeMs);
             const double textHeight = GLText::getScaledSize(10);
             double       yoff       = 0;
 
-            if (m_phaseData[phase.first].stacked) {
+            if (m_phaseData[phase].stacked) {
                 yoff    = y + ystart;
                 ystart += y;
             } else {
@@ -223,33 +235,33 @@ struct FrameLogger {
                 if (abs(d - yoff) < textHeight)
                     yoff = d + textHeight;
             }
-            heights.push_back(yoff);
+            heights.insert(yoff);
 
-            GLText::DrawScreen(screenSS, graphStart + float2(-3, yoff),
-                               GLText::MID_RIGHT, ALPHA_OPAQUE|m_phaseData[phase.first].color,
-                               textHeight, "%s: %.1f/%.1f", phase.first.c_str(), 
+            GLText::DrawScreen(ss, graphStart + float2(-3, yoff),
+                               GLText::MID_RIGHT, ALPHA_OPAQUE|m_phaseData[phase].color,
+                               textHeight, "%s: %.1f/%.1f", phase.c_str(), 
                                1000.0 * stat.mean, 1000.0 * stat.stddev);
             pindex++;
         }
         
         // graph
-        const float2 pointSize(graphSize.x / kGraphItems, 
-                               kPointHeightMs * graphSize.y / m_maxTimeMs);
+        const float2 pointSize(min(10.f, graphSize.x / m_graphItems),
+                               clamp(kPointHeightMs * graphSize.y / m_maxTimeMs, 1.f, graphSize.y/10.f));
         uint xi = 0;
         foreach (const VDict& mp, m_sortLog) 
         {
-            const float x = (0.5f + xi) * (graphSize.x / kGraphItems);
+            const float x = (0.5f + xi) * pointSize.x;
             pindex = 0;
             ystart = 0;
             foreach (const PhaseTime &phase, mp) {
-                m_tri.color(m_phaseData[phase.first].color, 0.5f);
+                mesh.tri.color(m_phaseData[phase.first].color, 0.5f);
                 const float y = 1000.f * phase.second * (graphSize.y / m_maxTimeMs);
                 if (m_phaseData[phase.first].stacked) {
-                    m_tri.PushRectCorners(graphStart + float2(x - 0.5f * pointSize.x, ystart), 
+                    mesh.tri.PushRectCorners(graphStart + float2(x - 0.5f * pointSize.x, ystart), 
                                           graphStart + float2(x + 0.5f * pointSize.x, ystart + y));
                     ystart += y;
                 } else {
-                    m_tri.PushRect(graphStart + float2(x, y), pointSize);
+                    mesh.tri.PushRect(graphStart + float2(x, y), pointSize);
                 }
                 pindex++;
             }
@@ -259,35 +271,43 @@ struct FrameLogger {
 
     void render(const View& view)
     {
-        ShaderState screenSS = view.getScreenShaderState();
+        const ShaderState ss = view.getScreenShaderState();
 
-        static const float2 kGraphStart(500, 40);
-        const float2 graphSize = toGoldenRatioX(view.sizePoints.x - kGraphStart.x - kGraphStart.y);
+        DMesh::Handle h(theDMesh());
+        
+        h.mp.line.color(COLOR_GREEN);
+        // h.mp.line.PushRect(view.center, view.size/2.f);
 
-        m_tri.clear();
-        m_line.clear();
+        const float labelPad = 100.f;
+        const float2 start = view.center - view.size/2.f + justX(labelPad) + float2(10.f);
+        const float2 graphSize = view.size - justX(labelPad) - float2(20.f);
+
+        m_graphItems = min(clamp(floor_int(graphSize.x/2), 60, 240), m_graphMaxItems);
 
         // axes
-        m_line.color(COLOR_GREEN);
-        m_line.PushLine(kGraphStart, kGraphStart + float2(graphSize.x, 0));
-        m_line.PushLine(kGraphStart, kGraphStart + float2(0, graphSize.y));
+        h.mp.line.PushLine(start, start + justX(graphSize));
+        h.mp.line.PushLine(start, start + justY(graphSize));
         const int tines = m_maxTimeMs / 5.f;
-        if (tines < graphSize.y/2.f)
+        if (tines < graphSize.y/4.f)
         {
             for (uint ms=0; ms<m_maxTimeMs; ms += 5) {
                 const float y = ms * (graphSize.y / m_maxTimeMs);
-                m_line.PushLine(kGraphStart + float2(0, y), kGraphStart + float2(ms&1 ? 10 : 20, y));
+                h.mp.line.PushLine(start + justY(y), start + float2(ms&1 ? 10 : 20, y));
             }
         }
-        m_line.color(COLOR_GREEN, 0.5f);
-        const float dly = 1000.f * m_frameDeadline * (graphSize.y / m_maxTimeMs);
-        m_line.PushLine(kGraphStart + float2(0.f, dly),
-                        kGraphStart + float2(graphSize.x, dly));
+        if (m_frameDeadline > 0.f)
+        {
+            const float dly = 1000.f * m_frameDeadline * (graphSize.y / m_maxTimeMs);
+            h.mp.line.color(COLOR_GREEN, 0.5f);
+            h.mp.line.PushLine(start + justY(dly), start + float2(graphSize.x, dly));
+        }
+        
+        renderGraph(ss, h.mp, start, graphSize);
+        h.Draw(ss);
 
-        renderGraph(screenSS, kGraphStart, graphSize);
-
-        m_line.Draw(screenSS, ShaderColor::instance());
-        m_tri.Draw(screenSS, ShaderColor::instance());
+        if (m_title)
+            GLText::Put(ss, view.center + justY(view.size/2.f), GLText::DOWN_CENTERED,
+                        0x80ffffff, 16.f, m_title);
     }
     
 };

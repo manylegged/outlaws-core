@@ -482,9 +482,9 @@ inline float2 flipX(float2 v)     { return float2(-v.x, v.y); }
 inline float3 flipY(float3 v)     { return float3(v.x, -v.y, v.z); }
 inline float3 flipX(float3 v)     { return float3(-v.x, v.y, v.z); }
 inline float2 justY(float2 v)     { return float2(0.f, v.y); }
-inline float2 justY(float v)      { return float2(0.f, v); }
+inline float2 justY(float v=1.f)  { return float2(0.f, v); }
 inline float2 justX(float2 v)     { return float2(v.x, 0.f); }
-inline float2 justX(float v)      { return float2(v, 0.f); }
+inline float2 justX(float v=1.f)  { return float2(v, 0.f); }
 
 template <typename T>
 inline T multiplyComponent(T v, int i, float x)
@@ -954,6 +954,11 @@ struct AABBox {
     
     float2 mn, mx;
 
+    AABBox() {}
+    AABBox(float2 n, float2 x) : mn(n), mx(x) {}
+
+    static AABBox largest() { return AABBox(float2(-FLT_MAX, -FLT_MAX), float2(FLT_MAX, FLT_MAX)); }
+
     float2 getRadius() const { return 0.5f * (mx-mn); }
     float2 getCenter() const { return 0.5f * (mx+mn); }
     float getBRadius() const { return length(getRadius()); }
@@ -975,6 +980,9 @@ struct AABBox {
         bb.insertPoint(rotate(float2(bx.mn.x, bx.mx.y), rot));
         return bb;
     }
+
+    AABBox operator+(const float2& vec) const { return AABBox(mn + vec, mx + vec); }
+    AABBox &operator+=(const float2& vec) { mn += vec; mx += vec; return *this; }
 
     void start(float2 pt) 
     {
@@ -1215,5 +1223,13 @@ static double findRootRegulaFalsi(const Fun& fun, double lo, double hi, double e
 int quadraticFormula(double* r0, double* r1, double a, double b, double c);
 
 bool mathRunTests();
+
+struct SlopeLine {
+    float slope = 0.f;
+    float y_int = 0.f;
+    float eval(float x) const { return slope * x + y_int; }
+};
+
+SlopeLine leastSqrRegression(float2* xyCollection, int dataSize);
 
 #endif

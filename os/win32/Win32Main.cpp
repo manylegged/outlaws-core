@@ -715,7 +715,11 @@ void printModulesStack(CONTEXT *ctx)
             printStack(hthread, context);
         } else {
             ReportWin32Err("GetThreadContext", GetLastError());
-            continue;
+        }
+
+        // resume thread so we can shutdown
+        if (ResumeThread(hthread) == -1) {
+            ReportWin32Err("ResumeThread", GetLastError());
         }
     }
 }
@@ -729,6 +733,8 @@ void OL_OnTerminate(const char* message)
     printModulesStack(&context);
 
     sdl_os_oncrash(str_format("Spacetime Terminated: %s\n(Reassembly crashed)", message));
+    fflush(NULL);
+    _exit(1);
 }
 
 static LONG WINAPI myExceptionHandler(EXCEPTION_POINTERS *info)
@@ -759,7 +765,7 @@ static LONG WINAPI myExceptionHandler(EXCEPTION_POINTERS *info)
     printModulesStack(info->ContextRecord);
 
     sdl_os_oncrash(str_format("Spacetime Segfault:\n%s", msg.c_str()));
-	SteamAPI_WriteMiniDump(rec->ExceptionCode, info, 0);
+    _exit(1);
     return EXCEPTION_EXECUTE_HANDLER;
 }
 
@@ -781,27 +787,32 @@ static bool verifyOsVersion(const DWORD major, const DWORD minor)
 	VER_SET_CONDITION(dwlConditionMask, VER_PLATFORMID, VER_EQUAL);
 
 	// Perform the test
-	return VerifyVersionInfo(&osvi, VER_MAJORVERSION | VER_MINORVERSION | VER_PLATFORMID, dwlConditionMask);
+	BOOL ret = VerifyVersionInfo(&osvi, VER_MAJORVERSION | VER_MINORVERSION | VER_PLATFORMID, dwlConditionMask);
+    if (ret == 0) {
+        DWORD err = GetLastError();
+        if (err != ERROR_OLD_WIN_VERSION)
+            ReportWin32Err("VerifyVersionInfo", err);
+    }
+    ReportWin32("VerifyVersionInfo %d.%d: %d", major, minor, ret);
+    return ret;
 }
 
 string os_get_platform_info()
 {
-    OSVERSIONINFO osvi;
-    ZeroMemory(&osvi, sizeof(OSVERSIONINFO));
-    osvi.dwOSVersionInfoSize = sizeof(OSVERSIONINFO);
+    OSVERSIONINFOEX osvi;
+    ZeroMemory(&osvi, sizeof(osvi));
+    osvi.dwOSVersionInfoSize = sizeof(osvi);
 
-    GetVersionEx(&osvi);
+    typedef LONG (WINAPI *FN_RtlGetVersion)( PRTL_OSVERSIONINFOEXW );
+    static FN_RtlGetVersion fnRtlGetVersion = (FN_RtlGetVersion) GetModuleAddr(L"ntdll.dll", "RtlGetVersion");
 
-    DWORD major = osvi.dwMajorVersion;
-    DWORD minor = osvi.dwMinorVersion;
-    //Determine the real *major* version first
-    while (verifyOsVersion(major+1, 0)) {
-        major++;
-        minor = 0;
-    }
-    while (verifyOsVersion(major, minor+1)) {
-        minor++;
-    }
+    if (fnRtlGetVersion)
+        fnRtlGetVersion(&osvi);
+    else
+        GetVersionEx((LPOSVERSIONINFO)&osvi);
+
+    const DWORD major = osvi.dwMajorVersion;
+    const DWORD minor = osvi.dwMinorVersion;
 
     const char* name = NULL;
     if (major == 5 && minor == 1)
@@ -814,6 +825,8 @@ string os_get_platform_info()
         name = "8";
     else if (major == 6 && minor == 3)
         name = "8.1";
+    else if (major == 10)
+        name = "10";
     else
         name = "Unknown";
 

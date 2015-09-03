@@ -10,6 +10,7 @@ import subprocess
 import glob, re
 import codecs
 import vdf
+import shutil
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(sys.argv[0])))
 
@@ -22,12 +23,15 @@ all_languages = [ "ru", "fr", "de", "es", "pt", "pl", "ja" ]
 steam_languages = {"ru":"russian", "en":"english", "de":"german", "fr":"french", "pl":"polish", "sv":"swedish",
                    "ko":"korean", "ja":"japanese", "zh":"chinese", "es":"spanish", "pt":"portugese"}
 languages = all_languages
+set_languages = False
 luafiles = ["tips", "popups", "messages", "tutorial"] # text.lua is special
 txtfiles = ["ships"]
 
 imprt = False
 export = False
 uselua = False
+dozip = False
+    
 
 def mkdir_p(path):
     try:
@@ -38,6 +42,17 @@ def mkdir_p(path):
             pass
         else: raise
 
+def open_po(pof):
+    fil = open(pof)
+    s = fil.read()
+    fil.close()
+    if s.startswith("\xef\xbb\xbf"):
+        s = s[3:]
+        fil = open(pof, "w")
+        fil.write(s)
+        fil.close()
+    return polib.pofile(pof)
+        
         
 def header(luaf):
     return ("\nReassembly data/%s localization file\n" % os.path.basename(luaf)) + """
@@ -47,12 +62,21 @@ Content-Type: text/plain; charset=utf-8
 
 
 def txt2po(txtf, pof):
+    entries = {}
+    if os.path.exists(pof):
+        for pe in open_po(pof):
+            entries[pe.msgid] = pe.msgstr
+    
     pofil = polib.POFile()
     for line in open(txtf):
-        pofil.append(polib.POEntry(msgid=line.strip(), tcomment="this is the name of a ship"))
+        line = line.strip()
+        args = { "msgid":line, "tcomment":"this is the name of a ship" }
+        if line in entries:
+            args["msgstr"] = entries[line]
+        pofil.append(polib.POEntry(**args))
     pofil.header = header(txtf)
     pofil.save(pof)
-    print "wrote " + pof
+    print "wrote " + pof + " (%d entries updated)" % len(entries)
 
     
 def lua2po(luaf, pof):
@@ -67,7 +91,7 @@ def lua2po(luaf, pof):
             newpo.append(polib.POEntry(msgid=st))
 
     if os.path.exists(pof):
-        pofil = polib.pofile(pofile=pof)
+        pofil = open_po(pof)
         pofil.merge(newpo)
     else:
         pofil = newpo
@@ -94,7 +118,7 @@ def achievements_po2vdf(vdff, langs):
     english = load_achievements().items()
     dat = {}
     for lang in langs:
-        trans = dict((pe.msgid, pe.msgstr) for pe in polib.pofile(os.path.join(ROOT, "lang", lang, "achievements.po")))
+        trans = dict((pe.msgid, pe.msgstr) for pe in open_po(os.path.join(ROOT, "lang", lang, "achievements.po")))
         dat[steam_languages[lang]] = {"Tokens":dict((k, trans[v]) for k, v in english)}
     vdf.dump({"lang":dat}, codecs.open(vdff, 'w', 'utf-8'), pretty=True)
     print "wrote " + vdff
@@ -104,10 +128,12 @@ def po2lua_replace(outlua, baselua, pof):
     with open(baselua) as fil:
         dat = fil.read()
     count = 0
-    for pe in polib.pofile(pof):
+    for pe in open_po(pof):
         if pe.msgstr:
             count += 1
-            dat = dat.replace(pe.msgid, pe.msgstr, 1)
+            msgstr = pe.msgstr.replace('"', '\\"')
+            dat = dat.replace('"' + pe.msgid + '"', '"' + msgstr + '"', 1)
+            dat = dat.replace('"\\\n' + pe.msgid + '"', '"\\\n' + msgstr + '"', 1)
     if count == 0:
         return
     mkdir_p(os.path.dirname(outlua))
@@ -125,7 +151,7 @@ def po2lua_simple(outlua, pofs):
     for pof in pofs:
         if not os.path.exists(pof):
             continue
-        for pe in polib.pofile(pof):
+        for pe in open_po(pof):
             if pe.msgstr:
                 dct[pe.msgid] = pe.msgstr
     if not dct:
@@ -137,8 +163,10 @@ def po2lua_simple(outlua, pofs):
 
 
 def po2txt(outtxt, pof):
+    if not os.path.exists(pof):
+        return
     fil = codecs.open(outtxt, "w", "utf-8")
-    for pe in polib.pofile(pof):
+    for pe in open_po(pof):
         if pe.msgstr:
             fil.write(pe.tcomment + "\n")
             fil.write(pe.msgstr + "\n\n")
@@ -153,8 +181,7 @@ def printhelp():
 -h : print this message""" % sys.argv[0]
     exit(0)
 
-    
-opts, cargs = getopt.getopt(sys.argv[1:], "ieh")
+opts, cargs = getopt.getopt(sys.argv[1:], "iehz")
 for (opt, val) in opts:
     if opt == "-h":
         printhelp()
@@ -164,9 +191,12 @@ for (opt, val) in opts:
         export = True
     elif opt == "-l":
         uselua = True
+    elif opt == "-z":
+        dozip = True
 
 if cargs:
     languages = cargs
+    set_languages = True
 
 if export:
     sources = []
@@ -175,6 +205,7 @@ if export:
             sources.extend(glob.glob(os.path.join(ROOT, d, "*%s" % e)))
     for l in ["factions.lua"]:
         sources.append(os.path.join(ROOT, "data", l))
+    print "exporting languages: %s" % ", ".join(languages)
     print "exporting from %d files" % len(sources)
     pofils = []
     for lang in languages:
@@ -183,6 +214,7 @@ if export:
         pofils.append(outpt)
         mkdir_p(lroot)
         args = ["xgettext", "--keyword=_", "--output=" + outpt, "--omit-header",
+                "--no-location", "--no-wrap",
                 "--copyright-holder=2015 Arthur Danskin"]
         if os.path.exists(outpt):
             args.append("--join-existing")
@@ -201,23 +233,36 @@ if export:
             pofils.append(pof)
             txt2po(os.path.join(ROOT, "lang", fil + ".txt"), pof)
         achievements_vdf2po(os.path.join(lroot, "achievements.po"))
-    subprocess.call(["unix2dos", "-q"] + pofils)
+    # subprocess.call(["unix2dos", "-q"] + pofils)
     print "export complete"
 elif imprt:
+    if not set_languages:
+        languages = [x for x in os.listdir(os.path.join(ROOT, "lang/")) if len(x) == 2]
+    print "importing languages: %s" % ", ".join(languages)
     for lang in languages:
         dbase = os.path.join(ROOT, "data")
         droot = os.path.join(dbase, "lang", lang)
         lroot = os.path.join(ROOT, "lang", lang)
+        # german uses english ship names at request of translator
+        mytxt = ["text"] if (lang == "de") else txtfiles + ["text"]
         po2lua_simple(os.path.join(droot, "text.lua"),
-                      [os.path.join(lroot, x + ".po") for x in txtfiles + ["text"]])
+                      [os.path.join(lroot, x + ".po") for x in mytxt])
         for fil in luafiles:
             po2lua_replace(os.path.join(droot, fil + ".lua"),
                            os.path.join(dbase, fil + ".lua"),
                            os.path.join(lroot, fil + ".po"))
+        po2txt(os.path.expanduser("~/Downloads/store_" + lang + ".txt"), os.path.join(lroot, "store.po"))
+
     achievements_po2vdf(os.path.expanduser("~/Downloads/achievements.vdf"), languages)
-    po2txt(os.path.expanduser("~/Downloads/store.txt"), os.path.join(lroot, "store.po"))
     print "import complete"
         
 
-else:
-    printhelp()        
+elif not dozip:
+    printhelp()
+
+if dozip:
+    zipfile = os.path.expanduser("~/Downloads/Reassembly_lang.zip")
+    if os.path.exists(zipfile):
+        os.remove(zipfile)
+    subprocess.call(["zip", zipfile] + glob.glob(os.path.relpath(os.path.join(ROOT, "lang", "*", "*.po"))))
+    print "wrote %s" % (zipfile)

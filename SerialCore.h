@@ -94,6 +94,17 @@ struct SerialEnum : public T {
     {
         return 1 + findLeadingOne(getBitUnion());
     }
+
+    static uint getCount()
+    {
+        static typename T::Type mx = 0;
+        if (mx == 0) {
+            for (const SaveEnum *se=T::getFields(); se->first; se++)
+                mx = max(mx, (typename T::Type)se->second);
+            mx++;
+        }
+        return mx;
+    }
 };
 
 #undef DEFINE_ENUM_OP

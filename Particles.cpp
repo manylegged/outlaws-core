@@ -50,50 +50,48 @@ void ParticleSystem::setParticles(vector<Particle>& particles)
 
 void ParticleSystem::add(const Particle &p, float angle, bool gradient)
 {
-    //ASSERT_UPDATE_THREAD();
-    if (m_maxParticles == 0 || (m_lastMaxedStep == m_simStep))
+    // wait 3 steps before trying again if particle buffer is full
+    if (m_maxParticles == 0 || (m_simStep < m_lastMaxedStep + 3))
         return;
 
     int end = m_addPos - kParticleVerts;
     if (end < 0)
         end += m_vertices.size();
-    if (m_vertices.size())
+    if (!m_vertices.size())
+        end = m_addPos;
+    for (; m_addPos != end; m_addPos = (m_addPos + kParticleVerts) % m_vertices.size())
     {
-        for (; m_addPos != end; m_addPos = (m_addPos + kParticleVerts) % m_vertices.size())
+        if (m_vertices[m_addPos].endTime > m_simTime)
+            continue;
+        if (kParticleVerts == 1)
         {
-            if (m_vertices[m_addPos].endTime <= m_simTime)
-            {
-                if (kParticleVerts == 1)
-                {
-                    m_vertices[m_addPos] = p;
-                    m_vertices[m_addPos].offset.y = gradient ? 0 : kParticleEdges;
-                }
-                else if (kBluryParticles)
-                {
-                    // center
-                    const float2 rot = angleToVector(angle + M_TAOf / (2.f * kParticleEdges));
-                    m_vertices[m_addPos] = p;
-                    m_vertices[m_addPos].offset = float2(0.f);
-                    for (uint j=1; j<kParticleVerts; j++) {
-                        m_vertices[m_addPos + j] = p;
-                        m_vertices[m_addPos + j].offset = rotate(p.offset.x * getCircleVertOffset<kParticleEdges>(j-1), rot);
-                        if (gradient)
-                            m_vertices[m_addPos + j].color  = 0x0;
-                    }
-                }
-                else
-                {
-                    const float2 rot = angleToVector(angle + M_TAOf / (2.f * kParticleEdges));
-                    for (uint j=0; j<kParticleVerts; j++) {
-                        m_vertices[m_addPos + j] = p;
-                        m_vertices[m_addPos + j].offset = rotate(p.offset.x * getCircleVertOffset<kParticleVerts>(j), rot);
-                    }
-                }
-            
-                m_addPos = (m_addPos + kParticleVerts) % m_vertices.size();
-                return;
+            m_vertices[m_addPos] = p;
+            m_vertices[m_addPos].offset.y = gradient ? 0 : kParticleEdges;
+        }
+        else if (kBluryParticles)
+        {
+            // center
+            const float2 rot = angleToVector(angle + M_TAOf / (2.f * kParticleEdges));
+            m_vertices[m_addPos] = p;
+            m_vertices[m_addPos].offset = float2(0.f);
+            for (uint j=1; j<kParticleVerts; j++) {
+                m_vertices[m_addPos + j] = p;
+                m_vertices[m_addPos + j].offset = rotate(p.offset.x * getCircleVertOffset<kParticleEdges>(j-1), rot);
+                if (gradient)
+                    m_vertices[m_addPos + j].color  = 0x0;
             }
         }
+        else
+        {
+            const float2 rot = angleToVector(angle + M_TAOf / (2.f * kParticleEdges));
+            for (uint j=0; j<kParticleVerts; j++) {
+                m_vertices[m_addPos + j] = p;
+                m_vertices[m_addPos + j].offset = rotate(p.offset.x * getCircleVertOffset<kParticleVerts>(j), rot);
+            }
+        }
+            
+        m_addPos = (m_addPos + kParticleVerts) % m_vertices.size();
+        return;
     }
 
     // drop particles if we have too many
@@ -104,10 +102,11 @@ void ParticleSystem::add(const Particle &p, float angle, bool gradient)
         return;
     }
 
+    // else grow
     m_addPos = m_vertices.size();
     {
         std::lock_guard<std::mutex> l(m_mutex);
-        const uint size = max(kMinParticles * kParticleVerts, (uint) m_vertices.size() * 2);
+        const int size = clamp((int)m_vertices.size() * 2, kMinParticles * kParticleVerts, m_maxParticles * kParticleVerts);
         DPRINT(SHADER, ("Changing particle count from %.2e to %.2e", (double) m_vertices.size(), (double) size));
         m_vertices.resize(size);
     }

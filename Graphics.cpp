@@ -1068,7 +1068,7 @@ float2 View::toWorld(float2 p) const
 {
     p -= 0.5f * sizePoints;
     p *= getScale();
-    p = rotate(p, rot);
+    p = ::rotate(p, rot);
     p += position;
     return p;
 }
@@ -1076,7 +1076,7 @@ float2 View::toWorld(float2 p) const
 float2 View::toScreen(float2 p) const
 {
     p -= position;
-    p = rotateN(p, rot);
+    p = ::rotateN(p, rot);
     p /= getScale();
     p += 0.5f * sizePoints;
     return p;
@@ -1133,7 +1133,7 @@ ShaderState View::getWorldShaderState(float2 zminmax) const
 
     const glm::mat4 view = glm::lookAt(float3(position, dist),
                                        float3(position, 0.f),
-                                       float3(rotate(rot, kUpAngle), 0));
+                                       float3(::rotate(rot, kUpAngle), 0));
     const glm::mat4 proj = glm::perspective(kFOV, aspect, mznear, mzfar);
     ws.uTransform = proj * view;
 

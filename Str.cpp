@@ -41,6 +41,59 @@ typedef std::uint8_t Uint8;
 typedef std::uint16_t Uint16;
 typedef std::uint32_t Uint32;
 
+// Copyright (c) 2008-2009 Bjoern Hoehrmann <bjoern@hoehrmann.de>
+// See http://bjoern.hoehrmann.de/utf-8/decoder/dfa/ for details.
+
+#define UTF8_ACCEPT 0
+#define UTF8_REJECT 1
+
+static const uint8_t utf8d[] = {
+    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, // 00..1f
+    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, // 20..3f
+    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, // 40..5f
+    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, // 60..7f
+    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,9,9,9,9,9,9,9,9,9,9,9,9,9,9,9,9, // 80..9f
+    7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7, // a0..bf
+    8,8,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2, // c0..df
+    0xa,0x3,0x3,0x3,0x3,0x3,0x3,0x3,0x3,0x3,0x3,0x3,0x3,0x4,0x3,0x3, // e0..ef
+    0xb,0x6,0x6,0x6,0x5,0x8,0x8,0x8,0x8,0x8,0x8,0x8,0x8,0x8,0x8,0x8, // f0..ff
+    0x0,0x1,0x2,0x3,0x5,0x8,0x7,0x1,0x1,0x1,0x4,0x6,0x1,0x1,0x1,0x1, // s0..s0
+    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,1,1,1,1,1,0,1,0,1,1,1,1,1,1, // s1..s2
+    1,2,1,1,1,1,1,2,1,2,1,1,1,1,1,1,1,1,1,1,1,1,1,2,1,1,1,1,1,1,1,1, // s3..s4
+    1,2,1,1,1,1,1,1,1,2,1,1,1,1,1,1,1,1,1,1,1,1,1,3,1,3,1,1,1,1,1,1, // s5..s6
+    1,3,1,1,1,1,1,3,1,3,1,1,1,1,1,1,1,3,1,1,1,1,1,1,1,1,1,1,1,1,1,1, // s7..s8
+};
+
+static uint32_t decode(uint32_t* state, uint32_t* codep, uint32_t byte)
+{
+    uint32_t type = utf8d[byte];
+
+    *codep = (*state != UTF8_ACCEPT) ?
+             (byte & 0x3fu) | (*codep << 6) :
+             (0xff >> type) & (byte);
+
+    *state = utf8d[256 + *state*16 + type];
+    return *state;
+}
+// end Copyright(c) 2008-2009 Bjoern Hoehrmann <bjoern@hoehrmann.de>
+
+// utf8 -> utf32
+static ustring utf8_decode(const string &utf8)
+{
+    ustring ret;
+    uint32_t state = 0;
+    uint32_t codepoint = 0;
+    for (int i=0; i<utf8.size(); i++)
+    {
+        if (decode(&state, &codepoint, (unsigned char)utf8[i]))
+            continue;
+        ret.push_back(codepoint);
+    }
+    return ret;
+}
+
+
+// modified from SDL2 SDL_ttf.c
 static void UCS2_to_UTF8(const Uint16 *src, Uint8 *dst)
 {
     while (*src) {
@@ -66,6 +119,14 @@ string utf8_encode(int ucs2)
     const Uint16 chrs[] = { (Uint16)ucs2, 0 };
     UCS2_to_UTF8(chrs, (Uint8*)outp);
     return outp;
+}
+
+static void utf8_encode_append(string &str, int ucs2)
+{
+    char outp[5] = {};
+    const Uint16 chrs[] = { (Uint16)ucs2, 0 };
+    UCS2_to_UTF8(chrs, (Uint8*)outp);
+    str += outp;
 }
 
 
@@ -360,34 +421,47 @@ long chr_unshift(long chr)
     return chr;
 }
 
+static bool is_punct(uint32_t it)
+{
+    switch (it)
+    {
+    case '|': case '_': case '.': case '?': case '!':
+    case 0x3001: case 0x3002: case 0xff1f: // 、。？
+        return true;
+    }
+    return false;
+}
 
-std::string str_word_wrap(const std::string &str, const str_wrap_options_t &ops)
+std::string str_word_wrap(const std::string &utf8, const str_wrap_options_t &ops)
 {
     const size_t nlsize = strlen(ops.newline)-1;
 
+    const ustring str = utf8_decode(utf8);
     std::string ret;
     int line_length = 0;
     std::string word;
     for (int i=0; i<=str.size(); i++)
     {
-        char chr = (i == str.size()) ? '\0' : str[i];
-        if (strchr(ops.wrap, chr) || chr == '\n' || chr == '\0')
+        uint32_t chr = (i == str.size()) ? '\0' : str[i];
+        if (chr == ' ' || is_punct(chr) || chr == '\n' || chr == '\0')
         {
             const int word_len = utf8_width(word);
             if (line_length + word_len >= ops.width && line_length > nlsize)
             {
-                while (ret.size() && strchr(ops.wrap, ret.back()))
+                while (ret.size() && ret.back() == ' ')
                     ret.pop_back();
                 ret += ops.newline;
                 line_length = nlsize;
             }
             ret += word;
+            // replace newline with space if rewrapping
+            // FIXME japanese doesn't have spaces
             if (ops.rewrap && chr == '\n' && 0 < i && i < str.size()-1 &&
                 str[i-1] != '\n' && str[i+1] != '\n')
             {
                 chr = ' ';
             }
-            ret += chr;
+            utf8_encode_append(ret, chr);
             if (chr == '\n')
                 line_length = 0;
             else
@@ -396,10 +470,10 @@ std::string str_word_wrap(const std::string &str, const str_wrap_options_t &ops)
         }
         else
         {
-            word += chr;
+            utf8_encode_append(word, chr);
         }
     }
-    if (ret.back() == '\0')
+    if (ret.size() && ret.back() == '\0')
         ret.pop_back();
     return ret;
 }
@@ -535,7 +609,7 @@ std::string str_timestamp()
 
 std::string str_numeral_format(int num)
 {
-    if (!str_equals(OLG_GetLanguage(), "en_US"))
+    if (!str_equals(OLG_GetLanguage(), "en"))
         return str_format("%d", num);
     static const char* numerals[] = { "zero", "one", "two", "three", "four", "five", "six",
                                     "seven", "eight", "nine", "ten", "eleven", "twelve",
@@ -556,6 +630,37 @@ std::string str_numeral_format(int num)
         ret += numerals[num % 10];
     }
     return ret;
+}
+
+
+std::string lang_concat_adj(const string &adj, const string &noun)
+{
+    if (adj.empty())
+        return noun;
+    const char* lang = OLG_GetLanguage();
+    if (str_startswith(lang, "pt") ||
+        str_startswith(lang, "es"))
+    {
+        int suffix = noun.size();
+        while (suffix > 0 && (str_isspace(noun[suffix-1]) || str_ispunct(noun[suffix-1])))
+            suffix--;
+        return noun.substr(0, suffix) + " " + str_strip(adj) + noun.substr(suffix);
+    }
+    else
+    {
+        return str_strip(adj) + " " + noun;
+    }
+}
+
+std::string lang_plural(const string &noun)
+{
+    const char* lang = OLG_GetLanguage();
+    if (str_startswith(lang, "en"))
+    {
+        return noun + "s";
+    }
+    // just use singular
+    return noun;
 }
 
 
@@ -807,6 +912,9 @@ bool str_runtests()
     TEST(str_word_wrap("foo\n\nbar", ops), "foo\n\nbar");
     ops.width = 4;
     TEST(str_word_wrap("foo\nbar", ops), "foo\nbar");
+    ops.width = 16;
+    TEST(str_word_wrap("で入手します。敵艦を破壊、仲間のスポ", ops),
+         "で入手します。\n敵艦を破壊、\n仲間のスポ");
 
     TEST(str_chomp("스텔라 "), "스텔라");
     TEST(str_strip(" применить\n"), "применить");

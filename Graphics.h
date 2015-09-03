@@ -376,6 +376,7 @@ struct View {
 
     void setAngle(float angle) { rot = angleToVector(angle); }
     float getAngle() const { return vectorToAngle(rot); }
+    void rotate(float angle) { rot = ::rotate(rot, angle); }
     
     // interpolation support
     friend View operator+(const View& a, const View& b);
@@ -453,7 +454,7 @@ struct View {
 
     void setWorldRadius(float rad)
     {
-        scale = max_dim((2.f * rad) / sizePoints);
+        scale = worldRadiusToScale(rad);
     }
 
     float getWorldRadius() const

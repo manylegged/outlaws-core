@@ -529,3 +529,33 @@ float rand_normal(float mean, float stddev)
     float result = n1*stddev + mean;
     return result;
 }
+
+// from http://codesam.blogspot.com/2011/06/least-square-linear-regression-of-data.html
+SlopeLine leastSqrRegression(float2* xyCollection, int dataSize)
+{
+    SlopeLine sl;
+    if (xyCollection == NULL || dataSize == 0)
+        return sl;
+
+    double SUMx = 0;     //sum of x values
+    double SUMy = 0;     //sum of y values
+    double SUMxy = 0;    //sum of x * y
+    double SUMxx = 0;    //sum of x^2
+
+    for (int i = 0; i < dataSize; i++)
+    {
+        SUMx = SUMx + xyCollection[i].x;
+        SUMy = SUMy + xyCollection[i].y;
+        SUMxy = SUMxy + xyCollection[i].x * xyCollection[i].y;
+        SUMxx = SUMxx + xyCollection[i].x * xyCollection[i].x;
+    }
+
+    //calculate the means of x and y
+    double AVGy = SUMy / dataSize;
+    double AVGx = SUMx / dataSize;
+
+
+    sl.slope = (dataSize * SUMxy - SUMx * SUMy) / (dataSize * SUMxx - SUMx*SUMx);
+    sl.y_int = AVGy - sl.slope * AVGx;
+    return sl;
+}

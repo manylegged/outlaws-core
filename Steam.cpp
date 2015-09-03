@@ -236,8 +236,11 @@ static unordered_map<string, int> &steamIndex()
             {
                 int32 size = 0;
                 const char* name = ss->GetFileNameAndSize(i, &size);
-                (*files)[name] = size;
-                totalBytes += size;
+                if (name)
+                {
+                    (*files)[name] = size;
+                    totalBytes += size;
+                }
             }
             DPRINT(STEAM, ("Created Steam Cloud file index with %d files, %s",
                            (int)files->size(), str_bytes_format(totalBytes).c_str()));
@@ -486,15 +489,16 @@ string getSteamLanguageCode()
 {
     if (!SteamApps())
         return string();
-    const string steamlang = SteamApps()->GetCurrentGameLanguage();
-    DPRINT(STEAM, ("Language: %s", steamlang.c_str()));
-    if      (steamlang == "german")     { return "de"; }
-    else if (steamlang == "polish")     { return "pl"; }
-    else if (steamlang == "spanish")    { return "es"; }
-    else if (steamlang == "swedish")    { return "sv"; }
-    else if (steamlang == "chinese")    { return "zh"; }
-    else if (steamlang == "portuguese") { return "pt"; }
-    return steamlang.substr(0, 2);
+    string lang = SteamApps()->GetCurrentGameLanguage();
+    DPRINT(STEAM, ("Language: %s", lang.c_str()));
+    if      (lang == "german")     { return "de"; }
+    else if (lang == "polish")     { return "pl"; }
+    else if (lang == "spanish")    { return "es"; }
+    else if (lang == "swedish")    { return "sv"; }
+    else if (lang == "chinese")    { return "zh"; }
+    else if (lang == "portuguese") { return "pt"; }
+    else if (lang == "brazilian")  { return "pt"; }
+    return lang.substr(0, 2);
 }
 
 static void __cdecl SteamAPIDebugTextHook( int nSeverity, const char *pchDebugText )

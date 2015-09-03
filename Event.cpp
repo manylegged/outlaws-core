@@ -369,6 +369,10 @@ void KeyState::OnEvent(const Event* event)
         setLastGamepad(event);
         break;
     case Event::GAMEPAD_REMOVED:
+        if (event->which == lastGamepad) {
+            lastGamepad = -1;
+            gamepadActive = false;
+        }
     case Event::LOST_FOCUS:
         reset();
         fflush(NULL); // flush all open streams
@@ -516,8 +520,11 @@ string keyToString(int key)
     if (key == -1)
         return "<Invalid>";
     string str;
+    //. prefix for keybindings using Control
     if (key&MOD_CTRL) str += _("Ctrl-");
+    //. prefix for keybindings using Alt/Option
     if (key&MOD_ALT)  str += _("Alt-");
+    //. prefix for keybindings using Shift
     if (key&MOD_SHFT) str += _("Shft-");
     return str + rawKeyToString(key&~MOD_MASK);
 }
