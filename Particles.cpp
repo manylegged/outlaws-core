@@ -55,11 +55,12 @@ void ParticleSystem::add(const Particle &p, float angle, bool gradient)
         return;
 
     int end = m_addPos - kParticleVerts;
+    const int vsize = m_vertices.size();
     if (end < 0)
-        end += m_vertices.size();
-    if (!m_vertices.size())
+        end += vsize;
+    if (vsize == 0)
         end = m_addPos;
-    for (; m_addPos != end; m_addPos = (m_addPos + kParticleVerts) % m_vertices.size())
+    for (; m_addPos != end; m_addPos = (m_addPos + kParticleVerts) % vsize)
     {
         if (m_vertices[m_addPos].endTime > m_simTime)
             continue;
@@ -90,7 +91,7 @@ void ParticleSystem::add(const Particle &p, float angle, bool gradient)
             }
         }
             
-        m_addPos = (m_addPos + kParticleVerts) % m_vertices.size();
+        m_addPos = (m_addPos + kParticleVerts) % vsize;
         return;
     }
 
@@ -103,11 +104,11 @@ void ParticleSystem::add(const Particle &p, float angle, bool gradient)
     }
 
     // else grow
-    m_addPos = m_vertices.size();
+    m_addPos = vsize;
     {
         std::lock_guard<std::mutex> l(m_mutex);
-        const int size = clamp((int)m_vertices.size() * 2, kMinParticles * kParticleVerts, m_maxParticles * kParticleVerts);
-        DPRINT(SHADER, ("Changing particle count from %.2e to %.2e", (double) m_vertices.size(), (double) size));
+        const int size = clamp((int)vsize * 2, kMinParticles * kParticleVerts, m_maxParticles * kParticleVerts);
+        DPRINT(SHADER, ("Changing particle count from %.2e to %.2e", (double) vsize, (double) size));
         m_vertices.resize(size);
     }
 
@@ -203,6 +204,7 @@ void ParticleSystem::update(uint step, float time)
     // number of particles decreased
     if (count() > m_maxParticles)
     {
+        std::lock_guard<std::mutex> l(m_mutex);
         m_vertices.resize(m_maxParticles * kParticleVerts);
         m_addPos = 0;
         m_addFirst = 0;
@@ -215,32 +217,32 @@ void ParticleSystem::update(uint step, float time)
         if (vec_pop_increment(m_trails, i, tr.endTime < m_simTime))
             continue;
 
-        if ((float) m_simTime - tr.lastParticleTime > 1.f / tr.rate)
-        {
-            const float  vln = length(tr.velocity);
-            const float  phi = (vln * ((float)m_simTime - tr.startTime)) / tr.arcRadius;
-            const float2 rad = tr.arcRadius * rotate90(tr.velocity / vln);
-            const float3 pos = tr.position + float3(rotate(rad, phi) - rad, 0.f);
+        if ((float) m_simTime - tr.lastParticleTime <= 1.f / tr.rate)
+            continue;
+        
+        const float  vln = length(tr.velocity);
+        const float  phi = (vln * ((float)m_simTime - tr.startTime)) / tr.arcRadius;
+        const float2 rad = tr.arcRadius * rotate90(tr.velocity / vln);
+        const float3 pos = tr.position + float3(rotate(rad, phi) - rad, 0.f);
             
-            // const float2 pos = tr.position + tr.velocity * ((float)m_simTime - tr.startTime);
-            if (visible(pos, 1000.f))
-            {
-                Particle pr  = tr.particle;
-                const float v = ((float)m_simTime - tr.startTime) / (tr.endTime - tr.startTime);
+        // const float2 pos = tr.position + tr.velocity * ((float)m_simTime - tr.startTime);
+        if (!visible(pos, 1000.f))
+            continue;
+                
+        Particle pr  = tr.particle;
+        const float v = ((float)m_simTime - tr.startTime) / (tr.endTime - tr.startTime);
 
-                pr.position  = pos;
-                pr.velocity  = float3(rotate(float2(lerp(pr.velocity, tr.particle1.velocity, v)),
-                                             randangle()), 0.f);
-                pr.startTime = m_simTime;
-                pr.endTime   = m_simTime + lerp(pr.endTime, tr.particle1.endTime, v);
-                pr.offset    = lerp(pr.offset, tr.particle1.offset, v);
-                pr.color     = lerpAXXX(pr.color, tr.particle1.color, v);
+        pr.position  = pos;
+        pr.velocity  = float3(rotate(float2(lerp(pr.velocity, tr.particle1.velocity, v)),
+                                     randangle()), 0.f);
+        pr.startTime = m_simTime;
+        pr.endTime   = m_simTime + lerp(pr.endTime, tr.particle1.endTime, v);
+        pr.offset    = lerp(pr.offset, tr.particle1.offset, v);
+        pr.color     = lerpAXXX(pr.color, tr.particle1.color, v);
             
-                add(pr, randangle(), true);
+        add(pr, randangle(), true);
 
-                tr.lastParticleTime = m_simTime;
-            }
-        }
+        tr.lastParticleTime = m_simTime;
     }
 }
 

@@ -38,6 +38,11 @@ extern "C"
 #define NOINLINE
 #endif
 #endif
+
+/////////////////////////////// Toggles ///////////////////////////////////////////////
+
+#define OL_HAS_SDL 1
+
 ////////////////////////////// OS layer calls into Game ///////////////////////////////
 
 // main game function - called once per frame
@@ -156,6 +161,9 @@ void OL_WriteClipboard(const char* txt);
 
 // move cursor
 void OL_WarpCursorPosition(float x, float y);
+
+// get cursor
+void OL_GetCursorPosition(float *x, float *y);
 
 // disable gamepad
 void OL_SetGamepadEnabled(int enabled);

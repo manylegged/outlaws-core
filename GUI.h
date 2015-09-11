@@ -201,6 +201,7 @@ struct Scrollbar final : public WidgetBase{
     int         visible   = 0;    // number of visible items
     int         total   = 0;    // total items
     bool        pressed = false; // is actively dragging thumb?
+    bool        moved = false;   // scrolled window, needs to recompute hovered
     float       sfirst  = 0.f;  // float version of first for scrolling
     WidgetBase *parent  = NULL;
 

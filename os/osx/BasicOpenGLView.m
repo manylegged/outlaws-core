@@ -4,8 +4,12 @@
 #import "BasicOpenGLView.h"
 #include <execinfo.h>
 
-#include "../sdl_os/sdl_inc.h"
 #include "Outlaws.h"
+
+#if OL_HAS_SDL
+#include "../sdl_os/sdl_inc.h"
+#endif
+
 #include "posix.h"
 
 BasicOpenGLView * gView = NULL;
@@ -409,9 +413,11 @@ static NSCursor* invisibleCursor()
         [[self window] performClose: gView];
         LogMessage(@"performing close");
     } else {
+#if OL_HAS_SDL
         SDL_Event evt;
         while (SDL_PollEvent(&evt))
             Controller_HandleEvent(&evt);
+#endif
         
         NSRect rectView = [self convertRectToBacking:[self bounds]];
         glViewport(0, 0, rectView.size.width, rectView.size.height);
@@ -445,6 +451,13 @@ void OL_WarpCursorPosition(float x, float y)
     CGWarpMouseCursorPosition(screen.origin);
 }
 
+void OL_GetCursorPosition(float *x, float *y)
+{
+    NSPoint coord = [gView.window mouseLocationOutsideOfEventStream];
+    // coord.y = [gView bounds].size.height - coord.y;
+    *x = coord.x;
+    *y = coord.y;
+}
 
 void OL_Present()
 {
@@ -588,7 +601,9 @@ static void setupPresentationOptions(BOOL fullscreen)
 
     [[self window] setDelegate:self];
 
+#if OL_HAS_SDL
     Controller_Init();
+#endif
 }
 
 

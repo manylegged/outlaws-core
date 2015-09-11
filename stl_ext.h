@@ -143,16 +143,16 @@ namespace std {
     };
 
     template <typename T>
-    struct hash< glm::detail::tvec2<T, glm::defaultp> > {
-        std::size_t operator()(const glm::detail::tvec2<T, glm::defaultp>& pt) const
+    struct hash< glm::tvec2<T> > {
+        std::size_t operator()(const glm::tvec2<T>& pt) const
         {
             return hash_combine(std::hash<T>()(pt.x), std::hash<T>()(pt.y));
         }
     };
 
     template <typename T>
-    struct hash< glm::detail::tvec3<T, glm::defaultp> > {
-        std::size_t operator()(const glm::detail::tvec3<T, glm::defaultp>& pt) const
+    struct hash< glm::tvec3<T> > {
+        std::size_t operator()(const glm::tvec3<T>& pt) const
         {
             return hash_combine(std::hash<T>()(pt.x),
                                 hash_combine(std::hash<T>()(pt.y),

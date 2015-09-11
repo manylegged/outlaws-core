@@ -206,7 +206,11 @@ const char* KeyState::stringStart() const
 
 const char* KeyState::gamepadName() const
 {
+#if OL_HAS_SDL
     return OL_GetGamepadName(lastGamepad);
+#else
+    return NULL;
+#endif
 }
 
 void KeyState::setLastGamepad(const Event *evt)
@@ -310,6 +314,10 @@ void KeyState::OnEvent(const Event* event)
             gamepads[event->which].buttons[event->key - GamepadA] = (event->type == Event::KEY_DOWN);
             setLastGamepad(event);
         }
+        else if (!event->synthetic)
+        {
+            gamepadActive = false;
+        }
         break;
 
     case Event::MOUSE_DOWN:
@@ -332,8 +340,6 @@ void KeyState::OnEvent(const Event* event)
     case Event::MOUSE_DRAGGED:
     {
         cursorPosScreen = event->pos;
-        if (event->type == Event::KEY_DOWN && !event->synthetic && !event->isGamepad())
-            gamepadActive = false;
         break;
     }
     case Event::GAMEPAD_AXIS: 

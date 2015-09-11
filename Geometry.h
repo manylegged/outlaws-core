@@ -61,10 +61,10 @@
 #pragma clang diagnostic pop
 #endif
 
-extern template struct glm::detail::tvec2<float, glm::defaultp>;
-extern template struct glm::detail::tvec2<int, glm::defaultp>;
-extern template struct glm::detail::tvec3<float, glm::defaultp>;
-extern template struct glm::detail::tvec3<int, glm::defaultp>;
+extern template struct glm::tvec2<float>;
+extern template struct glm::tvec2<int>;
+extern template struct glm::tvec3<float>;
+extern template struct glm::tvec3<int>;
 
 #include <cmath>
 #include <algorithm>
@@ -249,9 +249,9 @@ inline T sign(T val)
     return (T(0) < val) - (val < T(0));
 }
 
-inline float2 sign(float2 v) { return float2(sign(v.x), sign(v.y)); }
-inline float3 sign(float3 v) { return float3(sign(v.x), sign(v.y), sign(v.z)); }
-inline float4 sign(float4 v) { return float4(sign(v.x), sign(v.y), sign(v.z), sign(v.w)); }
+inline float2 sign(const float2 &v) { return float2(sign(v.x), sign(v.y)); }
+inline float3 sign(const float3 &v) { return float3(sign(v.x), sign(v.y), sign(v.z)); }
+inline float4 sign(const float4 &v) { return float4(sign(v.x), sign(v.y), sign(v.z), sign(v.w)); }
 
 
 template <typename T>
@@ -355,16 +355,15 @@ inline T modulo(T x, T y)
 
 
 template <typename T>
-inline glm::detail::tvec2<T, glm::defaultp> modulo(glm::detail::tvec2<T, glm::defaultp> val,
-                                                   glm::detail::tvec2<T, glm::defaultp> div)
+inline glm::tvec2<T> modulo(glm::tvec2<T> val, glm::tvec2<T> div)
 {
-    return glm::detail::tvec2<T, glm::defaultp>(modulo(val.x, div.x), modulo(val.y, div.y));
+    return glm::tvec2<T>(modulo(val.x, div.x), modulo(val.y, div.y));
 }
 
 template <typename T>
-inline glm::detail::tvec2<T, glm::defaultp> modulo(glm::detail::tvec2<T, glm::defaultp> val, T div)
+inline glm::tvec2<T> modulo(glm::tvec2<T> val, T div)
 {
-    return glm::detail::tvec2<T, glm::defaultp>(modulo(val.x, div), modulo(val.y, div));
+    return glm::tvec2<T>(modulo(val.x, div), modulo(val.y, div));
 }
 
 inline float min_abs(float a, float b)
@@ -451,27 +450,25 @@ inline float toradians(float degrees) { return 2.f * M_PIf / 360.0f * degrees; }
 
 // rotate vector v by angle a
 template <typename T>
-inline glm::detail::tvec2<T, glm::defaultp> rotate(glm::detail::tvec2<T, glm::defaultp> v, T a)
+inline glm::tvec2<T> rotate(glm::tvec2<T> v, T a)
 {
     T cosa = std::cos(a);
     T sina = std::sin(a);
-    return glm::detail::tvec2<T, glm::defaultp>(cosa * v.x - sina * v.y, sina * v.x + cosa * v.y);
+    return glm::tvec2<T>(cosa * v.x - sina * v.y, sina * v.x + cosa * v.y);
 }
 
 // rotate counterclockwise
 template <typename T>
-inline glm::detail::tvec2<T, glm::defaultp> rotate(const glm::detail::tvec2<T, glm::defaultp> &v, 
-                                                   const glm::detail::tvec2<T, glm::defaultp> &a)
+inline glm::tvec2<T> rotate(const glm::tvec2<T> &v, const glm::tvec2<T> &a)
 {
-    return glm::detail::tvec2<T, glm::defaultp>(a.x * v.x - a.y * v.y, a.y * v.x + a.x * v.y);
+    return glm::tvec2<T>(a.x * v.x - a.y * v.y, a.y * v.x + a.x * v.y);
 }
 
 // rotate clockwise
 template <typename T>
-inline glm::detail::tvec2<T, glm::defaultp> rotateN(const glm::detail::tvec2<T, glm::defaultp> &v, 
-                                                    const glm::detail::tvec2<T, glm::defaultp> &a)
+inline glm::tvec2<T> rotateN(const glm::tvec2<T> &v, const glm::tvec2<T> &a)
 {
-    return glm::detail::tvec2<T, glm::defaultp>(a.x * v.x + a.y * v.y, -a.y * v.x + a.x * v.y);
+    return glm::tvec2<T>(a.x * v.x + a.y * v.y, -a.y * v.x + a.x * v.y);
 }
 
 inline float2 swapXY(float2 v)    { return float2(v.y, v.x); }
@@ -504,7 +501,7 @@ inline float2 logerp(float2 v, float2 tv, float s)
 {
     return float2(logerp(v.x, tv.x, s), logerp(v.y, tv.y, s));
 }
-inline float4 logerp(float4 v, float4 tv, float s)
+inline float4 logerp(const float4 &v, const float4 &tv, float s)
 { 
     return float4(logerp(v.x, tv.x, s),
                   logerp(v.y, tv.y, s),
@@ -732,7 +729,7 @@ inline bool isInRange(T p, T mn, T mx)
 }
 
 template <typename T>
-inline bool isInRange(glm::detail::tvec2<T, glm::defaultp> p, glm::detail::tvec2<T, glm::defaultp> mn, glm::detail::tvec2<T, glm::defaultp> mx)
+inline bool isInRange(glm::tvec2<T> p, glm::tvec2<T> mn, glm::tvec2<T> mx)
 {
     return isInRange(p.x, mn.x, mx.x) && isInRange(p.y, mn.x, mx.x);
 }
@@ -1184,7 +1181,7 @@ inline bool toroidalIntersectRectangleRectangle(const float2 &p, const float2 &p
 
 // http://en.wikipedia.org/wiki/False_position_method#Numerical_analysis
 template <typename Fun>
-static double findRootRegulaFalsi(const Fun& fun, double lo, double hi, double error)
+static double findRootRegulaFalsi(const Fun& fun, double lo, double hi, double error=epsilon)
 {
     double fun_hi = fun(hi);
     double fun_lo = fun(lo);

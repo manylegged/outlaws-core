@@ -624,14 +624,14 @@ struct Transform2D {
     }
 
     template <typename R, typename T>
-    void apply(R &result, const glm::detail::tvec2<T, glm::defaultp> &vec) const
+    void apply(R &result, const glm::tvec2<T> &vec) const
     {
         result.x += transform[0].x * vec.x + transform[1].x * vec.y + transform[2].x;
         result.y += transform[0].y * vec.x + transform[1].y * vec.y + transform[2].y;
     }
 
     template <typename R, typename T>
-    void apply(R& result, const glm::detail::tvec3<T, glm::defaultp> &vec) const
+    void apply(R& result, const glm::tvec3<T> &vec) const
     {
         result.x += transform[0].x * vec.x + transform[1].x * vec.y + transform[2].x;
         result.y += transform[0].y * vec.x + transform[1].y * vec.y + transform[2].y;
@@ -1664,7 +1664,7 @@ void sexyFillScreen(const ShaderState &ss, const View& view, uint color, uint co
 void PushUnlockDial(TriMesh<VertexPosColor> &mesh, float2 pos, float rad, float progress, uint color, float alpha);
 
 void renderLoadingSpinner(LineMesh<VertexPosColor> &mesh, float2 pos, float2 size, float alpha, float progress);
-void renderLoadingSpinner(ShaderState ss, float2 pos, float2 size, float alpha, float progress);
+void renderLoadingSpinner(const ShaderState &ss, float2 pos, float2 size, float alpha, float progress);
 
 // P is upper left corner, S is size
 float2 DrawBar(const ShaderState &ss, uint fill, uint line, float alpha, float2 p, float2 s, float a);

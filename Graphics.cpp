@@ -980,8 +980,9 @@ void renderLoadingSpinner(LineMesh<VertexPosColor> &mesh, float2 pos, float2 siz
                  pos + rotate(rad, ang+2.f*M_TAOf/3.f));
 }
 
-void renderLoadingSpinner(ShaderState ss, float2 pos, float2 size, float alpha, float progress)
+void renderLoadingSpinner(const ShaderState &ss_, float2 pos, float2 size, float alpha, float progress)
 {
+	ShaderState ss = ss_;
     const float ang = kSpinnerRate * globals.renderTime + M_TAOf * progress;
     const float2 rad = float2(min_dim(size) * 0.4f, 0.f);
     ss.color(0xffffff, 0.5f * alpha);

@@ -15,7 +15,6 @@
 #include "posix.h"
 
 typedef unsigned int uint;
-#include "Colors.h"
 
 #define ASSERT(X) if (!(X)) OLG_OnAssertFailed(__FILE__, __LINE__, __func__, #X, "")
 
@@ -805,7 +804,7 @@ const char* OL_SandboxSaveFile(const char* filename, const char* ext)
     [save setAllowsOtherFileTypes:NO];
 
     NSInteger result = [save runModal];
-    const char* res = (result == NSOKButton) ? [[[save URL] path] UTF8String] : NULL;
+    const char* res = (result == NSModalResponseOK) ? [[[save URL] path] UTF8String] : NULL;
 
     if (glctx)
         [glctx makeCurrentContext];
@@ -828,7 +827,7 @@ const char* OL_SandboxOpenFile(void)
     [open setAllowsOtherFileTypes:NO];
 
     NSInteger result = [open runModal];
-    const char* res = (result == NSOKButton) ? [[[open URL] path] UTF8String] : NULL;
+    const char* res = (result == NSModalResponseOK) ? [[[open URL] path] UTF8String] : NULL;
 
     if (glctx)
         [glctx makeCurrentContext];

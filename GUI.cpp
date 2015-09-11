@@ -2075,12 +2075,27 @@ void Scrollbar::render(DMesh &mesh)
     mesh.tri.PushRect(th.pos, th.rad);
 
     mesh.translateZ(-0.5f);
+
+    if (moved)
+    {
+        // create dummy event to recompute hovered button
+        Event e;
+        e.type = Event::MOUSE_MOVED;
+        e.pos = KeyState::instance().cursorPosScreen;
+        moved = false;
+        pushEvent(&e);
+    }
 }
 
 bool Scrollbar::HandleEvent(const Event *event)
 {
-    if (!event->isMouse() && event->type != Event::SCROLL_WHEEL)
+    if (!event->isMouse() &&
+        event->type != Event::SCROLL_WHEEL &&
+        !event->isKeyDown(NSPageUpFunctionKey) &&
+        !event->isKeyDown(NSPageDownFunctionKey))
+    {
         return false;
+    }
     if (event->isMouse())
         hovered = intersectPointRectangle(event->pos, position, size/2.f);
     if (total == 0) {
@@ -2097,20 +2112,22 @@ bool Scrollbar::HandleEvent(const Event *event)
 
     if (parentHovered)
     {
-        if (event->type == Event::SCROLL_WHEEL &&
-            fabsf(event->vel.y) > epsilon)
-        {
-            first = clamp(first + ((event->vel.y > 0) ? -1 : 1), 0, maxfirst);
-            sfirst = first;
-            return true;
+        int delta = 0;
+        if (event->type == Event::SCROLL_WHEEL && fabsf(event->vel.y) > epsilon) {
+            delta = ((event->vel.y > 0) ? -1 : 1);
+        } else if (event->isKeyDown(NSPageUpFunctionKey)) {
+            delta = -page;
+        } else if (event->isKeyDown(NSPageDownFunctionKey)) {
+            delta = page;
         }
 
-        if (event->isKeyDown(NSPageUpFunctionKey)) {
-            first = clamp(first - page, 0, maxfirst);
-            sfirst = first;
-        } else if (event->isKeyDown(NSPageDownFunctionKey)) {
-            first = clamp(first + page, 0, maxfirst);
-            sfirst = first;
+        const int nfirst = clamp(first + delta, 0, maxfirst);
+        if (nfirst != first)
+        {
+            first = nfirst;
+            sfirst = nfirst;
+            moved = true;
+            return true;
         }
     }
         

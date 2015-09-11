@@ -25,10 +25,10 @@
 #include "StdAfx.h"
 #include "Geometry.h"
 
-template struct glm::detail::tvec2<float, glm::defaultp>;
-template struct glm::detail::tvec2<int, glm::defaultp>;
-template struct glm::detail::tvec3<float, glm::defaultp>;
-template struct glm::detail::tvec3<int, glm::defaultp>;
+template struct glm::tvec2<float>;
+template struct glm::tvec2<int>;
+template struct glm::tvec3<float>;
+template struct glm::tvec3<int>;
 
 #define MYINF std::numeric_limits<float>::max()
 

@@ -46,8 +46,9 @@ inline float4 argb2rgbaf(uint argb)
     return m * float4((argb>>16)&0xff, (argb>>8)&0xff, (argb&0xff), (argb>>24)&0xff);
 }
 
-inline uint rgbaf2argb(float4 rgba)
+inline uint rgbaf2argb(const float4 &rgba_)
 {
+	float4 rgba = rgba_;
     rgba.x = clamp(rgba.x, 0.f, 1.f);
     rgba.y = clamp(rgba.y, 0.f, 1.f);
     rgba.z = clamp(rgba.z, 0.f, 1.f);
@@ -56,8 +57,9 @@ inline uint rgbaf2argb(float4 rgba)
     return (uint(rgba.w)<<24) | (uint(rgba.x)<<16) | (uint(rgba.y)<<8) | uint(rgba.z);
 }
 
-inline uint rgbf2rgb(float3 rgb)
+inline uint rgbf2rgb(const float3 &rgb_)
 {
+	float3 rgb = rgb_;
     rgb.x = clamp(rgb.x, 0.f, 1.f);
     rgb.y = clamp(rgb.y, 0.f, 1.f);
     rgb.z = clamp(rgb.z, 0.f, 1.f);
@@ -65,7 +67,7 @@ inline uint rgbf2rgb(float3 rgb)
     return uint(rgb.x)<<16 | uint(rgb.y)<<8 | uint(rgb.z);
 }
 
-inline uint rgbf2argb(float3 rgb)
+inline uint rgbf2argb(const float3 &rgb)
 {
     return 0xff000000 | rgbf2rgb(rgb);
 }
@@ -200,8 +202,9 @@ inline uint32 bgra2argb(uint32 bgra)
     return (bgra<<24) | ((bgra&0xff00)<<8) | ((bgra&0xff0000)>>8) | (bgra>>24);
 }
 
-inline uint rgbaf2abgr(float4 rgba)
+inline uint rgbaf2abgr(const float4 &rgba_)
 {
+	float4 rgba = rgba_;
     rgba.x = clamp(rgba.x, 0.f, 1.f);
     rgba.y = clamp(rgba.y, 0.f, 1.f);
     rgba.z = clamp(rgba.z, 0.f, 1.f);
