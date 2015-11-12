@@ -299,6 +299,13 @@ static void gamepadAxis2Event(const Event *event, float last_val)
 
 void KeyState::OnEvent(const Event* event)
 {
+    if (event->isMouse())
+    {
+        cursorPosScreen = event->pos;
+        if (!event->synthetic)
+            gamepadHasRight = false;
+    }
+    
     KeyState &self = *this;
     switch (event->type)
     {
@@ -322,7 +329,6 @@ void KeyState::OnEvent(const Event* event)
 
     case Event::MOUSE_DOWN:
         self[event->key + LeftMouseButton] = true;
-        cursorPosScreen = event->pos;
         break;
 
     case Event::MOUSE_UP:
@@ -333,24 +339,10 @@ void KeyState::OnEvent(const Event* event)
             cancelMouseDown();
         }
         self[event->key + LeftMouseButton] = false;
-        cursorPosScreen = event->pos;
         break;
 
-    case Event::MOUSE_MOVED:
-    case Event::MOUSE_DRAGGED:
-    {
-        cursorPosScreen = event->pos;
-        break;
-    }
     case Event::GAMEPAD_AXIS: 
     {
-        if (abs(event->pos.y) > epsilon)
-        {
-            gamepadActive = true;
-            setLastGamepad(event);
-            cancelMouseDown();
-        }
-
         GamepadAxis axis;
         int dim;
         switch (event->key)
@@ -362,6 +354,17 @@ void KeyState::OnEvent(const Event* event)
         case GamepadAxisTriggerLeftY:  axis = GamepadAxisTriggerLeft; dim = 1; break;
         case GamepadAxisTriggerRightY: axis = GamepadAxisTriggerRight; dim = 1; break;
         default: return;
+        }
+
+        if (!isZero(event->pos.y))
+        {
+            gamepadActive = true;
+            if (cursorPosScreen == float2())
+                cursorPosScreen = globals.windowSizePoints / 2.f;
+            setLastGamepad(event);
+            // cancelMouseDown();
+            if (axis == GamepadAxisRight)
+                gamepadHasRight = true;
         }
 
         GamepadInstance &gi = gamepads[event->which];
@@ -378,6 +381,7 @@ void KeyState::OnEvent(const Event* event)
         if (event->which == lastGamepad) {
             lastGamepad = -1;
             gamepadActive = false;
+            gamepadHasRight = false;
         }
     case Event::LOST_FOCUS:
         reset();

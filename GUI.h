@@ -48,7 +48,7 @@ static const uint kGUIFgMid    = 0xf0b8b8b8;
 static const uint kGUIFgActive = 0xffffffff;
 static const uint kGUIText     = 0xfff0f0f0;
 static const uint kGUITextLow  = 0xff808080;
-static const uint kGUIInactive = 0xa0a0a0a0;
+static const uint kGUIInactive = 0xa0606060;
 static const uint kGUIToolBg   = 0xc0000000;
 
 static const float kOverlayFGAlpha    = 0.8f;
@@ -452,14 +452,16 @@ struct OptionSlider : public WidgetBase {
 struct OptionEditor {
 
     enum Type { FLOAT, INT };
+    enum Format { DEFAULT, SECONDS, COUNT };
 
     OptionSlider slider;
     const char*  label   = NULL;
     vector<const char*> tooltip;
     Type         type;
+    Format       format = DEFAULT;
     void*        value = NULL;
-    float        start;
-    float        mult;
+    float        start = 0.f;
+    float        mult = 1.f;
     string       txt;
 
     float getValueFloat() const;
@@ -467,12 +469,16 @@ struct OptionEditor {
     int getValueInt() const { return *(int*) value; }
 
     void updateSlider();
+    void setFormat(Format fm) { format = fm; updateSlider(); }
 
-    void init(Type t, void *v, const char* lbl, const vector<const char*> &tt, float st, float mu, int states);
+    typedef vector<const char*> StringVec;
     
-    OptionEditor(float *f, const char* lbl, float mn, float mx, const vector<const char*> tt) ;
-    OptionEditor(int *u, const char* lbl, int states, const vector<const char*> tt);
-    OptionEditor(int *u, const char* lbl, int low, int increment, int states, const vector<const char*> tt);
+    void init(Type t, void *v, const char* lbl, const StringVec &tt, float st, float mu, int states);
+
+    OptionEditor(float *f, const char* lbl, float mn, float mx, const StringVec tt=StringVec()) ;
+    OptionEditor(float *f, const char* lbl, float mn, float mx, float inc, const StringVec tt=StringVec());
+    OptionEditor(int *u, const char* lbl, int states, const StringVec tt=StringVec());
+    OptionEditor(int *u, const char* lbl, int low, int high, int increment, const StringVec tt=StringVec());
 
     string getTxt() const;
     float2 render(const ShaderState &ss, float alpha);

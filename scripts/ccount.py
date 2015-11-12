@@ -23,6 +23,7 @@ class Counts:
         self.space = 0
         self.byte = 0
         self.subs = []
+        self.parent = None
     def __iadd__(self, o):
         self.total += o.total
         self.code += o.code
@@ -31,9 +32,10 @@ class Counts:
         self.byte += o.byte
         if o.code:
             self.subs.append(o)
+            o.parent = self
         return self
     def fmt(self, maxw):
-        st = "%" + ("-" if self.fil.endswith("/") else "") + ("%d" % (1+maxw)) + "s%9d%9d%9d%9d%9d"
+        st = "%" + ("-" if self.fil.endswith("/") else "") + ("%d" % (1+maxw)) + "s%9d%9d%9d%9d%9d\n"
         return st % (self.fil, self.code, self.comments, self.space, self.total, self.byte/1024)
     def rwidth(self, depth):
         maxw = len(self.fil)
@@ -42,20 +44,25 @@ class Counts:
                 maxw = max(maxw, cn.rwidth(depth-1))
         return maxw
     def rfmt(self, depth, maxw=0):
+        st = ""
         if maxw == 0:
             maxw = self.rwidth(depth)
-            print (("%%%ds" % (1+maxw)) + "%9s%9s%9s%9s%9s") % ("file", "code", "comment", "space", "total", "kbytes")
-        st = ""
-        childs =0
+            st = (("%%%ds" % (1+maxw)) + "%9s%9s%9s%9s%9s\n") % ("file", "code", "comment", "space", "total", "kbytes")
+        childs = 0
+        pchilds = 0
         if depth > 0:
             self.subs.sort(key=lambda x: x.code)
             for cn in self.subs:
-                childs+=1
-                st += cn.rfmt(depth-1, maxw) + "\n"
-        if childs == 0 or childs > 1:
+                s = cn.rfmt(depth-1, maxw)
+                childs += 1
+                if s:
+                    pchilds += 1
+                    st += s
+        if self.parent and childs == 0 and not printfiles:
+            # print "abort", self.fil
+            return st
+        if pchilds == 0 or pchilds > 1:
             st += self.fmt(maxw)
-        else:
-            st = st[0:-1]
         return st
         
 
@@ -84,7 +91,7 @@ def countfile(fil, rev):
     if os.path.isdir(fil):
         dirn = os.path.normpath(fil)
         dr = Counts(dirn + "/")
-        for ex in ["c", "m", "cpp", "h", "hpp", "py", "sh", "cgi", "gm"]:
+        for ex in ["c", "m", "cpp", "h", "hpp", "inl", "py", "sh", "cgi", "gm"]:
             for fil in glob.glob("%s/*.%s" % (dirn, ex)):
                 dr += countfile(fil, rev)
         if recursive:
@@ -103,17 +110,22 @@ def countfile(fil, rev):
     return c
 
 printdepth = 1
-printtotal = True
+printfiles = False
 printdot   = False
 recursive  = False
 revision = None
 rstep = 20
 currev = 0
 
-opts, args = getopt.getopt(sys.argv[1:], "vr:Rdhs:")
+opts, args = getopt.getopt(sys.argv[1:], "vVp:r:Rdhs:")
 for (opt, val) in opts:
     if opt == "-v":
         printdepth = 99999999
+    elif opt == "-V":
+        printfiles = True
+        printdepth = 99999999
+    elif opt == "-p":
+        printdepth = int(val)
     elif opt == "-s":
         rstep = int(val)
     elif opt == "-r":
@@ -131,11 +143,12 @@ for (opt, val) in opts:
         recursive = True
     elif opt == "-d":
         printdot = True
-        printtotal = False
         printdepth = 1
     elif opt == "-h":
         print "%s: -fdh [files]"
-        print "  -v: print individual file/dir counts"
+        print "  -v: print individual dir counts"
+        print "  -V: print individual file and dir counts"
+        print "  -p <depth>: set print depth"
         print "  -d: generate dot #include graph"
         print "  -R: recursive"
         print "  -r <hg revision>[:<hg revision>] use specific revision, or print range"
@@ -145,7 +158,6 @@ for (opt, val) in opts:
 def counttotal(rev):
     tot = Counts("TOTAL")
     if args:
-        printtotal = True
         for fil in args:
             tot += countfile(fil, rev)
     else:

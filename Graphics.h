@@ -744,6 +744,12 @@ public:
         //m_curVert.color = 0xffffffff;
     }
 
+    void shrink_to_fit()
+    {
+        m_vl.shrink_to_fit();
+        m_il.shrink_to_fit();
+    }
+
     uint indexCount() const { return m_il.size(); }
     bool empty() const { return m_vl.empty(); }
 
@@ -1602,6 +1608,12 @@ struct MeshPair {
     {
         tri.clear();
         line.clear();
+    }
+
+    void shrink_to_fit()
+    {
+        tri.shrink_to_fit();
+        line.shrink_to_fit();
     }
 
     bool empty() const

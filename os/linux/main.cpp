@@ -161,7 +161,7 @@ static int recursive_mkdir(const char *dir)
     return 1;
 }
 
-int os_create_parent_dirs(const char* path)
+int OL_CreateParentDirs(const char* path)
 {
     return recursive_mkdir(str_dirname(path).c_str());
 }
@@ -182,7 +182,7 @@ bool os_symlink_f(const char* source, const char* dest)
 int OL_SaveFile(const char *name, const char* data, size_t size)
 {
     const char* fname = OL_PathForFile(name, "w");
-    os_create_parent_dirs(fname);
+    OL_CreateParentDirs(fname);
     
     string fnameb = string(fname) + ".b";
 
@@ -321,7 +321,7 @@ int OL_CopyFile(const char* pa, const char* pb)
         return -1;
     }
     const char *ppb = OL_PathForFile(pb, "w");
-    if (!os_create_parent_dirs(ppb))
+    if (!OL_CreateParentDirs(ppb))
         return -1;
     FILE *fb = fopen(ppb, "w");
     if (!fb) {

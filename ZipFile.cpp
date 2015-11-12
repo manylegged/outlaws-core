@@ -128,6 +128,8 @@ static gzFile openGzip(const char* path, const char* mode)
 {
     const string gzp = str_endswith(path, ".gz") ? string(path) : str_concat(path, ".gz");
     const char* abspath = OL_PathForFile(gzp.c_str(), mode);
+    if (str_contains(mode, 'w'))
+        OL_CreateParentDirs(abspath);
     gzFile gzf = GZ_OPEN(abspath, mode);
     
     if (gzf) {

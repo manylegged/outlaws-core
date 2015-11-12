@@ -58,6 +58,18 @@ void deleteBufferInMainThread(GLuint buffer)
     globals.deleteGLBuffers(1, &buffer);
 }
 
+static const char* getGLErrorString(GLenum err)
+{
+    switch (err)
+    {
+        CASE_STR(GL_NO_ERROR);
+        CASE_STR(GL_INVALID_ENUM);
+        CASE_STR(GL_INVALID_VALUE);
+        CASE_STR(GL_INVALID_OPERATION);
+        CASE_STR(GL_OUT_OF_MEMORY);
+    default: return "UNKNOWN";
+    }
+}
 
 GLenum glReportError1(const char *file, uint line, const char *function)
 {
@@ -69,7 +81,7 @@ GLenum glReportError1(const char *file, uint line, const char *function)
 	GLenum err = GL_NO_ERROR;
 	while (GL_NO_ERROR != (err = glGetError()))
     {
-        const char* msg = (const char *)gluErrorString(err);
+        const char* msg = getGLErrorString(err);
         OLG_OnAssertFailed(file, line, function, "glGetError", "%s", msg);
     }
     

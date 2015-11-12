@@ -263,4 +263,8 @@ const U* getField(const T& obj, const string &field)
     STRUCT_NAME::~STRUCT_NAME() {}                              \
     DEFINE_SERIAL_STRUCT_OPS(STRUCT_NAME, FIELDS_MACRO)
 
+#define DECLARE_DEFINE_SERIAL_STRUCT(STRUCT_NAME, FIELDS_MACRO) \
+    DECLARE_SERIAL_STRUCT(STRUCT_NAME, FIELDS_MACRO);           \
+    DEFINE_SERIAL_STRUCT(STRUCT_NAME, FIELDS_MACRO)             \
+
 #endif

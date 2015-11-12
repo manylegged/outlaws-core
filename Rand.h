@@ -49,7 +49,7 @@ inline T randrange()
 // return a random number from [start-end)
 inline int randrange(int start, int end)
 {
-    ASSERT(start < end);
+    ASSERT(start <= end);
     if (start >= end-1)
         return start;
     std::uniform_int_distribution<int> uniform_dist(start, end-1);

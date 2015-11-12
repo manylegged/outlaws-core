@@ -27,8 +27,6 @@ std::wstring s2ws(const std::string& s);
 
 bool os_symlink_f(const char* source, const char* dest);
 
-int os_create_parent_dirs(const char* path);
-
 string os_get_platform_info();
 
 int os_get_system_ram();

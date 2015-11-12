@@ -135,6 +135,9 @@ int OL_GetCpuCount(void);
 // print a debugging message message
 void OL_ReportMessage(const char *str);
 
+// return 1 if log has already been opened
+int OL_IsLogOpen(void);
+
 // time since start of game in seconds
 double OL_GetCurrentTime(void);
 
@@ -243,6 +246,11 @@ const char *OL_LoadFile(const char *fname);
 // write text file to disk, atomically. Creates directories as needed.
 int OL_SaveFile(const char* fname, const char* data, size_t size);
 
+// create directories as needed for fname
+// fname must be an absolute path - PathForFile is NOT called
+int OL_CreateParentDirs(const char* fname);
+
+// copy file from source to dest. create parent dirs for dest automatically
 int OL_CopyFile(const char* source, const char *dest);
 
 // Return list of files in a directory (base name only - no path)

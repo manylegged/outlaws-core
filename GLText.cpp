@@ -167,36 +167,51 @@ float GLText::getScaledSize(float sizeUnscaled)
     return sizeUnscaled * ws.y / kTextScaleHeight;
 }
 
+static DEFINE_CVAR(int, kGLTextCacheSize, 128);
+static int     s_cacheSize = kGLTextCacheSize;
+static GLText *s_cache;
+
 const GLText* GLText::getUnscaled(int font, float size, const string& s)
 {
-    float pointSize = OL_GetCurrentBackingScaleFactor();
+    const float pointSize = OL_GetCurrentBackingScaleFactor();
     //Reportf("scale: %g", pointSize);
 
-    static DEFINE_CVAR(int, kGLTextCacheSize, 128);
-
-    static int cacheSize = kGLTextCacheSize;
-    static GLText *cache = new GLText[cacheSize];
-    if (cacheSize != kGLTextCacheSize) {
-        delete[] cache;
-        cache = new GLText[kGLTextCacheSize];
-        cacheSize = kGLTextCacheSize;
+    if (!s_cache || s_cacheSize != kGLTextCacheSize)
+    {
+        delete[] s_cache;
+        s_cacheSize = kGLTextCacheSize;
+        s_cache = new GLText[s_cacheSize];
     }
     
-    for (uint i=0; i<cacheSize; i++)
+    for (int i=0; i<s_cacheSize; i++)
     {
-        if (cache[i].chars == s && 
-            isZero(cache[i].fontSize - size) && 
-            cache[i].texPointSize == pointSize &&
-            cache[i].font == font)
+        GLText &it = s_cache[i];
+        if (it.chars == s && 
+            isZero(it.fontSize - size) && 
+            it.texPointSize == pointSize &&
+            it.font == font)
         {
-            return &cache[i];
+            return &it;
         }
     }
 
     // Reportf("RAND %d (gltext)", randrange(1, 101));
-    const int i = randrange(0, cacheSize);
-    cache[i].load(s, font, size, pointSize);
-    return &cache[i];
+    const int i = randrange(0, s_cacheSize);
+    s_cache[i].load(s, font, size, pointSize);
+    return &s_cache[i];
+}
+
+void GLText::clear()
+{
+    texture.clear();
+    texChars.clear();
+    chars.clear();
+}
+
+void GLText::clear_cache()
+{
+    for (int i=0; i<s_cacheSize; i++)
+        s_cache[i].clear();
 }
 
 float2 GLText::DrawScreen(const ShaderState &s_, float2 p, Align align, uint color, 

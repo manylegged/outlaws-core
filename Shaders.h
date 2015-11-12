@@ -325,7 +325,7 @@ struct ShaderTexture final : public ShaderTextureBase, public ShaderBase<ShaderT
     uint m_uColorSlot;
     uint m_aTexCoords;
 
-    void LoadTheProgram()
+    void LoadTheProgram() override
     {
         LoadProgram("ShaderTexture");
         m_uTexture = getUniformLocation("texture1");
@@ -358,7 +358,7 @@ struct ShaderTextureWarp final : public ShaderTextureBase, public ShaderBase<Sha
     mutable float2 camPos;
     mutable float2 camSize;
     
-    void LoadTheProgram()
+    void LoadTheProgram() override
     { 
         LoadProgram("ShaderTextureWarp");
         GET_UNIF_LOC(texture1);
@@ -396,7 +396,7 @@ struct ShaderTextureHSV final : public ShaderTextureBase, public ShaderBase<Shad
     uint m_uColorSlot;
     uint m_aTexCoords;
 
-    void LoadTheProgram()
+    void LoadTheProgram() override
     {
         LoadProgram("ShaderTextureHSV");
         m_uTexture = getUniformLocation("texture1");

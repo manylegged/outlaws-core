@@ -160,6 +160,11 @@ void anonymizeUsername(string &str)
     }
 }
 
+int OL_IsLogOpen(void)
+{
+    return g_logfile != NULL;
+}
+
 void OL_ReportMessage(const char *str_)
 {
 #if OL_WINDOWS
@@ -181,7 +186,7 @@ void OL_ReportMessage(const char *str_)
         g_openinglog = true;
         const char* path = OL_PathForFile(OLG_GetLogFileName(), "w");
         if (!g_logfile) { // may have been opened by OL_PathForFile
-            os_create_parent_dirs(path);
+            OL_CreateParentDirs(path);
             g_logfile = SDL_RWFromFile(path, "w");
             if (!g_logfile)
                 return;
@@ -442,7 +447,7 @@ int OL_SaveImage(const OutlawImage *img, const char* fname)
     if (surf)
     {
         const char *path = OL_PathForFile(fname, "w");
-        if (os_create_parent_dirs(path)) {
+        if (OL_CreateParentDirs(path)) {
             success = IMG_SavePNG(surf, path) == 0;
         }
         if (!success) {

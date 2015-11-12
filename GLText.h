@@ -110,6 +110,9 @@ public:
 
     static float2 Fmt(const ShaderState &s_, float2 p, Align align, int font, uint color,
                       float sizeUnscaled, const char* fmt, ...) __printflike(7, 8);
+
+    void clear();
+    static void clear_cache();
 };
 
 // RELNORM of (0, 0) sets pos in bottom left corner, (1, 1) sets pos in upper right corner

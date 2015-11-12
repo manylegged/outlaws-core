@@ -43,11 +43,11 @@
 #endif
 
 namespace std {
-    extern template class basic_string<char>;
-    extern template class vector<string>;
-    extern template class unordered_set<string>;
-    extern template class lock_guard<mutex>;
-    extern template class lock_guard<recursive_mutex>;
+    // extern template class basic_string<char>;
+    // extern template class vector<string>;
+    // extern template class unordered_set<string>;
+    // extern template class lock_guard<mutex>;
+    // extern template class lock_guard<recursive_mutex>;
 }
 
 typedef unsigned long long uint64;
@@ -145,15 +145,20 @@ public:
     bool operator!=(const lstring &o) const { return m_ptr != o.m_ptr; }
 
     static size_t lexicon_size() { return Lexicon::instance().strings.size(); }
+
+    template <typename F>
+    static void lexicon_each(F fun)
+    {
+        Lexicon &lex = Lexicon::instance();
+        std::lock_guard<std::mutex> l(lex.mutex);
+        for (const std::string &str : lex.strings)
+            fun(str);
+    }
     
     static size_t lexicon_bytes()
     {
-        size_t sz = sizeof(Lexicon);
-        Lexicon &lex = Lexicon::instance();
-        std::lock_guard<std::mutex> l(lex.mutex);
-        sz += lex.strings.bucket_count() * lex.strings.load_factor() * sizeof(std::string);
-        for (const std::string &str : lex.strings)
-            sz += str.size();
+        size_t sz = sizeof(Lexicon) + Lexicon::instance().strings.bucket_count() * Lexicon::instance().strings.load_factor() * sizeof(std::string);
+        lexicon_each([&](const std::string &str) { sz += str.size(); });
         return sz;
     }
     
@@ -611,6 +616,7 @@ std::string str_urlencode(const std::string &value);
 std::string str_urldecode(const std::string &value);
 
 std::string str_time_format(float seconds);
+std::string str_time_format_long(float seconds);
 std::string str_reltime_format(float seconds);
 std::string str_timestamp();
 

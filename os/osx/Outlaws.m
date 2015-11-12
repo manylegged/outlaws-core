@@ -37,6 +37,11 @@ static BOOL createParentDirectories(NSString *path)
     return YES;
 }
 
+int OL_CreateParentDirs(const char* path)
+{
+    return createParentDirectories([NSString stringWithUTF8String:path]);
+}
+
 // Warning - can't LogMessage in here! Log might not be open yet
 static NSString *getBaseSavePath()
 {
@@ -626,6 +631,11 @@ void OL_ThreadEndIteration(void)
 
 FILE *g_logfile = nil;
 NSString *g_logpath = nil;
+
+int OL_IsLogOpen(void)
+{
+    return g_logfile != nil;
+}
 
 void OL_ReportMessage(const char *str)
 {

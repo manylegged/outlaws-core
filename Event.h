@@ -302,6 +302,7 @@ public:
 
     float2 cursorPosScreen;
     bool   gamepadActive = false;
+    bool   gamepadHasRight = false;
 
     KeyState();
 

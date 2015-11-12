@@ -751,12 +751,6 @@ inline T vec_sorted(T vec)
     return vec;
 }
 
-template <typename T>
-void vec_unique(T& vec)
-{
-    vec.erase(std::unique(vec.begin(), vec.end()), vec.end());
-}
-
 template <typename T, typename Fun>
 void vec_unique(T& vec, Fun fun)
 {
@@ -764,27 +758,19 @@ void vec_unique(T& vec, Fun fun)
 }
 
 template <typename T, typename Fun>
-void vec_unique_key(T& vec, Fun fun)
+void vec_unique_deep(T& vec, Fun fun)
 {
-    vec.erase(std::unique(vec.begin(), vec.end(), ([&](const typename T::value_type &a,
-                                                       const typename T::value_type &b)
-                                                   { return fun(a) == fun(b); })),
-              vec.end());
+    auto nend = std::unique(vec.begin(), vec.end(), fun);
+    for (auto it=nend; it != vec.end(); ++it)
+        delete *it;
+    vec.erase(nend, vec.end());
 }
 
 template <typename T>
 void vec_sort_unique(T& vec)
 {
     vec_sort(vec);
-    vec_unique(vec);
-}
-
-template <typename T, typename Fun>
-void vec_sort_unique_key(T& vec, Fun fun)
-{
-    typedef typename T::value_type Val;
-    vec_sort(vec,       [&](const Val &a, const Val &b) { return fun(a) < fun(b); });
-    vec_unique_key(vec, [&](const Val &a, const Val &b) { return fun(a) == fun(b); });
+    vec.erase(std::unique(vec.begin(), vec.end()), vec.end());
 }
 
 // selection sort the first COUNT elements of VEC, using FUN as a key for comparison
@@ -855,61 +841,38 @@ inline typename T::value_type vec_min(const T &vec)
     return mn;
 }
 
-// return minimum element of vector, with comparison by fkey
-template <typename T, typename F>
-inline size_t vec_min_idx_by_key(T& col, const F& fkey)
+template <typename Vec,
+          typename F,
+          typename T=typename Vec::value_type,
+          typename V=typename std::result_of<F(const T&)>::type>
+T vec_max(const Vec& vec, const F& fun, const T& init=T())
 {
-    float minV = std::numeric_limits<float>::max();
-    size_t minIdx = ~0;
-    for (size_t i=0; i<col.size(); i++) {
-        float v = fkey(col[i]);
-        if (v < minV) {
-            minIdx = i;
-            minV = v;
-        }
-    }
-    return minIdx;
-}
-
-template <typename T, typename F>
-inline typename T::value_type vec_min_element_by_key(T& col, const F& fkey)
-{
-    size_t minIdx = vec_min_idx_by_key(col, fkey);
-    return (minIdx == ~0) ? typename T::value_type() : col[minIdx];
-}
-
-template <typename T, typename F>
-inline size_t vec_max_idx_by_key(T& col, const F& fkey)
-{
-    float maxV   = std::numeric_limits<float>::lowest();
-    size_t  maxIdx = ~0;
-    for (size_t i=0; i<col.size(); i++) {
-        float v = fkey(col[i]);
-        if (v > maxV) {
-            maxIdx = i;
-            maxV = v;
-        }
-    }
-    return maxIdx;
-}
-
-template <typename T, typename F>
-inline typename T::value_type vec_max_element_by_key(T& col, const F& fkey)
-{
-    size_t maxIdx = vec_max_idx_by_key(col, fkey);
-    return (maxIdx == ~0) ? typename T::value_type() : col[maxIdx];
-}
-
-template <typename Vec, typename F>
-inline typename Vec::value_type vec_min(const Vec& vec, const F& fun,
-                                           const typename Vec::value_type& init=Vec::value_type(),
-                                           float start=std::numeric_limits<float>::max())
-{
-    float                    minv = start;
-    typename Vec::value_type val  = init;
-    foreach (const auto &x, vec)
+    V maxv = std::numeric_limits<V>::lowest();
+    T val  = init;
+    foreach (const T &x, vec)
     {
-        const float dist = fun(x);
+        const V dist = fun(x);
+        if (dist > maxv)
+        {
+            val = x;
+            maxv = dist;
+        }
+    }
+    return val;
+}
+
+template <typename Vec,
+          typename F,
+          typename T=typename Vec::value_type,
+          typename V=typename std::result_of<F(const T&)>::type>
+T vec_min(const Vec& vec, const F& fun, const T& init=T(),
+          const V &start=std::numeric_limits<V>::max())
+{
+    V minv = start;
+    T val  = init;
+    foreach (const T &x, vec)
+    {
+        const V dist = fun(x);
         if (dist < minv)
         {
             val = x;
@@ -1358,6 +1321,7 @@ std::mutex& _thread_name_mutex();
 
 // set thread name, random seed, terminate handler, etc.
 void thread_setup(const char* name);
+void thread_cleanup();
 
 #if OL_USE_PTHREADS
 typedef pthread_t OL_Thread;

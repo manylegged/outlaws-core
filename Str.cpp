@@ -30,11 +30,11 @@
 #include <cstdint>
 
 namespace std {
-    template class basic_string<char>;
-    template class vector<string>;
-    template class unordered_set<string>;
-    template class lock_guard<mutex>;
-    template class lock_guard<recursive_mutex>;
+    // template class basic_string<char>;
+    // template class vector<string>;
+    // template class unordered_set<string>;
+    // template class lock_guard<mutex>;
+    // template class lock_guard<recursive_mutex>;
 }
 
 typedef std::uint8_t Uint8;
@@ -586,6 +586,21 @@ std::string str_time_format(float seconds)
         return str_format("%3d:%02d", minutes, modulo((int)floor(seconds), 60));
     else
         return str_format("%3d:%02d:%.02d", hours, modulo(minutes, 60),
+                          modulo((int)floor(seconds), 60));
+}
+
+std::string str_time_format_long(float seconds)
+{
+    seconds = max(epsilon, seconds);
+    std::string ret;
+    const int minutes = floor(seconds / 60.f);
+    const int hours   = floor(seconds / 3600.f);
+    if (!minutes)
+        return str_format("%d seconds", floor_int(seconds));
+    else if (!hours)
+        return str_format("%d minutes, %d seconds", minutes, modulo((int)floor(seconds), 60));
+    else
+        return str_format("%d hours, %d minutes, %d seconds", hours, modulo(minutes, 60),
                           modulo((int)floor(seconds), 60));
 }
 

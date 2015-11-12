@@ -157,6 +157,12 @@ void thread_setup(const char* name)
     Reportf("Thread %#llx is named '%s'", tid, name);
 }
 
+void thread_cleanup()
+{
+    deleteNull(my_random_device());
+}
+
+
 const char* thread_current_name()
 {
     uint64 tid = 0;
@@ -191,7 +197,6 @@ OL_Thread thread_create(void *(*start_routine)(void *), void *arg)
         Reportf("pthread_create error: %s", strerror(err));
     return thread;
 }
-
 
 void thread_join(OL_Thread thread)
 {

@@ -48,6 +48,7 @@
 #pragma warning(disable: 4305) // truncation from double to float
 #pragma warning(disable: 4800) // forcing value to bool true or false
 #pragma warning(disable: 4351) 
+#pragma warning(disable: 4091) // 'typedef ': ignored on left of '' when no variable is declared
 
 #define __func__ __FUNCTION__
 

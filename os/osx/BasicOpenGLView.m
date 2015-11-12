@@ -220,7 +220,7 @@ static void doKeyEvent(enum EventType type, NSEvent *theEvent)
     // get events for command-S, etc.
     NSString *characters = [theEvent charactersIgnoringModifiers];
     unichar character = [characters length] ? [characters characterAtIndex:0] : 0;
-    if (character == 's')
+    if (0 && character == 's')
     {
         doKeyEvent(OL_KEY_UP, theEvent);
         return YES;

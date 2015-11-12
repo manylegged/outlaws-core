@@ -291,7 +291,7 @@ static int CreateParentDirs(const std::wstring &path)
     return 1;
 }
 
-int os_create_parent_dirs(const char* path)
+int OL_CreateParentDirs(const char* path)
 {
     return CreateParentDirs(s2ws(path));
 }

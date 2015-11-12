@@ -38,7 +38,7 @@ else:
     PDB_SYMBOLS = ["C:/symbols",
                    "//THOR/Users/Arthur/AppData/Local/Temp/SymbolCache"]
     OUTLAWS_WIN32 = ["win32", "//THOR/Users/Arthur/Documents/outlaws/win32"]
-    OUTLAWS_LINUX = ["linux", "linux/symbols"]
+    OUTLAWS_LINUX = ["linux", "linux/symbols", "//AUXILIA/arthur/Documents/outlaws/linux"]
 
 REL_SYM_PATH = {"ReassemblyRelease":["steam", "release"],
                 "ReassemblyBuilder":["builder"],
@@ -52,7 +52,7 @@ TRIAGE_IGNORE_TRACE = set(["posix_signal_handler(int, siginfo_t*, void*)", # cla
                            "_sigtramp", "_init", "_L_unlock_13", "0x0",
                            "posix_print_stacktrace", "print_backtrace()", "OL_OnTerminate",
                            "void terminate()", "_Call_func",
-                           
+
                           "_callthreadstartex", "_threadstartex",
                            "kernel32.dll", "ntdll.dll",
 
@@ -66,6 +66,12 @@ ROOT = "./"
 
 TRIAGE_STACK_SIZE = 3
 MAX_STACK_DUMP = 30
+
+def log(*x):
+    print "INFO:", " ".join(str(y) for y in x)
+
+def warning(*x):
+    print "WARNING:", " ".join(str(y) for y in x)
 
 def parse_version(ver):
     try:
@@ -81,14 +87,14 @@ def mkdir_p(path):
         if exc.errno == errno.EEXIST and os.path.isdir(path):
             pass
         else: raise
-    
+
 class map_entry:
     def __init__(self, sym, base):
         self.sym = sym
         self.base = base
         self.line = -1
         self.file = None
-                
+
 
 class module_entry:
     pass
@@ -102,7 +108,7 @@ def demangle_sym(sym):
             m = re.search('is :- "([^"]*)"', txt)
             if m:
                 name = m.group(1)
-        
+
         if name.startswith("?") or name.startswith("_"):
             # ?insertPoint@?$spacial_hash@UPort@@@@QAEXU?$tvec2@M$0A@@detail@glm@@ABUPort@@@Z
             m = re.match("\?([a-zA-Z0-9_]+)@\?\$([a-zA-Z0-9_]+)@U([a-zA-Z0-9_]+)@", name)
@@ -143,12 +149,12 @@ def safe_listdir(dirn):
     except:
         return []
 
-    
+
 def abbreviate_fname(fname):
     # return fname
     return fname.replace(os.path.expanduser("~"), "~").replace(
         "/cygdrive/c/Users/Arthur", "~").replace("~/Documents/outlaws", "~/outlaws")
-    
+
 
 def shorten_fname(fname):
     if not fname:
@@ -180,7 +186,7 @@ def glob_files(patterns):
     for pat in patterns:
         paths.extend(glob.glob(pat))
     return paths
-    
+
 
 def get_dll_symbols(modname):
     pdb = modname.replace(".dll", ".pdb")
@@ -203,7 +209,7 @@ def get_dll_symbols(modname):
     if not os.path.exists(gpath) and os.path.exists(DIA2DUMP):
         fil = gzip.open(gpath, "w")
         if not fil:
-            print "can't open", gpath
+            log("can't open", gpath)
             exit(1)
         for flag in flags:
             dat = subprocess.check_output([DIA2DUMP, flag, pdb_path])
@@ -216,32 +222,35 @@ def get_dll_symbols(modname):
 
     symbol_path = [os.path.join(ROOT, w32, "%s.line.gz" % pdb) for w32 in OUTLAWS_WIN32]
     symbol_path.extend(os.path.join(ROOT, w32, "symbols", "%s.globals.gz" % lpdb) for w32 in OUTLAWS_WIN32)
-    
+
     paths = glob_files(symbol_path)
     for pat in paths:
         ext = "line" if pat.endswith(".line.gz") else "globals"
         return ext, gzip.open(pat)
-    return None, []    
+    return None, []
 
 
 def get_so_symbols(modname, version=""):
     for base in OUTLAWS_LINUX:
         gzpath = os.path.join(ROOT, base, os.path.basename(modname) + version + ".elf.gz")
         if os.path.exists(gzpath):
-            return "elf", gzip.open(gzpath)        
+            # log("using", gzpath)
+            return "elf", gzip.open(gzpath)
         if os.path.exists(modname):
             fil = gzip.open(gzpath, "w")
             fil.write(subprocess.check_output(READELF % modname, shell=True))
             fil.close()
+            return "elf", gzip.open(gzpath)
     return None, []
 
 
-def get_symbol_type_handle(modname, version):    
+def get_symbol_type_handle(modname, version):
     if modname.endswith(".dll"):
         return get_dll_symbols(modname)
     elif ".so." in modname:
         return get_so_symbols(modname)
     elif version:
+        log("version is", version)
         basename = os.path.splitext(modname)[0]
         platform = "win32" if modname.endswith(".exe") else "linux"
         dirns = REL_SYM_PATH.get(basename, "")
@@ -249,15 +258,17 @@ def get_symbol_type_handle(modname, version):
         version_roots = [os.path.join(ROOT, p, dirn, version)
                          for p in symbol_path
                          for dirn in dirns]
+        # print version_roots
         typ = "line" if platform == "win32" else "elf"
         symname = "%s.%s.gz" % (basename, typ)
         paths = glob_files(os.path.join(b, symname) for b in version_roots)
         if len(paths):
-            # print "using", paths[0]
+            # log("using", paths[0])
             return typ, gzip.open(paths[0])
         if platform == "linux" and sys.platform.startswith("linux"):
             ret = get_so_symbols(modname, version)
             if ret[0]:
+                # log("using", ret[0])
                 return ret
         # try earlier version (Only a few days tolerance)
         version_list = glob_files(os.path.join(os.path.dirname(x), "*_*_*/") for x in version_roots)
@@ -268,20 +279,27 @@ def get_symbol_type_handle(modname, version):
         for fil in version_list:
             ver = os.path.basename(fil[:-1])
             dat = parse_version(ver)
-            if (dat and vdate - dat < mn):
-                mn = vdate - dat
+            if not dat:
+                continue
+            delta = abs(vdate - dat)
+            # print ver, dat, delta
+            if delta < mn:
+                mn = delta
                 mnpath = fil
                 mnver = ver
         if mnpath:
-            print "WARNING: using symbols from %s for %s" % (mnver, version)
+            warning("using symbols from %s for %s" % (mnver, version))
             return typ, gzip.open(os.path.join(mnpath, symname))
+        # warning("no symbols for %s %s" % (modname, version))
     return None, []
+
 
 parsed = {}
 def parse_symbol_map(modname, version):
     key = (modname, version)
     if key in parsed:
         return parsed[key]
+    # log("looking for", os.path.basename(modname), version)
 
     entries = parsed.setdefault(key, [])
     typ, handle = get_symbol_type_handle(modname, version)
@@ -334,7 +352,7 @@ def parse_symbol_map(modname, version):
             except Exception, e:
                 pass
     elif typ == "elf":
-        # (Linux) Output from readelf -lsW -wL 
+        # (Linux) Output from readelf -lsW -wL
         # Type           Offset   VirtAddr           PhysAddr           FileSiz  MemSiz   Flg Align
         load_re = re.compile(" *LOAD +0x[0-9a-f]+ (0x[0-9a-f]+)")
         #    Num:    Value          Size Type    Bind   Vis      Ndx Name
@@ -350,7 +368,7 @@ def parse_symbol_map(modname, version):
                 baseaddr = int(m.group(1), 16)
                 break
 
-        funcs = []        
+        funcs = []
         for line in handle:
             m = sym_re.match(line)
             if m:
@@ -361,7 +379,7 @@ def parse_symbol_map(modname, version):
                 funcs.append(entry)
             elif line.startswith("File name"):
                 break
-            
+
         funcs.sort(key=lambda x: x.base)
         func_keys = [f.base for f in funcs]
 
@@ -393,12 +411,12 @@ def parse_symbol_map(modname, version):
                     curfile = os.path.normpath(os.path.join("linux", m.group(1)))
         entries.extend(funcs)
     else:
-        print "WARNING: No symbols found for %s@%s" % (modname, version)
+        warning("No symbols for %s@%s" % (modname, version))
         return entries
 
     # print "%d entries from %s@%s" % (len(entries), modname, version)
     if len(entries) == 0:
-        print "WARNING: loaded 0 symbols from .%s %s" % (typ, handle)
+        warning("loaded 0 symbols from .%s %s" % (typ, handle))
     handle.close()
     entries.sort(key=lambda x: x.base)
     return entries
@@ -590,7 +608,7 @@ class NotificationHandler:
             if q:
                 bl = q.group(2)
                 dict_incr(self.killed, bl)
-                
+
         orig = self.notifs.get(typ, (0, 0.0))
         self.notifs[typ] = (orig[0] + 1, orig[1] + val)
 
@@ -603,7 +621,7 @@ class NotificationHandler:
             if p:
                 self.sname = p.group(1)
         return line
-    
+
     def onFinish(self):
         print "============== NOTIFICATIONS ==============="
         if len(self.name):
@@ -645,9 +663,14 @@ class extract_opts:
         self.printall = False
         self.version = datetime.min;
 
-            
-def extract_callstack(logf, opts, triage=None, handlers=None):
 
+version_re = re.compile("Build Version: ([a-zA-Z]+).*(Release|Debug|Develop|Builder|Steam)(32|64) ([^,]*),")
+basere = re.compile("'([^']+)' base address is 0x([a-fA-F0-9]+), size is 0x([a-fA-F0-9]+)")
+addrre = re.compile("[cC]alled from 0x([a-fA-F0-9]+)")
+mac_stack_re = re.compile("0x[a-fA-F0-9]+ (.+) [+] [0-9]+ [(]([^)]+)[)]")
+hexre = re.compile("0x([a-fA-F0-9]{6,})")
+        
+def extract_callstack(logf, opts, triage=None, handlers=None):
     module_map = []
     version = ""
     platform = ""
@@ -655,18 +678,6 @@ def extract_callstack(logf, opts, triage=None, handlers=None):
     trace_has_game = False
     lastfew = []
     exception_lines = []
-
-    version_re = re.compile("Build Version: ([a-zA-Z]+).*(Release|Debug|Develop|Builder|Steam)(32|64) ([^,]*),")
-    basere = re.compile("'([^']+)' base address is 0x([a-fA-F0-9]+), size is 0x([a-fA-F0-9]+)")
-    addrre = re.compile("[cC]alled from 0x([a-fA-F0-9]+)")
-    mac_stack_re = re.compile("0x[a-fA-F0-9]+ (.+) [+] [0-9]+ [(]([^)]+)[)]")
-    hexre = re.compile("0x([a-fA-F0-9]{6,})")
-
-    if handlers is None:
-        if triage is None:
-            handlers = [TimestampHandler(), NotificationHandler(), AssertionHandler()]
-        else:
-            handlers = []
 
     if logf == "-":
         data = sys.stdin
@@ -685,6 +696,7 @@ def extract_callstack(logf, opts, triage=None, handlers=None):
         build = m.group(2) + m.group(3)
         dat = datetime.strptime(m.group(4), "%b %d %Y")
         version = dat.strftime("%Y_%m_%d")
+        log("Reassembly version:", version)
         if dat < opts.version:
             if data != sys.stdin:
                 data.close()
@@ -709,7 +721,9 @@ def extract_callstack(logf, opts, triage=None, handlers=None):
             "Caught SIG" in line or \
             "Dumping stack for thread" in line or\
             "Terminate Handler" in line or\
-            "Time is " in line):
+            "Time is " in line or\
+            "Dumping loaded shared objects" in line):
+            log("found crash:", line)
             break
 
     if triage is None:
@@ -726,6 +740,7 @@ def extract_callstack(logf, opts, triage=None, handlers=None):
         line = line.replace("\r", "")
         # print "LINE=", line
         m = basere.search(line)
+        # log("module line", m, line)
         if m:
             mod = module_entry()
             mod.name = m.group(1)
@@ -734,6 +749,7 @@ def extract_callstack(logf, opts, triage=None, handlers=None):
             mod.version = version if (mod.name.endswith(".exe") or "Reassembly" in mod.name) else None
             mod.symbols = None # load lazily
             module_map.append(mod)
+            # log("module:", "%#10x+%#09x" % (mod.base, mod.size), os.path.basename(mod.name), mod.version)
             continue
         elif triage is None and module_map:
             for ln in exception_lines:
@@ -757,6 +773,7 @@ def extract_callstack(logf, opts, triage=None, handlers=None):
             stacklines += 1
             addr = int(m.group(1), 16)
             has_game = False
+            # log("looking for %#x" % addr)
             n = mac_stack_re.search(line)
             if n:
                 func, module = n.groups()
@@ -782,7 +799,7 @@ def extract_callstack(logf, opts, triage=None, handlers=None):
                         break
         elif triage is None:
             m = hexre.search(line)
-            if m:
+            if m and "thread 0x" not in line:
                 addr = int(m.group(1), 16)
                 if module_map:
                     func, lino, fil = lookup_address(module_map, addr)
@@ -795,7 +812,7 @@ def extract_callstack(logf, opts, triage=None, handlers=None):
             skipped += 1
         elif triage is None:
             print line,
-            
+
     if skipped and triage is None:
         print "...skipped %d stack frames" % skipped
 
@@ -858,7 +875,7 @@ def do_triage(files, ops):
         print "#" * (len(fl) + 4)
         print "#", fl
         print "#" * (len(fl) + 4)
-        extract_callstack(fl, ops)
+        extract_callstack(fl, ops, None, [])
         print ""
 
 
@@ -867,7 +884,8 @@ def main():
 
     triage = False
     copy = False
-    opts, args = getopt.getopt(sys.argv[1:], "av:tc")
+    handlers = []
+    opts, args = getopt.getopt(sys.argv[1:], "av:tcn")
     for (opt, val) in opts:
         if opt == "-a":
             ops.printall = True
@@ -879,10 +897,12 @@ def main():
             triage = True
         if opt == "-c":
             copy = True
-    
+        if opt == "-n":
+            handlers = [TimestampHandler(), NotificationHandler(), AssertionHandler()]
+
     print "-*- mode: compilation -*-"
-    print "ROOT=%s" % ROOT
-    print "version=%s" % str(ops.version)
+    log("ROOT=%s" % ROOT)
+    log("version=%s" % str(ops.version))
 
     if copy:
         print "copying symbols from network"
@@ -935,12 +955,12 @@ def main():
             last = logs[-1]
             print "picking most recently modified log"
             print "selected %s (considered %d)" % (last, len(logs))
-            extract_callstack(last, ops)
+            extract_callstack(last, ops, None, handlers)
             exit(0)
         print "usage: %s <log>\n       %s <log1> <logn...>" % (sys.argv[0], sys.argv[0])
     elif len(args) == 1 and "*" not in args[0]:
         # cProfile.run("extract_callstack(args[1], None)", sort="tottime")
-        extract_callstack(args[0], ops)
+        extract_callstack(args[0], ops, None, handlers)
     else:
         files = []
         for fil in args:
@@ -956,7 +976,7 @@ def main():
             print "processing %d logs" % (len(files))
         do_triage(files, ops)
 
-                
+
 if __name__ == '__main__':
     ROOT = os.path.abspath(os.path.join(os.path.dirname(sys.argv[0]), ".."))
     ROOT = ROOT.replace("/cygdrive/c/", "c:/")

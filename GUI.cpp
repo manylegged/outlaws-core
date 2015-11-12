@@ -1255,19 +1255,24 @@ void OptionSlider::render(const ShaderState &s_)
     }
 }
 
-OptionEditor::OptionEditor(float *f, const char* lbl, float mn, float mx, const vector<const char*> tt) 
+OptionEditor::OptionEditor(float *f, const char* lbl, float mn, float mx, const StringVec tt) 
 {
-    init(FLOAT, (void*) f, lbl, tt, mn, mx, 100 * (mx - mn));
+    init(FLOAT, (void*) f, lbl, tt, mn, mx-mn, 200.f);
 }
 
-OptionEditor::OptionEditor(int *u, const char* lbl, int states, const vector<const char*> tt)
+OptionEditor::OptionEditor(float *f, const char* lbl, float mn, float mx, float inc, const StringVec tt)
+{
+    init(FLOAT, (void*) f, lbl, tt, mn, mx-mn, floor_int((mx - mn) / inc) + 1);
+}
+
+OptionEditor::OptionEditor(int *u, const char* lbl, int states, const StringVec tt)
 {
     init(INT, (void*) u, lbl, tt, 0.f, (float) states-1, states);
 }
 
-OptionEditor::OptionEditor(int *u, const char* lbl, int low, int increment, int states, const vector<const char*> tt)
+OptionEditor::OptionEditor(int *u, const char* lbl, int low, int high, int increment, const StringVec tt)
 {
-    init(INT, (void*) u, lbl, tt, low, increment * states, states + 1);
+    init(INT, (void*) u, lbl, tt, low, high - low, (high - low + increment-1) / increment + 1);
 }
 
 float OptionEditor::getValueFloat() const
@@ -1291,7 +1296,7 @@ void OptionEditor::updateSlider()
 }
 
 
-void OptionEditor::init(Type t, void *v, const char* lbl, const vector<const char*> &tt, float st, float mu, int states)
+void OptionEditor::init(Type t, void *v, const char* lbl, const StringVec &tt, float st, float mu, int states)
 {
     type = t;
     value = v;
@@ -1305,19 +1310,24 @@ void OptionEditor::init(Type t, void *v, const char* lbl, const vector<const cha
 
 string OptionEditor::getTxt() const
 {
-    if (slider.values <= 4) {
+    if (format == SECONDS) {
+        const float v = getValueFloat();
+        return (v <= 0.f) ? _("Off") : str_time_format_long(v);
+    } else if (format == COUNT) {
+        return (type == INT) ? str_format("%d", getValueInt()) : str_format("%.f", getValueFloat());
+    } else if (slider.values == tooltip.size()) {
+        return tooltip[clamp(getValueInt(), 0, tooltip.size()-1)];
+    } else if (slider.values <= 4) {
         const int val = getValueInt();
-        if (slider.values == tooltip.size()) {
-            return tooltip[clamp(val, 0, tooltip.size()-1)];
+        if (val == 0) {
+            return _("Off");
         } else if (slider.values == 3) {
-            return (val == 0 ? _("Off") : 
-                    val == 1 ? _("Low") :  _("Full"));
+            return val == 1 ? _("Low") :  _("Full");
         } else if (slider.values == 4) {
-            return (val == 0 ? _("Off") : 
-                    val == 1 ? _("Low") : 
+            return (val == 1 ? _("Low") : 
                     val == 2 ? _("Medium") : _("Full"));
         } else {
-            return val ? _("On") : _("Off");
+            return _("On");
         }
     } else if (start != 0.f) {
         return str_format("%d", getValueInt());
@@ -1332,7 +1342,8 @@ float2 OptionEditor::render(const ShaderState &ss, float alpha)
     slider.alpha = alpha;
     slider.render(ss);
     return GLText::Put(ss, slider.position + justX(0.5f * slider.size.x + 2.f * kButtonPad.x),
-                       GLText::MID_LEFT, SetAlphaAXXX(kGUIText, alpha), 14, txt);
+                       GLText::MID_LEFT,
+                       SetAlphaAXXX(slider.active ? kGUIText : kGUIInactive, alpha), 14, txt);
 }
 
 bool OptionEditor::HandleEvent(const Event* event, bool* valueChanged)
