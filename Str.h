@@ -525,6 +525,7 @@ std::string str_concat(T&& first, Args... args)
 
 long chr_unshift(long chr);
 
+std::string str_demangle(std::string str);
 std::string str_demangle(const char* str);
 
 inline bool str_issym(int c)

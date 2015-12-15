@@ -106,8 +106,8 @@ static void print_backtrace()
     char **strings = get_backtrace_symbols(buffer, count);
 
     const uint64 current_tid = get_current_tid();
-    ReportPOSIX("Dumping stack for thread %#llx '%s'", (uint64)current_tid,
-                map_get(_thread_name_map(), (uint64)current_tid).c_str());
+    ReportPOSIX("Dumping stack for thread %#llx '%s'", current_tid,
+                map_get(_thread_name_map(), current_tid));
     for (int i=0; i<count; i++) {
         string func;
         
@@ -160,13 +160,13 @@ void posix_print_stacktrace()
     const uint64 current_tid = get_current_tid();
     ReportPOSIX("Observed %d threads from %#llx '%s'",
                 (int)_thread_name_map().size(), current_tid, 
-                map_get(_thread_name_map(), current_tid).c_str());
+                map_get(_thread_name_map(), current_tid));
 #if !__APPLE__
     foreach (const auto &x, _thread_name_map())
     {
         if (!x.first || x.first == current_tid)
             continue;
-        ReportPOSIX("Sending SIGTERM to thread %#llx, '%s'", x.first, x.second.c_str());
+        ReportPOSIX("Sending SIGTERM to thread %#llx, '%s'", x.first, x.second);
         int status;
         if ((status = pthread_kill((pthread_t) x.first, SIGTERM)))
             ReportPOSIX("pthread_kill(%#llx, SIGTERM) failed: %s", x.first, strerror(status));

@@ -32,7 +32,7 @@ if sys.platform.startswith("darwin"):
                    "/Volumes/Users/Arthur/AppData/Local/Temp/SymbolCache"]
     OUTLAWS_WIN32 = ["win32",
                      "/Volumes/BOOTCAMP/Users/Arthur/Documents/outlaws/win32",
-                     "/Volumes/Users/Arthur/Documents/outlaws/win32"] # thor
+                     "/Volumes/Users/Arthur/Documents/outlaws/win32"] # thor/eclipse
     OUTLAWS_LINUX = ["linux", "linux/symbols", "/Volumes/arthur/outlaws/linux"]
 else:
     PDB_SYMBOLS = ["C:/symbols",
@@ -56,6 +56,8 @@ TRIAGE_IGNORE_TRACE = set(["posix_signal_handler(int, siginfo_t*, void*)", # cla
                           "_callthreadstartex", "_threadstartex",
                            "kernel32.dll", "ntdll.dll",
 
+                           "__vsnprintf_l", "__vsnprintf",
+                           
                            # always together with mtx_do_lock
                           "__Mtx_lock",
                            "bool Concurrency::critical_section::_Acquire_lock",
@@ -64,7 +66,7 @@ TRIAGE_IGNORE_TRACE = set(["posix_signal_handler(int, siginfo_t*, void*)", # cla
 
 ROOT = "./"
 
-TRIAGE_STACK_SIZE = 3
+TRIAGE_STACK_SIZE = 5
 MAX_STACK_DUMP = 30
 
 def log(*x):
@@ -411,7 +413,7 @@ def parse_symbol_map(modname, version):
                     curfile = os.path.normpath(os.path.join("linux", m.group(1)))
         entries.extend(funcs)
     else:
-        warning("No symbols for %s@%s" % (modname, version))
+        warning("No symbols for " + modname + (("@" + version) if version else ""))
         return entries
 
     # print "%d entries from %s@%s" % (len(entries), modname, version)
@@ -669,6 +671,7 @@ basere = re.compile("'([^']+)' base address is 0x([a-fA-F0-9]+), size is 0x([a-f
 addrre = re.compile("[cC]alled from 0x([a-fA-F0-9]+)")
 mac_stack_re = re.compile("0x[a-fA-F0-9]+ (.+) [+] [0-9]+ [(]([^)]+)[)]")
 hexre = re.compile("0x([a-fA-F0-9]{6,})")
+sched_re = re.compile("Log upload scheduled: (.*)$")
         
 def extract_callstack(logf, opts, triage=None, handlers=None):
     module_map = []
@@ -696,8 +699,9 @@ def extract_callstack(logf, opts, triage=None, handlers=None):
         build = m.group(2) + m.group(3)
         dat = datetime.strptime(m.group(4), "%b %d %Y")
         version = dat.strftime("%Y_%m_%d")
-        log("Reassembly version:", version)
-        if dat < opts.version:
+        if triage is None:
+            log("Reassembly version:", version)
+        if dat < opts.version or build.startswith("Debug") or build.startswith("Develop"):
             if data != sys.stdin:
                 data.close()
             return
@@ -717,13 +721,21 @@ def extract_callstack(logf, opts, triage=None, handlers=None):
             lastfew.append(line)
             while (len(lastfew) > 5):
                 lastfew.pop(0)
+        m = sched_re.search(line)
+        if m:
+            reason = "CHECK: " + m.group(1)
+            if (reason not in stacktrace):
+                stacktrace.append(reason)
+            if not opts.printall and triage is None:
+                print line, '"' +  reason + '"'
         if ("Unhandled Top Level Exception" in line or \
             "Caught SIG" in line or \
             "Dumping stack for thread" in line or\
             "Terminate Handler" in line or\
             "Time is " in line or\
             "Dumping loaded shared objects" in line):
-            log("found crash:", line)
+            if triage is None:
+                log("found crash:", line)
             break
 
     if triage is None:
@@ -795,7 +807,7 @@ def extract_callstack(logf, opts, triage=None, handlers=None):
                     if has_game:
                         trace_has_game = True
                     stacktrace.append(func)
-                    if len(stacktrace) > TRIAGE_STACK_SIZE and trace_has_game:
+                    if len(stacktrace) >= TRIAGE_STACK_SIZE and trace_has_game:
                         break
         elif triage is None:
             m = hexre.search(line)
@@ -842,7 +854,7 @@ def do_triage(files, ops):
         print "============= %s (%d total) ================" % (version, total)
         func_counts = {}
         for stack, files in data.iteritems():
-            for func in stack:
+            for func in set(stack):
                 func_counts[func] = func_counts.get(func, 0) + len(files)
         for func, count in sdict(func_counts, lambda x: x[1])[:TOP_FUNC_COUNT]:
             print "%d. %s" % (count, func)
@@ -937,14 +949,18 @@ def main():
             print "done"
         print "%d total builds, %d ignored based on date, %d already local, %d updated" % (len(paths), verignore, exists, updated)
     elif triage:
-        base = os.path.join(ROOT, "server/server_sync/crash")
         files = []
-        all_files = safe_listdir(base)
-        for fil in all_files:
-            date = datetime.strptime(fil.split("_")[0], "%Y%m%d")
-            if date >= ops.version:
-                files.append(os.path.join(base, fil))
-        print "Triaging over %d/%d crashlogs" % (len(files), len(all_files))
+        if len(args):
+            files = args
+            print "Triaging over %d crashlogs" % len(files)
+        else:
+            base = os.path.join(ROOT, "server/sync/crash")
+            all_files = safe_listdir(base)
+            for fil in all_files:
+                date = datetime.strptime(fil.split("_")[0], "%Y%m%d")
+                if date >= ops.version:
+                    files.append(os.path.join(base, fil))
+            print "Triaging over %d/%d server crashlogs" % (len(files), len(all_files))
         do_triage(files, ops)
     elif len(args) == 0:
         logs = glob_files([os.path.join(os.path.expanduser("~/Downloads"), "Reassembly_*.txt"),

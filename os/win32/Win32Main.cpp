@@ -558,29 +558,26 @@ static const char* getExceptionCodeName(const EXCEPTION_RECORD *rec)
     }
 }
 
-static void printStack(HANDLE thread, CONTEXT &context)
+static DWORD setupStackWalk(const CONTEXT &context, STACKFRAME64 &frame)
 {
-    STACKFRAME64 frame;
-    DWORD image;
     memset(&frame, 0, sizeof(STACKFRAME64));
 #ifdef _M_IX86
-    image = IMAGE_FILE_MACHINE_I386;
     frame.AddrPC.Offset = context.Eip;
     frame.AddrPC.Mode = AddrModeFlat;
     frame.AddrFrame.Offset = context.Ebp;
     frame.AddrFrame.Mode = AddrModeFlat;
     frame.AddrStack.Offset = context.Esp;
     frame.AddrStack.Mode = AddrModeFlat;
+    return IMAGE_FILE_MACHINE_I386;
 #elif _M_X64
-    image = IMAGE_FILE_MACHINE_AMD64;
     frame.AddrPC.Offset = context.Rip;
     frame.AddrPC.Mode = AddrModeFlat;
     frame.AddrFrame.Offset = context.Rbp;
     frame.AddrFrame.Mode = AddrModeFlat;
     frame.AddrStack.Offset = context.Rsp;
     frame.AddrStack.Mode = AddrModeFlat;
+    return IMAGE_FILE_MACHINE_AMD64;
 #elif _M_IA64
-    image = IMAGE_FILE_MACHINE_IA64;
     frame.AddrPC.Offset = context.StIIP;
     frame.AddrPC.Mode = AddrModeFlat;
     frame.AddrFrame.Offset = context.IntSp;
@@ -589,10 +586,31 @@ static void printStack(HANDLE thread, CONTEXT &context)
     frame.AddrBStore.Mode = AddrModeFlat;
     frame.AddrStack.Offset = context.IntSp;
     frame.AddrStack.Mode = AddrModeFlat;
+    return IMAGE_FILE_MACHINE_IA64;
 #else
 #error "This platform is not supported."
 #endif
+}
 
+static void* getStackTopPC(HANDLE thread, const CONTEXT *ctx)
+{
+    CONTEXT context = *ctx;
+    STACKFRAME64 frame;
+    const DWORD image = setupStackWalk(context, frame);
+    const HANDLE process = GetCurrentProcess();
+
+    while (StackWalk64(image, process, thread, &frame, &context, NULL, NULL, NULL, NULL))
+    {
+        if (frame.AddrPC.Offset)
+            return (void*) frame.AddrPC.Offset;
+    }
+    return NULL;
+}
+
+static void printStack(HANDLE thread, CONTEXT &context)
+{
+    STACKFRAME64 frame;
+    const DWORD image = setupStackWalk(context, frame);
     const HANDLE process = GetCurrentProcess();
 
     int i=0;
@@ -603,7 +621,7 @@ static void printStack(HANDLE thread, CONTEXT &context)
     }
 }
 
-void printModulesStack(CONTEXT *ctx)
+static void printModulesStack(CONTEXT *ctx, string &modname)
 {
     std::chrono::time_point<std::chrono::system_clock> start = std::chrono::system_clock::now();
     std::time_t cstart = std::chrono::system_clock::to_time_t(start);
@@ -643,6 +661,7 @@ void printModulesStack(CONTEXT *ctx)
     if (EnumProcessModules(process, hmodules, sizeof(hmodules), &moduleBytesNeeded))
     {
         const int modules = min(kMaxModules, (int) (moduleBytesNeeded / sizeof(HMODULE)));
+        const void *fault_offset = getStackTopPC(GetCurrentThread(), ctx);
         for (int i=0; i<modules; i++)
         {
             MODULEINFO module_info;
@@ -658,6 +677,12 @@ void printModulesStack(CONTEXT *ctx)
 
                 const std::string name = ws2s(basename); 
                 const std::string lname = str_tolower(name);
+
+                // faulting address is inside this module
+                if (module_ptr <= fault_offset && fault_offset < module_ptr + module_size)
+                {
+                    modname = name;
+                }
 
                 // only print dlls matching these patterns
                 static const char *substrs[] = {
@@ -686,7 +711,7 @@ void printModulesStack(CONTEXT *ctx)
     const DWORD current_tid = GetCurrentThreadId();
 
     ReportWin32("Dumping stack for current thread %#x, '%s'", 
-                   current_tid, _thread_name_map()[current_tid].c_str());
+                current_tid, _thread_name_map()[current_tid]);
 
     CONTEXT context = *ctx;
     printStack(GetCurrentThread(), context);
@@ -696,8 +721,7 @@ void printModulesStack(CONTEXT *ctx)
     {
         if (!x.first || x.first == current_tid)
             continue;
-        const string name = x.second;
-        ReportWin32("Dumping stack for thread %#x, '%s'", x.first, name.c_str());
+        ReportWin32("Dumping stack for thread %#x, '%s'", x.first, x.second);
         HANDLE hthread = OpenThread(THREAD_GET_CONTEXT|THREAD_SUSPEND_RESUME|THREAD_QUERY_INFORMATION,
                                     FALSE, x.first);
         if (!hthread) {
@@ -729,10 +753,11 @@ void OL_OnTerminate(const char* message)
     CONTEXT context;
     memset(&context, 0, sizeof(context));
     RtlCaptureContext(&context);
-    
-    printModulesStack(&context);
 
-    sdl_os_oncrash(str_format("Spacetime Terminated: %s\n(Reassembly crashed)", message));
+    string modname;
+    printModulesStack(&context, modname);
+
+    sdl_os_oncrash(str_format("Spacetime Terminated: %s\nIn module: '%s'\n(Reassembly crashed)", message, modname.c_str()));
     fflush(NULL);
     _exit(1);
 }
@@ -762,39 +787,14 @@ static LONG WINAPI myExceptionHandler(EXCEPTION_POINTERS *info)
         msg += "\n" + msg2;
     }
 
-    printModulesStack(info->ContextRecord);
+    string modname;
+    printModulesStack(info->ContextRecord, modname);
+    if (modname.size())
+        msg += "\nIn module: '" + modname + "'";
 
     sdl_os_oncrash(str_format("Spacetime Segfault:\n%s", msg.c_str()));
     _exit(1);
     return EXCEPTION_EXECUTE_HANDLER;
-}
-
-static bool verifyOsVersion(const DWORD major, const DWORD minor)
-{
-	OSVERSIONINFOEXW osvi;
-	DWORDLONG dwlConditionMask = 0;
-
-	//Initialize the OSVERSIONINFOEX structure
-	memset(&osvi, 0, sizeof(OSVERSIONINFOEXW));
-	osvi.dwOSVersionInfoSize = sizeof(OSVERSIONINFOEXW);
-	osvi.dwMajorVersion = major;
-	osvi.dwMinorVersion = minor;
-	osvi.dwPlatformId = VER_PLATFORM_WIN32_NT;
-
-	//Initialize the condition mask
-	VER_SET_CONDITION(dwlConditionMask, VER_MAJORVERSION, VER_GREATER_EQUAL);
-	VER_SET_CONDITION(dwlConditionMask, VER_MINORVERSION, VER_GREATER_EQUAL);
-	VER_SET_CONDITION(dwlConditionMask, VER_PLATFORMID, VER_EQUAL);
-
-	// Perform the test
-	BOOL ret = VerifyVersionInfo(&osvi, VER_MAJORVERSION | VER_MINORVERSION | VER_PLATFORMID, dwlConditionMask);
-    if (ret == 0) {
-        DWORD err = GetLastError();
-        if (err != ERROR_OLD_WIN_VERSION)
-            ReportWin32Err("VerifyVersionInfo", err);
-    }
-    ReportWin32("VerifyVersionInfo %d.%d: %d", major, minor, ret);
-    return ret;
 }
 
 string os_get_platform_info()

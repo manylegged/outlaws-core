@@ -953,13 +953,17 @@ bool str_runtests()
 #define cpuid(OUT, LEVEL) __cpuid(OUT, LEVEL)
 typedef int regtype_t;
 
-std::string str_demangle(const char *str)
+std::string str_demangle(string name)
 {
-    string name = str;
     name = str_replace(name, "struct ", "");
     name = str_replace(name, "class ", "");
     name = str_replace(name, "std::basic_string<char,std::char_traits<char>,std::allocator<char> >", "std::string");
     return name;
+}
+
+std::string str_demangle(const char *str)
+{
+    return str_demangle(string(str));
 }
 
 #else
@@ -995,6 +999,11 @@ std::string str_demangle(const char *str)
     name = str_replace(name, "glm::detail::tvec3<float,0>", "float3");
 #endif
     return name;
+}
+
+std::string str_demangle(string name)
+{
+    return str_demangle(name.c_str());
 }
 
 #endif

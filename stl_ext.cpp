@@ -174,7 +174,7 @@ const char* thread_current_name()
     tid = pthread_self();
 #endif
     std::lock_guard<std::mutex> l(_thread_name_mutex());
-    return _thread_name_map()[tid].c_str();
+    return _thread_name_map()[tid];
 }
 
 

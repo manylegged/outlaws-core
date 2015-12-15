@@ -281,6 +281,12 @@ struct TextInputBase : public WidgetBase {
     float2 getSizePoints() const { return size; }
 
     void render(const ShaderState &s_);
+    
+    void setForceActive(bool v)
+    {
+        forceActive = v;
+        active = v;
+    }
 };
 
 struct TextInputCommandLine : public TextInputBase {
@@ -339,7 +345,7 @@ struct TextInputCommandLine : public TextInputBase {
 
     const Command *getCommand(const string &abbrev) const;
 
-    void pushCmdOutput(const char *format, ...) __printflike(2, 3);
+    void pushPrompt();
     void saveHistory(const char *fname);
     void loadHistory(const char *fname);
 

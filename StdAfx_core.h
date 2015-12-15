@@ -52,6 +52,7 @@ inline void Reportf(const char *format, ...)
 }
 
 #define TYPE_NAME(X) (str_demangle(typeid(X).name()).c_str())
+#define TYPE_NAME_S(X) str_demangle(typeid(X).name())
 
 // use pthreads instead of std::thread on mac because the default stack size is really small and
 // there is no way to change it using std::thread

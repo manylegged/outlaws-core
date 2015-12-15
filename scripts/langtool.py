@@ -31,6 +31,36 @@ imprt = False
 export = False
 uselua = False
 dozip = False
+
+def count_occur(v):
+    y = {}
+    for x in v:
+        y[x] = y.get(x, 0) + 1
+    return y
+
+fmt_re = re.compile("%[.0-9#]?[a-z]")
+ws_re = re.compile("(\s*).*(\s*)$", re.DOTALL)
+color_re = re.compile("([\^][0-9])[^\n^]*([\^]7)")
+def check_format_strings(fil, orig, repl):
+    fil = os.path.relpath(fil)
+    orig_f = fmt_re.findall(orig)
+    repl_f = fmt_re.findall(repl)
+    if (orig_f != repl_f):
+        print "%s: error: format mismatch %r -> %r" % (fil, orig, repl)
+    elif orig_f:
+        # print "%s -> %s" % (orig_f, repl_f)
+        pass
+    orig_c = count_occur(x.group(1) for x in color_re.finditer(orig))
+    repl_c = count_occur(x.group(1) for x in color_re.finditer(repl))
+    # print '%r -> %r' % (orig_c, repl_c)
+    if (orig_c != repl_c):
+        print "%s: warning: color mismatch (%s -> %s) %r -> %r" % (fil, orig_c, repl_c, orig, repl)
+    # print "'%s' -> '%s'" % (orig, repl) 
+    orig_ws = ws_re.match(orig).groups()
+    repl_ws = ws_re.match(repl).groups()
+    # print orig_ws, "->", repl_ws
+    if orig_ws != repl_ws:
+        print "%s: error: whitespace mismatch %r -> %r" % (fil, orig, repl)
     
 
 def mkdir_p(path):
@@ -130,6 +160,7 @@ def po2lua_replace(outlua, baselua, pof):
     count = 0
     for pe in open_po(pof):
         if pe.msgstr:
+            check_format_strings(pof, pe.msgid, pe.msgstr)
             count += 1
             msgstr = pe.msgstr.replace('"', '\\"')
             dat = dat.replace('"' + pe.msgid + '"', '"' + msgstr + '"', 1)
@@ -153,6 +184,7 @@ def po2lua_simple(outlua, pofs):
             continue
         for pe in open_po(pof):
             if pe.msgstr:
+                check_format_strings(pof, pe.msgid, pe.msgstr)
                 dct[pe.msgid] = pe.msgstr
     if not dct:
         return

@@ -1315,7 +1315,7 @@ slist_iter_t<T> slist_iter(T *pt=NULL)
 
 ////////////////////////////////////////////////////////////////////////////////////
 
-typedef std::map<uint64, std::string> OL_ThreadNames;
+typedef std::map<uint64, const char*> OL_ThreadNames;
 OL_ThreadNames &_thread_name_map();
 std::mutex& _thread_name_mutex();
 

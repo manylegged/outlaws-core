@@ -339,7 +339,7 @@ public:
             }
         }
 
-        cAudio::IAudioSource *src = m_mgr->create(file.c_str(), OL_PathForFile(file.c_str(), "r"));
+        cAudio::IAudioSource *src = m_mgr->create(file.c_str(), file.c_str());
         if (src) {
             m_streamSources.push_back(src);
         } else {
@@ -354,10 +354,9 @@ public:
             return NULL;
         cAudio::IAudioBuffer *&buf = m_buffers[fname];
         if (!buf) {
-            const char* path = OL_PathForFile(fname.c_str(), "r");
-            buf = m_mgr->createBuffer(path);
+            buf = m_mgr->createBuffer(fname.c_str());
             if (!buf) {
-                cAudio::getLogger()->logError("Allocator", str_format("Failed to load sound '%s'", path).c_str());
+                cAudio::getLogger()->logError("Allocator", str_format("Failed to load sound '%s'", fname.c_str()).c_str());
             }
         }
         return buf;

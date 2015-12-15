@@ -112,7 +112,7 @@ void sdl_os_oncrash(const string &message)
     static string errorm;
     if (success)
     {
-        errorm = str_format("%s\nAnonymous log uploaded OK.\n\n%s\n", message.c_str(), g_logpath);
+        errorm = str_format("%s\n\nAnonymous log uploaded OK.\n\n%s\n", message.c_str(), g_logpath);
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Reassembly Error", errorm.c_str(), NULL);
         return;
     }
@@ -1325,6 +1325,7 @@ int sdl_os_main(int argc, const char **argv)
         ReportSDL("Closing log for shutdown");
         SDL_RWwrite(g_logfile, OL_ENDL, strlen(OL_ENDL), 1);
         SDL_RWclose(g_logfile);
+        fflush(NULL);
         g_logfile = NULL;
 
         if (g_wantsLogUpload)
