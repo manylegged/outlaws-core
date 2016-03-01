@@ -4,7 +4,7 @@
 // - prerendered text is stored in a texture
 //
 
-// Copyright (c) 2013-2015 Arthur Danskin
+// Copyright (c) 2013-2016 Arthur Danskin
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -30,6 +30,7 @@
 #include "Shaders.h"
 
 static DEFINE_CVAR(float, kTextScaleHeight, IS_TABLET ? 320.f : 720.f);
+static DEFINE_CVAR(float, kTextScaleMaxHeight, 1080.f);
 DEFINE_CVAR(float2, kAspectMinMax, float2(1.6f, 2.f));
 
 FontStats::FontStats(int ft, float sz) : font(ft), fontSize(sz)
@@ -164,7 +165,7 @@ float2 GLText::getCharSize(uint chr) const
 float GLText::getScaledSize(float sizeUnscaled)
 {
     const float2 ws = clamp_aspect(globals.windowSizePoints, kAspectMinMax.x, kAspectMinMax.y);
-    return sizeUnscaled * ws.y / kTextScaleHeight;
+    return sizeUnscaled * min(ws.y, kTextScaleMaxHeight) / kTextScaleHeight;
 }
 
 static DEFINE_CVAR(int, kGLTextCacheSize, 128);
@@ -187,7 +188,7 @@ const GLText* GLText::getUnscaled(int font, float size, const string& s)
     {
         GLText &it = s_cache[i];
         if (it.chars == s && 
-            isZero(it.fontSize - size) && 
+            nearZero(it.fontSize - size) && 
             it.texPointSize == pointSize &&
             it.font == font)
         {

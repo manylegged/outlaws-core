@@ -3,7 +3,7 @@
 // GUI.h - widget library
 //
 
-// Copyright (c) 2013-2015 Arthur Danskin
+// Copyright (c) 2013-2016 Arthur Danskin
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -34,27 +34,29 @@ struct ShaderState;
 static const float kPadDist = 2;
 extern float2      kButtonPad;
 
-#define COLOR_TARGET  0xff3a3c
 #define COLOR_TEXT_BG 0x101010
 #define COLOR_BG_GRID 0x303030
 #define COLOR_ORANGE  0xff6f1f
 #define COLOR_BLACK 0x000000
 #define COLOR_WHITE 0xffffff
 
-static const uint kGUIBg       = 0xb0202020;
-static const uint kGUIBgActive = 0xf0404040;
-static const uint kGUIFg       = 0xf0909090;
-static const uint kGUIFgMid    = 0xf0b8b8b8;
-static const uint kGUIFgActive = 0xffffffff;
-static const uint kGUIText     = 0xfff0f0f0;
-static const uint kGUITextLow  = 0xff808080;
-static const uint kGUIInactive = 0xa0606060;
-static const uint kGUIToolBg   = 0xc0000000;
+#ifndef DEF_COLOR
+#define DEF_COLOR(X, Y) extern uint X
+#endif
+
+DEF_COLOR(kGUIBg, 0xb0202020);
+DEF_COLOR(kGUIBgActive, 0xf0404040);
+DEF_COLOR(kGUIFg, 0xf0909090);
+DEF_COLOR(kGUIFgMid, 0xf0b8b8b8);
+DEF_COLOR(kGUIFgActive, 0xffffffff);
+DEF_COLOR(kGUIText, 0xfff0f0f0);
+DEF_COLOR(kGUITextLow, 0xff808080);
+DEF_COLOR(kGUIInactive, 0xa0606060);
+DEF_COLOR(kGUIToolBg, 0xc0000000);
 
 static const float kOverlayFGAlpha    = 0.8f;
 static const float kOverlayBGAlpha    = 0.6f;
 #define kOverlayBG       (ALPHAF(kOverlayBGAlpha)|COLOR_BLACK)
-#define kOverlayActiveBG (ALPHAF(kOverlayFGAlpha)|COLOR_BLACK)
 
 struct WidgetBase {
     float2      position;       // center of button
@@ -147,7 +149,7 @@ struct Button : public ButtonBase
     uint   textColor         = kGUIText;
     uint   inactiveTextColor = kGUIInactive;
     uint   style             = S_CORNERS;
-    float2 padding           = float2(4.f * kPadDist, 4.f * kPadDist);
+    float2 padding           = float2(4.f * kPadDist);
 
     float dynamicTextSize    = 0.f;
     float dynamicSubtextSize = 0.f;
@@ -336,11 +338,12 @@ struct TextInputCommandLine : public TextInputBase {
         return line.size() > prompt.size() ? line.substr(prompt.size()) : string();
     }
 
-    void setLineText(const char* text)
+    template <typename T>
+    void setLineText(const T &text, int curs=-1)
     {
         std::lock_guard<std::recursive_mutex> l(mutex);
         lines[lines.size()-1] = prompt + text;
-        cursor = int2(lines[lines.size()-1].size(), lines.size()-1);
+        cursor = int2(curs < 0 ? lines[lines.size()-1].size() : prompt.size() + curs, lines.size()-1);
     }
 
     const Command *getCommand(const string &abbrev) const;
@@ -571,7 +574,7 @@ struct TabWindow : public WidgetBase {
 
     float getTabHeight() const;
     float2 getContentsCenter() const { return position - float2(0.f, 0.5f * getTabHeight()); }
-    float2 getContentsSize() const { return size - float2(4.f * kPadDist) - float2(0.f, getTabHeight()); }
+    float2 getContentsSize() const { return size - 2.f * kButtonPad - float2(0.f, getTabHeight()); }
     float2 getContentsStart() const { return getContentsCenter() - 0.5f * getContentsSize(); }
     
     void render(const ShaderState &ss, const View &view);

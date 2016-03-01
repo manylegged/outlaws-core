@@ -46,6 +46,8 @@ public:
     void SetStat(const char* name, int value)
     {
         std::lock_guard<std::mutex> l(m_mutex);
+        if (map_get(m_stats, name, -value) == value)
+            return;
         m_stats[name] = value;
         m_updates.insert(name);
     }

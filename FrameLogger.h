@@ -3,7 +3,7 @@
 // FrameLogger.h - draw pretty profiling graph overlays
 // 
 
-// Copyright (c) 2013-2015 Arthur Danskin
+// Copyright (c) 2013-2016 Arthur Danskin
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -32,18 +32,24 @@
 
 static const uint kGraphColors[] = {
     0xff0000,
-    0xff8000,
+    0xff6000,
+    0xff9000,
+    0xffc000,
     0xffff00,
-//    0x80ff00,
+    0xb0ff00,
     0x00ff00,
-//    0x00ff80,
     0x00ffff,
-    0x0080ff,
+    0x00a0ff,
+    0x0060ff,
     0x0000ff,
-    0x8000ff,
+    0x6000ff,
+    0x9000ff,
+    0xc000ff,
     0xff00ff,
     0xff0080,
 };
+
+#define COLOR_AXIS 0x01ff5f
 
 struct FrameLogger {
 
@@ -55,7 +61,7 @@ struct FrameLogger {
     struct PhaseData { uint color = 0; bool stacked = true; };
 
     const char*                                  m_title = NULL;
-    int                                          m_graphMaxItems = 240;
+    float                                        m_barWidth = 2.f;
     int                                          m_graphItems = 240;
     bool                                         m_paused = true;
 
@@ -74,6 +80,7 @@ struct FrameLogger {
     // render thread
     double                                       m_curMaxTimeMs = 16.0;
     double                                       m_maxTimeMs = 16.0;
+    float                                        m_labelWidth = 100.f;
     std::vector<VDict>                           m_sortLog;
     std::unordered_set<lstring>                  m_phases;
     uint                                         m_frame = 0;
@@ -216,12 +223,13 @@ struct FrameLogger {
         std::set<double> heights;
         double           ystart = 0;
         uint             pindex = 0;
+        float            lwidth = 0.f;
 
         foreach (const lstring phase, m_phases) 
         {
             const Stats  stat       = m_stats[phase];
             const double y          = 1000.f * stat.mean * (graphSize.y / m_maxTimeMs);
-            const double textHeight = GLText::getScaledSize(10);
+            const double textHeight = GLText::getScaledSize(8);
             double       yoff       = 0;
 
             if (m_phaseData[phase].stacked) {
@@ -237,15 +245,17 @@ struct FrameLogger {
             }
             heights.insert(yoff);
 
-            GLText::DrawScreen(ss, graphStart + float2(-3, yoff),
-                               GLText::MID_RIGHT, ALPHA_OPAQUE|m_phaseData[phase].color,
-                               textHeight, "%s: %.1f/%.1f", phase.c_str(), 
-                               1000.0 * stat.mean, 1000.0 * stat.stddev);
+            float2 lsize = GLText::DrawScreen(ss, graphStart + float2(-3, yoff),
+                                              GLText::MID_RIGHT, ALPHA_OPAQUE|m_phaseData[phase].color,
+                                              textHeight, "%s: %.1f/%.1f", phase.c_str(), 
+                                              1000.0 * stat.mean, 1000.0 * stat.stddev);
+            lwidth = max(lwidth, lsize.x);
             pindex++;
         }
+        m_labelWidth = lwidth;
         
         // graph
-        const float2 pointSize(min(10.f, graphSize.x / m_graphItems),
+        const float2 pointSize(graphSize.x / m_graphItems,
                                clamp(kPointHeightMs * graphSize.y / m_maxTimeMs, 1.f, graphSize.y/10.f));
         uint xi = 0;
         foreach (const VDict& mp, m_sortLog) 
@@ -275,14 +285,13 @@ struct FrameLogger {
 
         DMesh::Handle h(theDMesh());
         
-        h.mp.line.color(COLOR_GREEN);
+        h.mp.line.color(COLOR_AXIS);
         // h.mp.line.PushRect(view.center, view.size/2.f);
 
-        const float labelPad = 100.f;
-        const float2 start = view.center - view.size/2.f + justX(labelPad) + float2(10.f);
-        const float2 graphSize = view.size - justX(labelPad) - float2(20.f);
+        const float2 start = view.center - view.size/2.f + justX(m_labelWidth) + float2(10.f);
+        const float2 graphSize = view.size - justX(m_labelWidth) - float2(20.f);
 
-        m_graphItems = min(clamp(floor_int(graphSize.x/2), 60, 240), m_graphMaxItems);
+        m_graphItems = clamp(floor_int(graphSize.x/m_barWidth), 60, 240);
 
         // axes
         h.mp.line.PushLine(start, start + justX(graphSize));
@@ -298,7 +307,7 @@ struct FrameLogger {
         if (m_frameDeadline > 0.f)
         {
             const float dly = 1000.f * m_frameDeadline * (graphSize.y / m_maxTimeMs);
-            h.mp.line.color(COLOR_GREEN, 0.5f);
+            h.mp.line.color(COLOR_AXIS, 0.5f);
             h.mp.line.PushLine(start + justY(dly), start + float2(graphSize.x, dly));
         }
         
@@ -311,6 +320,34 @@ struct FrameLogger {
     }
     
 };
+
+
+inline void renderLoggerDash(vector<FrameLogger *> &loggers, View view)
+{
+    if (loggers.size() == 1) {
+        view.size = view.sizePoints * float2(0.6f, 0.6f);
+        view.center = view.sizePoints * float2(0.6f, 0.4f);
+        loggers[0]->render(view);
+    } else if (loggers.size() == 2) {
+        view.size = view.sizePoints * float2(0.45f, 0.6f);
+        view.center.y = view.sizePoints.y * 0.4f;
+        view.center.x = view.sizePoints.x * 0.25f;
+        loggers[0]->render(view);
+        view.center.x = view.sizePoints.x * 0.75f;
+        loggers[1]->render(view);
+    } else if (loggers.size() > 2) {
+        view.size = view.sizePoints/2.f * 0.9f;
+        for (int x=0; x<2; x++) {
+            for (int y=0; y<2; y++) {
+                const int i = y * 2 + x;
+                if (i >= loggers.size())
+                    continue;
+                view.center = view.sizePoints/2.f * float2(x + 0.5f, y + 0.5f);
+                loggers[i]->render(view);
+            }
+        }
+    }
+}
 
 
 #endif // LOGGING_H

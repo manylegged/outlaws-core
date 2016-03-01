@@ -210,24 +210,6 @@ const char** OL_ListDirectory(const char* path)
     return array;
 }
  
-const char *OL_LoadFile(const char *fname)
-{
-    NSString *path = pathForFileName(fname, "r");
-#if 1
-    NSError *error = nil;
-    NSString *contents = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:&error];
-    return contents ? [contents UTF8String] : NULL;
-#else
-    NSData *data = [NSData dataWithContentsOfFile:path];
-    if (!data || [data length] == 0)
-        return NULL;
-    const char *bytes = (const char*) [data bytes];
-    if (bytes[ [data length] - 1 ] != '\0')
-        return NULL;            // FIXME never true
-    return bytes;
-#endif
-}
-
 int OL_SaveFile(const char *fname, const char* data, size_t size)
 {
     NSString *path = pathForFileName(fname, "w");
@@ -309,16 +291,35 @@ struct OutlawImage OL_LoadImage(const char* fname)
     img.width  = (unsigned)CGImageGetWidth(image);
     img.height = (unsigned)CGImageGetHeight(image);
 
-    img.format = GL_BGRA;
-    img.type = GL_UNSIGNED_INT_8_8_8_8;
-    img.data = calloc(img.width * img.height, 4);
+    size_t bitsPerComponent = CGImageGetBitsPerComponent(image);
+    size_t bitsPerPixel = CGImageGetBitsPerPixel(image);
+    size_t bytesPerPixel = (bitsPerPixel + 7) / 8;
+    size_t components = bitsPerPixel / bitsPerComponent;
+    //CGBitmapInfo bitmapInfo = CGImageGetBitmapInfo(image);
+
+    if (components == 1) {
+        img.format = GL_LUMINANCE;
+        img.type = GL_UNSIGNED_BYTE;
+    } else if (components == 2) {
+        img.format = GL_LUMINANCE_ALPHA;
+        img.type = GL_UNSIGNED_BYTE;
+    } else {
+        img.format = GL_BGRA;
+        img.type = GL_UNSIGNED_INT_8_8_8_8;
+    }
+
+    img.data = calloc(img.width * img.height, bytesPerPixel);
     img.handle = img.data;
     
     if (img.data)
     {
-        CGColorSpaceRef color_space = CGColorSpaceCreateDeviceRGB();
-        CGContextRef context = CGBitmapContextCreate(img.data, img.width, img.height, 8, img.width * 4, color_space,
-                                                     kCGImageAlphaPremultipliedFirst);
+        CGColorSpaceRef color_space = (components == 1) ? CGColorSpaceCreateDeviceGray() : CGColorSpaceCreateDeviceRGB();
+        CGContextRef context = CGBitmapContextCreate(img.data, img.width, img.height,
+                                                     bitsPerComponent, img.width * bytesPerPixel,
+                                                     color_space,
+                                                     //bitmapInfo
+                                                     kCGImageAlphaPremultipliedFirst
+            );
         
         CGContextDrawImage(context, CGRectMake(0, 0, img.width, img.height), image);
         
@@ -329,15 +330,16 @@ struct OutlawImage OL_LoadImage(const char* fname)
     CFRelease(image_source);
     CFRelease(texture_url);
 
-    // invert_image((uint*)img.data, img.width, img.height);
-    
     return img;
 }
 
 void OL_FreeImage(OutlawImage *img)
 {
     if (img->handle)
+    {
         free(img->handle);
+        img->handle = NULL;
+    }
 }
 
 int OL_SaveImage(const OutlawImage *img, const char* fname)
@@ -351,7 +353,7 @@ int OL_SaveImage(const OutlawImage *img, const char* fname)
         const int size = 4 * img->width * img->height;
         CGDataProviderRef provider = CGDataProviderCreateWithData(NULL, img->data, size, NULL);
         cimg = CGImageCreate(img->width, img->height, 8, 32, img->width * 4,
-                             color_space, kCGImageAlphaLast, provider,
+                             color_space, (CGBitmapInfo)kCGImageAlphaLast, provider,
                              NULL, FALSE, kCGRenderingIntentDefault);
 
         CGDataProviderRelease(provider);
@@ -575,7 +577,10 @@ int OL_StringImage(struct OutlawImage *img, const char* str, float size, int fon
             LogMessage([NSString stringWithFormat:@"Stack trace: %@", [exception callStackSymbols]]);
             return 0;
         }
-        bitmap = [[[NSBitmapImageRep alloc] initWithFocusedViewRect:NSMakeRect (0.0f, 0.0f, frameSize.width, frameSize.height)] autorelease];
+        bitmap = [[[NSBitmapImageRep alloc] initWithFocusedViewRect:NSMakeRect(0.0f, 0.0f,
+                                                                               frameSize.width,
+                                                                               frameSize.height)]
+                     autorelease];
     }
 	[image unlockFocus];
 

@@ -2,7 +2,7 @@
 // GUI.cpp - widget library
 //
 
-// Copyright (c) 2013-2015 Arthur Danskin
+// Copyright (c) 2013-2016 Arthur Danskin
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -23,7 +23,11 @@
 // THE SOFTWARE.
 
 #include "StdAfx.h"
+#include "ZipFile.h"
+
+#define DEF_COLOR(X, Y) DEFINE_CVAR(uint, X, Y)
 #include "GUI.h"
+#undef DEF_COLOR
 
 #include "Shaders.h"
 #if HAS_SOUND
@@ -317,7 +321,7 @@ bool TextInputBase::HandleEvent(const Event* event, bool *textChanged)
     {
         std::lock_guard<std::recursive_mutex> l(mutex);
 
-        cursor.y = clamp(cursor.y, 0, lines.size());
+        cursor.y = clamp(cursor.y, 0, lines.size()-1);
         cursor.x = clamp(cursor.x, 0, lines[cursor.y].size());
 
         switch (KeyState::instance().keyMods() | event->key)
@@ -328,14 +332,16 @@ bool TextInputBase::HandleEvent(const Event* event, bool *textChanged)
         case MOD_CTRL|'n': cursor.y++; break;
         case MOD_CTRL|'a': cursor.x = 0; break;
         case MOD_CTRL|'e': cursor.x = lines[cursor.y].size(); break;
-        case MOD_CTRL|'k':
-            OL_WriteClipboard(lines[cursor.y].substr(cursor.x).c_str());
-            if (cursor.x == lines[cursor.y].size() && cursor.y < lines.size()-1) {
-                lines[cursor.y].append(lines[cursor.y+1]);
+        case MOD_CTRL|'k': {
+            string &line = lines[cursor.y];
+            OL_WriteClipboard(line.substr(cursor.x).c_str());
+            if (cursor.x == line.size() && cursor.y+1 < lines.size()) {
+                line.append(lines[cursor.y+1]);
                 lines.erase(lines.begin() + cursor.y + 1);
             } else
-                lines[cursor.y].erase(cursor.x);
+                line.erase(cursor.x);
             break;
+        }
         case MOD_CTRL|'v':
         case MOD_CTRL|'y':
             insertText(OL_ReadClipboard());
@@ -518,7 +524,7 @@ void TextInputBase::render(const ShaderState &s_)
         sizeChars.x = max(sizeChars.x, (int)longestChars + 1);
         if (longestChars) {
             const float mwidth = max(longestPointWidth, sizeChars.x * (longestPointWidth / longestChars));
-            size.x = max(size.x, 2.f * kPadDist + mwidth);
+            size.x = max(size.x, kButtonPad.x + mwidth);
         }
     }
     const float charHeight = getCharSize().y;
@@ -558,6 +564,7 @@ void TextInputBase::render(const ShaderState &s_)
 
     s.translate(float2(-sz.x + kPadDist, sz.y - charHeight - kPadDist));
     s.color32(textColor, alpha);
+    const int2 curs = cursor;
 
     for (int i=start.y; i<(start.y + drawLines); i++)
     {
@@ -571,18 +578,18 @@ void TextInputBase::render(const ShaderState &s_)
         }
 
         // draw cursor
-        if (active && !locked && cursor.y == i) {
+        if (active && !locked && curs.y == i) {
             ShaderState  s1    = s;
-            const float  spos = tx->getCharStart(cursor.x);
-            const float2 size  = tx->getCharSize(cursor.x);
+            const float  spos = tx->getCharStart(curs.x);
+            const float2 size  = tx->getCharSize(curs.x);
             s1.translate(float2(spos, 0));
             s1.color(textColor, alpha);
             s1.translateZ(1.f);
             ShaderUColor::instance().DrawRectCorners(s1, float2(0), float2(size.x, charHeight));
-            if (cursor.x < lines[i].size()) {
+            if (curs.x < lines[i].size()) {
                 GLText::Put(s1, float2(0.f), GLText::LEFT, kMonoFont,
                             ALPHA_OPAQUE|GetContrastWhiteBlack(textColor),
-                            textSize, utf8_substr(lines[i], cursor.x, 1));
+                            textSize, utf8_substr(lines[i], curs.x, 1));
             }
         }
 
@@ -592,6 +599,7 @@ void TextInputBase::render(const ShaderState &s_)
 
 TextInputCommandLine::TextInputCommandLine()
 {
+    // 120 on mac, 100 on windows??
     sizeChars = int2(100, 10);
     fixedHeight = false;
     fixedWidth = true;
@@ -605,21 +613,20 @@ TextInputCommandLine::TextInputCommandLine()
 void TextInputCommandLine::saveHistory(const char *fname)
 {
     string str = str_join("\n", commandHistory);
-    int status = OL_SaveFile(fname, str.c_str(), str.size());
+    int status = ZF_SaveFile(fname, str.c_str(), str.size());
     Reportf("Wrote %d lines of console history to '%s': %s",
             (int) commandHistory.size(), fname, status ? "OK" : "FAILED");
 }
 
 void TextInputCommandLine::loadHistory(const char *fname)
 {
-    const char* data = OL_LoadFile(fname);
-    if (data) {
-        string sdat = data;
+    string data = ZF_LoadFile(fname);
+    if (data.size()) {
 #if WIN32
-        sdat = str_replace(sdat, "\r", "");
+        data = str_replace(data, "\r", "");
 #endif
-        sdat = str_chomp(sdat);
-        commandHistory = str_split('\n', sdat);
+        data = str_chomp(data);
+        commandHistory = str_split('\n', data);
     }
     historyIndex = commandHistory.size();
 }
@@ -715,7 +722,7 @@ bool TextInputCommandLine::doCommand(const string& line)
             } else {
                 pushText(str_format("No such command '%s'%s", cmd.c_str(),
                                     possible.size() ? str_format(", did you mean %s?",
-                                                                 str_join(", ", possible).c_str()).c_str() : ""));
+                                                                 str_join(", ", possible).c_str()).c_str() : ""), 0);
                 pushPrompt();
                 return false;
             }
@@ -737,7 +744,7 @@ bool TextInputCommandLine::doCommand(const string& line)
 
 bool TextInputCommandLine::pushCommand(const string& line)
 {
-    setLineText(line.c_str());
+    setLineText(line);
     return doCommand(line);
 }
 
@@ -768,10 +775,12 @@ bool TextInputCommandLine::HandleEvent(const Event* event, bool *textChanged)
     {
         switch (KeyState::instance().keyMods() | event->key)
         {
-        case MOD_CTRL|'l':
+        case MOD_CTRL|'l': {
+            std::lock_guard<std::recursive_mutex> l(mutex);
             lines.erase(lines.begin(), lines.end()-1);
             scrollForInput();
             break;
+        }
         case NSUpArrowFunctionKey:
         case NSDownArrowFunctionKey:
             if (commandHistory.size())
@@ -779,7 +788,7 @@ bool TextInputCommandLine::HandleEvent(const Event* event, bool *textChanged)
                 lastSearch = "";
                 const int delta = (event->key == NSUpArrowFunctionKey) ? -1 : 1;
                 historyIndex = modulo((historyIndex + delta), (commandHistory.size() + 1));
-                setLineText((historyIndex >= commandHistory.size() ? currentCommand : commandHistory[historyIndex]).c_str());
+                setLineText(historyIndex >= commandHistory.size() ? currentCommand : commandHistory[historyIndex]);
             }
             return true;
         case '\r':
@@ -815,7 +824,7 @@ bool TextInputCommandLine::HandleEvent(const Event* event, bool *textChanged)
                     commandHistory[i].substr(0, lastSearch.size()) == lastSearch)
                 {
                     historyIndex = i;
-                    setLineText(commandHistory[i].c_str());
+                    setLineText(commandHistory[i]);
                     break;
                 }
             }
@@ -825,10 +834,26 @@ bool TextInputCommandLine::HandleEvent(const Event* event, bool *textChanged)
         {
             lastSearch = "";
             string line = getLineText();
+            string suffix;
+            const int curs = cursor.x - prompt.size();
+            if (curs < line.size()) {
+                suffix = line.substr(curs);
+                line = line.substr(0, curs);
+            }
+            string prefix;
+            int cmdStart = line.rfind(';');
+            if (cmdStart > 0) {
+                while (cmdStart < line.size() && str_contains(" ;", line[cmdStart]))
+                    cmdStart++;
+                prefix = line.substr(0, cmdStart);
+                line = line.substr(cmdStart);
+            }
             int start = line.rfind(' ');
+            
             vector<string> options;
             if (start > 0)
             {
+                //  complete arguments
                 vector<string> args = str_split(' ', str_strip(line));
                 if (args.size() >= 1)
                 {
@@ -849,10 +874,11 @@ bool TextInputCommandLine::HandleEvent(const Event* event, bool *textChanged)
             }
             else
             {
+                // complete commands
+                const string lline = str_tolower(line);
                 for (std::map<string, Command>::iterator it=commands.begin(), end=commands.end(); it != end; ++it)
                 {
-                    const string lline = str_tolower(line);
-                    if (str_tolower(it->first.substr(0, line.size())) == lline)
+                    if (str_tolower(it->first.substr(0, lline.size())) == lline)
                         options.push_back(it->second.name);
                 }
                 start = line.size();
@@ -860,34 +886,35 @@ bool TextInputCommandLine::HandleEvent(const Event* event, bool *textChanged)
 
             if (options.empty()) {
                 pushText("No completions");
-            } else {
-                bool done = false;
-                const string oline = line;
-                line.resize(line.size() - start); // update case
-                line += options[0].substr(0, start);
-                for (int i=start; ; i++) {
-                    const char c = options[0][i];
-                    for (uint j=0; j<options.size(); j++) {
-                        if (i == options[j].size() || options[j][i] != c) {
-                            done = true;
-                            break;
-                        }
-                    }
-                    if (done)
-                        break;
-                    else
-                        line += c;
-                }
-
-                if (options.size() > 1 && oline.size() == line.size())
-                {
-                    pushText(prompt + oline);
-                    pushText(str_join(" ", options));
-                }
-                setLineText(line.c_str());
-                if (textChanged)
-                    *textChanged = true;
+                return true;
             }
+            
+            bool done = false;
+            const string oline = line;
+            line.resize(line.size() - start); // update case
+            line += options[0].substr(0, start);
+            for (int i=start; ; i++) {
+                const char c = options[0][i];
+                for (uint j=0; j<options.size(); j++) {
+                    if (i == options[j].size() || options[j][i] != c) {
+                        done = true;
+                        break;
+                    }
+                }
+                if (done)
+                    break;
+                else
+                    line += c;
+            }
+
+            if (options.size() > 1 && oline.size() == line.size())
+            {
+                pushText(prompt + oline);
+                pushText(str_join(" ", options));
+            }
+            setLineText(prefix + line + suffix, prefix.size() + line.size());
+            if (textChanged)
+                *textChanged = true;
             return true;
         }
         default:
@@ -919,6 +946,7 @@ bool TextInputCommandLine::HandleEvent(const Event* event, bool *textChanged)
     if (line.size() < prompt.size()) {
         setLineText("");
     } else if (!str_startswith(line, prompt)) {
+        std::lock_guard<std::recursive_mutex> l(mutex);
         for (int i=0; i<prompt.size(); i++) {
             if (line[i] != prompt[i])
                 line.insert(i, 1, prompt[i]);
@@ -1375,7 +1403,7 @@ void TabWindow::TabButton::renderButton(DMesh &mesh, bool)
 
 float TabWindow::getTabHeight() const
 {
-    return 2.f * kPadDist + 1.5f * GLText::getScaledSize(textSize);
+    return kButtonPad.y + 1.5f * GLText::getScaledSize(textSize);
 }
 
 void TabWindow::render(const ShaderState &ss, const View &view)
@@ -2146,7 +2174,7 @@ bool Scrollbar::HandleEvent(const Event *event)
     if (pressed)
     {
         if (event->type == Event::MOUSE_DRAGGED) {
-            sfirst = clamp(sfirst + total * -event->vel.y / size.y, 0.f, (float)maxfirst);
+            sfirst = clamp(sfirst + total * event->vel.y / size.y, 0.f, (float)maxfirst);
             first = floor_int(sfirst);
             return true;
         } else {

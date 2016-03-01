@@ -137,6 +137,10 @@ static FARPROC GetModuleAddr(LPCTSTR modName, LPCSTR procName)
     return proc;
 }
 
+// don't forget the WINAPI on the typedef!
+#define DEF_PROC(MOD, NAME)   \
+    static FN_ ## NAME pfn ## NAME = (FN_ ## NAME) GetModuleAddr(MOD, #NAME)
+
 #define IF_STR(ARG, NAME) if (ARG == NAME) return #NAME
 
 const char* knownFolderIdToString(REFKNOWNFOLDERID fid)
@@ -159,19 +163,18 @@ const char* csidlToString(int fid)
 
 std::wstring getKnownPath(REFKNOWNFOLDERID fid)
 {
-    typedef HRESULT (WINAPI *fnSHGetKnownFolderPath)(
+    typedef HRESULT (WINAPI *FN_SHGetKnownFolderPath)(
         _In_      REFKNOWNFOLDERID rfid,
         _In_      DWORD dwFlags,
         _In_opt_  HANDLE hToken,
         _Out_     PWSTR *ppszPath);
 
-    static fnSHGetKnownFolderPath pSHGetKnownFolderPath = 
-        (fnSHGetKnownFolderPath) GetModuleAddr(L"shell32.dll", "SHGetKnownFolderPath");
+    DEF_PROC(L"shell32.dll", SHGetKnownFolderPath);
 
-    if (pSHGetKnownFolderPath)
+    if (pfnSHGetKnownFolderPath)
     {
         LPWSTR path = NULL;
-        if (pSHGetKnownFolderPath(fid, 0, NULL, &path) == S_OK)
+        if (pfnSHGetKnownFolderPath(fid, 0, NULL, &path) == S_OK)
             return path;
         else
             ReportWin32ErrF(("SHGetKnownFolderPath(%s)", knownFolderIdToString(fid)),
@@ -352,7 +355,7 @@ const char** OL_ListDirectory(const char* path1)
             files.insert(file);
     }
 
-    Reportf("Listing %s: %d files (%d local)", path1, (int)files.size(), local_count);
+    // ReportWin32("Listing '%s': %d files (%d local)", path1, (int)files.size(), local_count);
     if (files.empty())
         return NULL;
 
@@ -375,17 +378,16 @@ bool os_symlink_f(const char* source, const char* dest)
 
 #if 0
     // requires stupid access privileges
-    typedef BOOLEAN (WINAPI *pfnCreateSymbolicLink)(
+    typedef BOOLEAN (WINAPI *FN_CreateSymbolicLink)(
         _In_  LPTSTR lpSymlinkFileName,
         _In_  LPTSTR lpTargetFileName,
         _In_  DWORD dwFlags);
-    static pfnCreateSymbolicLink pCreateSymbolicLink =
-        (pfnCreateSymbolicLink) GetModuleAddr(L"kernel32.dll", "CreateSymbolicLinkW");
-    if (!pCreateSymbolicLink)
+    DEF_PROC(L"kernel32.dll", CreateSymbolicLinkW);
+    if (!pfnCreateSymbolicLink)
         return false;
 
-    BOOLEAN status = pCreateSymbolicLink(const_cast<LPTSTR>(wdest.c_str()),
-                                         const_cast<LPTSTR>(wsrc.c_str()), 0x0);
+    BOOLEAN status = pfnCreateSymbolicLink(const_cast<LPTSTR>(wdest.c_str()),
+                                           const_cast<LPTSTR>(wsrc.c_str()), 0x0);
     if (!status)
         ReportWin32Err("CreateSymbolicLink", GetLastError());
 #else
@@ -462,7 +464,7 @@ int OL_RemoveFileOrDirectory(const char* dirname)
     v.pFrom = path.c_str();
     v.fFlags = FOF_NO_UI;
     const int val = SHFileOperation(&v);
-    if (val != 0) {
+    if (val != 0 && val != ERROR_FILE_NOT_FOUND) {
         ReportWin32Err("SHFileOperation(FO_DELETE)", val);
     }
 	return val == 0 ? 1 : 0;
@@ -692,7 +694,8 @@ static void printModulesStack(CONTEXT *ctx, string &modname)
                     "opengl", "glew", "glu", "ddraw",
                     "sdl2", "openal", "zlib", "freetype", "curl",
                     "ogl", // nvoglv32.dll and atioglxx.dll
-                    "igd", // intel drivers
+                    "igd", "ig4icd", // intel drivers
+                    "SS2",           // asus drivers? found in some crashlogs
                     "steam",
                 };
                 foreach (const char* str, substrs)
@@ -804,10 +807,10 @@ string os_get_platform_info()
     osvi.dwOSVersionInfoSize = sizeof(osvi);
 
     typedef LONG (WINAPI *FN_RtlGetVersion)( PRTL_OSVERSIONINFOEXW );
-    static FN_RtlGetVersion fnRtlGetVersion = (FN_RtlGetVersion) GetModuleAddr(L"ntdll.dll", "RtlGetVersion");
+    DEF_PROC(L"ntdll.dll", RtlGetVersion);
 
-    if (fnRtlGetVersion)
-        fnRtlGetVersion(&osvi);
+    if (pfnRtlGetVersion)
+        pfnRtlGetVersion(&osvi);
     else
         GetVersionEx((LPOSVERSIONINFO)&osvi);
 
@@ -831,21 +834,19 @@ string os_get_platform_info()
         name = "Unknown";
 
     int bitness = 32;
-    typedef BOOL (WINAPI *LPFN_ISWOW64PROCESS) (HANDLE, PBOOL);
-    static LPFN_ISWOW64PROCESS fnIsWow64Process =
-        (LPFN_ISWOW64PROCESS) GetModuleAddr(L"kernel32", "IsWow64Process");
+    typedef BOOL (WINAPI *FN_IsWow64Process) (HANDLE, PBOOL);
+    DEF_PROC(L"kernel32", IsWow64Process);
     BOOL is64 = false;
-    if (fnIsWow64Process && fnIsWow64Process(GetCurrentProcess(), &is64) && is64) {
+    if (pfnIsWow64Process && pfnIsWow64Process(GetCurrentProcess(), &is64) && is64) {
         bitness = 64;
     }
 
     typedef int (WINAPI *FN_GetUserDefaultLocaleName)(LPWSTR lpLocaleName, int cchLocaleName);
-    static FN_GetUserDefaultLocaleName fnGetUserDefaultLocaleName =
-        (FN_GetUserDefaultLocaleName) GetModuleAddr(L"kernel32", "GetUserDefaultLocaleName");
+    DEF_PROC(L"kernel32", GetUserDefaultLocaleName);
     string locale = "<unknown>";
-    if (fnGetUserDefaultLocaleName) {
+    if (pfnGetUserDefaultLocaleName) {
         std::wstring buf(LOCALE_NAME_MAX_LENGTH, '\0');
-        int len = fnGetUserDefaultLocaleName(&buf[0], buf.size());
+        int len = pfnGetUserDefaultLocaleName(&buf[0], buf.size());
         buf.resize(len - 1);
         locale = ws2s(buf);
     }
@@ -857,21 +858,19 @@ string os_get_platform_info()
 const char** OL_GetOSLanguages(void)
 {
     static char locale[3] = "en";
-    static char* ptr[] = { locale, NULL };
-    static bool setup = false;
+    static char* ptr[2] = { NULL, NULL };
 
-    const char ** ret = (const char**)ptr;
+    const char **ret = (const char**)ptr;
 
-    if (setup)
+    if (ptr[0])
         return ret;
 
-    typedef int (*FN_GetUserDefaultLocaleName)(
+#if 1
+    typedef int (WINAPI *FN_GetUserDefaultLocaleName)(
         _Out_ LPWSTR lpLocaleName,
-        _In_  int    cchLocaleName
-        );
+        _In_  int    cchLocaleName);
 
-    static FN_GetUserDefaultLocaleName pfnGetUserDefaultLocaleName = 
-        (FN_GetUserDefaultLocaleName)GetModuleAddr(L"kernel32.dll", "GetUserDefaultLocaleName");
+    DEF_PROC(L"kernel32.dll", GetUserDefaultLocaleName);
 
     if (!pfnGetUserDefaultLocaleName)
         return ret;
@@ -882,10 +881,18 @@ const char** OL_GetOSLanguages(void)
         ReportWin32Err("GetUserDefaultLocaleName", GetLastError());
         return ret;
     }
+#else
+    wchar_t buf[LOCALE_NAME_MAX_LENGTH] = {};
+    if (GetUserDefaultLocaleName(buf, LOCALE_NAME_MAX_LENGTH) == 0)
+    {
+        ReportWin32Err("GetUserDefaultLocaleName", GetLastError());
+        return ret;
+    }
+#endif
 
     const std::string lc = ws2s(buf);
     strncpy(locale, lc.c_str(), 2);
-    setup = true;
+    ptr[0] = locale;
 
     ReportWin32("User Locale: %s (%s)", lc.c_str(), locale);
     
@@ -961,11 +968,10 @@ int main(int argc, char* argv[])
     {
         // this causes a link error on XP
         // SetProcessDPIAware();
-        typedef BOOL (WINAPI *PSetProcessDPIAware)();
-        PSetProcessDPIAware pSetProcessDPIAware =
-            (PSetProcessDPIAware) GetModuleAddr(L"user32.dll", "SetProcessDPIAware");
-        if (pSetProcessDPIAware)
-            pSetProcessDPIAware();
+        typedef BOOL (WINAPI *FN_SetProcessDPIAware)();
+        DEF_PROC(L"user32.dll", SetProcessDPIAware);
+        if (pfnSetProcessDPIAware)
+            pfnSetProcessDPIAware();
     }
 
     return sdl_os_main(argc, (const char**) argv);

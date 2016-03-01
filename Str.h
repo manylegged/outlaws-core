@@ -7,7 +7,7 @@
 // 
 // lstring is intended to be used as a "symbol" rather than a byte array
 
-// Copyright (c) 2013-2015 Arthur Danskin
+// Copyright (c) 2013-2016 Arthur Danskin
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -88,8 +88,7 @@ size_t utf8_width(const std::string &str, size_t pos=0, size_t len=~0);
 // lexicon-ized string - basically a symbol
 // very fast to copy around, compare
 // can convert to const char* or std::string
-struct lstring
-{
+struct lstring {
 private:
     struct Lexicon
     {
@@ -124,6 +123,9 @@ public:
     lstring(const char* str)        : m_ptr(str ? Lexicon::instance().intern(str) : NULL) { }
     lstring(const lstring& o) NOEXCEPT : m_ptr(o.m_ptr) {}
 
+    // trick ctags into continue to read this file from here (why does it do that!?!?!?)    
+#if 1 && 0
+#else
     std::string str()   const { return m_ptr ? std::string(m_ptr) : ""; }
     const char* c_str() const { return m_ptr; }
     bool empty()        const { return !m_ptr || m_ptr[0] == '\0'; }
@@ -161,8 +163,9 @@ public:
         lexicon_each([&](const std::string &str) { sz += str.size(); });
         return sz;
     }
-    
+#endif
 };
+
 
 namespace std {
     template <>
@@ -457,8 +460,9 @@ std::string str_join_keys(const S &sep, const A &vec)
 }
 
 struct str_wrap_options_t {
-    int         width   = 70;
     const char *newline = "\n";
+    const char *wrap    = NULL;
+    int         width   = 70;
     bool        rewrap  = false;
 
     str_wrap_options_t(int w) : width(w) {}
@@ -620,7 +624,8 @@ std::string str_time_format(float seconds);
 std::string str_time_format_long(float seconds);
 std::string str_reltime_format(float seconds);
 std::string str_timestamp();
-
+std::string str_strftime(const char* fmt, const std::tm *time);
+std::string str_strftime(const char* fmt);
 
 // return one, two, three, etc
 std::string str_numeral_format(int num);
@@ -638,6 +643,32 @@ std::string str_tohex(const char* digest, int size);
 
 // cpuid cpu brand string
 std::string str_cpuid();
+
+// append binary data to a string
+template <typename T>
+int str_append_bytes(std::string& str, const T &bytes)
+{
+    str.append((const char*)&bytes, sizeof(T));
+    return sizeof(T);
+}
+
+// read binary data from string at index
+// return number of bytes read
+template <typename T>
+int str_read_bytes(std::string& str, int idx, T *bytes)
+{
+    if (size_t(idx + sizeof(T)) > str.size())
+        return 0;
+    memcpy((void*)bytes, &str[idx], sizeof(T));
+    return sizeof(T);
+}
+
+template <typename T>
+int str_read_bytes(const char* str, int idx, T *bytes)
+{
+    memcpy((void*)bytes, &str[idx], sizeof(T));
+    return sizeof(T);
+}
 
 bool str_runtests();
 

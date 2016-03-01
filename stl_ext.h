@@ -5,7 +5,7 @@
 // - stl container convenience wrappers
 //
 
-// Copyright (c) 2013-2015 Arthur Danskin
+// Copyright (c) 2013-2016 Arthur Danskin
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -111,15 +111,6 @@ inline bool isPow2(int x)
     return (x&(x-1)) == 0; 
 }
 
-
-template <typename T>
-static void deleteNull(T*& v)
-{
-    delete v;
-    v = NULL;
-}
-
-
 template <typename T>
 std::unique_ptr<T> make_unique(T* val)
 {
@@ -175,33 +166,39 @@ namespace std {
 }
 
 
+template <typename T> bool copy_explicit_owner(const T* ptr) { return NULL; }
+template <typename T> bool copy_refcount(const T* ptr, int delta) { return false; }
+
 template <typename T>
-void* copy_explicit_owner(const T* ptr) { return NULL; }
+bool copy_delete(T *v)
+{
+    if (!v || copy_explicit_owner(v) || copy_refcount(v, -1))
+        return false;
+    delete v;
+    return true;
+}
+
+template <typename T>
+inline void deleteNull(T*& v)
+{
+    copy_delete(v);
+    v = NULL;
+}
 
 // smart pointer supporting distributed and centralized ownership
-// if explicitOwner field is set, share the pointer, never delete
+// overload copy_explicit_owner for explicit/centralized ownership
+// overload copy_refcount for reference counting
 // otherwise copy the object around and delete on destruction
 template <typename T>
 class copy_ptr final {
-    
+
     T* m_ptr = NULL;
 
     template <typename U>
-    bool assign1(U* v, typename std::enable_if<!std::is_const<U>::value>::type* = 0)
-    {
-        if (m_ptr && !copy_explicit_owner(m_ptr) && !copy_explicit_owner(v)) {
-            *m_ptr = *v;
-            return true;
-        }
-        return false;
-    }
-
+    void assign1(U* v, typename std::enable_if<!std::is_const<U>::value>::type* = 0) { *m_ptr = *v; }
     template <typename U>
-    bool assign1(U* v, typename std::enable_if<std::is_const<U>::value>::type* = 0)
-    {
-        return false;
-    }
-    
+    void assign1(U* v, typename std::enable_if<std::is_const<U>::value>::type* = 0) { }
+
 public:
 
     ~copy_ptr() { reset(); }
@@ -220,8 +217,7 @@ public:
     {
         if (m_ptr == v)
             return *this;
-        else if (m_ptr && !copy_explicit_owner(m_ptr))
-            delete m_ptr;
+        copy_delete(m_ptr);
         m_ptr = v;
         return *this;
     }
@@ -233,11 +229,13 @@ public:
     copy_ptr& assign(T* v)
     {
         if (m_ptr == v)
-            return *this;
-        else if (!v)
-            return reset();
-        else if (!this->assign1(v))
-            reset(copy_explicit_owner(v) ? v : new T(*v));
+            ;
+        else if (!v || copy_explicit_owner(v) || (std::is_const<T>::value && copy_refcount(v, +1)))
+            reset(v);
+        else if (!std::is_const<T>::value && m_ptr && !copy_explicit_owner(m_ptr))
+            assign1(v);        
+        else
+            reset(new T(*v));
         return *this;
     }
     
@@ -641,17 +639,16 @@ template <typename V>
 inline bool vec_pop_deep(V &v, typename V::size_type i)
 {
     ASSERT(i < v.size());
-    if (i < v.size()) {
-        auto elt = v[i];
-        std::swap(v[i], v.back());
-        v.pop_back();
-        delete elt;             // destructor might add to this vector, so do this last!
-        return true;
-    }
-    return false;
+    if (i >= v.size())
+        return false;
+    auto elt = v[i];
+    std::swap(v[i], v.back());
+    v.pop_back();
+    copy_delete(elt);       // destructor might add to this vector, so do this last!
+    return true;
 }
 
-    // remove and delete v[i], return true if i < v.size()
+// remove and delete v[i], return true if i < v.size()
 // swap from end to fill - does not maintain order!
 template <typename V>
 inline bool vec_pop_deep(V &v, typename V::iterator it)
@@ -659,7 +656,7 @@ inline bool vec_pop_deep(V &v, typename V::iterator it)
     auto elt = *it;
     std::swap(*it, v.back());
     v.pop_back();
-    delete elt;             // destructor might add to this vector, so do this last!
+    copy_delete(elt);           // destructor might add to this vector, so do this last!
     return true;
 }
 
@@ -678,12 +675,25 @@ inline void vec_swap(V& vec, size_t i, size_t j)
 
 // delete all elements and clear v
 template <typename V>
-inline void vec_clear_deep(V &v)
+inline int vec_clear_deep(V &v)
 {
+    int count = 0;
     for (size_t i=0; i<v.size(); i++) {
-        delete v[i];
+        count += copy_delete(v[i]);
     }
     v.clear();
+    return count;
+}
+
+template <typename V, typename F>
+inline int vec_clear_deep(V &v, const F& fre)
+{
+    int count = 0;
+    for (size_t i=0; i<v.size(); i++) {
+        count += fre(v[i]);
+    }
+    v.clear();
+    return count;
 }
 
 // resize v to size, deleting removed elements
@@ -691,7 +701,7 @@ template <typename T>
 inline void vec_resize_deep(std::vector<T*> &v, typename std::vector<T*>::size_type size)
 {
     for (size_t i=size; i<v.size(); i++) {
-        delete v[i];
+        copy_delete(v[i]);
     }
     v.resize(size, NULL);
 }
@@ -762,7 +772,7 @@ void vec_unique_deep(T& vec, Fun fun)
 {
     auto nend = std::unique(vec.begin(), vec.end(), fun);
     for (auto it=nend; it != vec.end(); ++it)
-        delete *it;
+        copy_delete(*it);
     vec.erase(nend, vec.end());
 }
 
@@ -908,6 +918,15 @@ inline T vec_sum(const std::vector<T>& v)
     T r{};
     for_ (x, v) { r += x; }
     return r;
+}
+
+template <typename V, typename T=typename V::value_type, typename F>
+inline T vec_foldl(const V& v, F fun, T init=T())
+{
+    for_ (x, v) {
+        init = fun(init, x);
+    }
+    return init;
 }
 
 
@@ -1160,7 +1179,7 @@ template <typename T>
 inline void map_clear_deep(T &v)
 {
     foreach (auto &x, v) {
-        delete x.second;
+        copy_delete(x.second);
     }
     v.clear();
 }
@@ -1276,7 +1295,7 @@ inline T *slist_clear(T *node)
     while (node != NULL)
     {
         T *next = node->next;
-        delete node;
+        copy_delete(node);
         node = next;
     }
     return NULL;

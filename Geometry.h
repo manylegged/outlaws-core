@@ -5,7 +5,7 @@
 // - vector and numerical operations
 //
 
-// Copyright (c) 2013-2015 Arthur Danskin
+// Copyright (c) 2013-2016 Arthur Danskin
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -109,6 +109,18 @@ typedef glm::dvec4 double4;
 typedef glm::ivec2 int2;
 typedef glm::ivec3 int3;
 typedef glm::ivec4 int4;
+
+typedef float2 f2;
+typedef float3 f3;
+typedef float4 f4;
+
+typedef int2 i2;
+typedef int3 i3;
+typedef int4 i4;
+
+typedef double2 d2;
+typedef double3 d3;
+typedef double4 d4;
 
 using glm::length;
 using glm::distance;
@@ -223,6 +235,11 @@ inline int2 round_int(float2 f) { return int2(round_int(f.x), round_int(f.y)); }
 inline float2 angleToVector(float angle) { return float2(std::cos(angle), std::sin(angle)); }
 inline float vectorToAngle(float2 vec) { return std::atan2(vec.y, vec.x); }
 
+inline float2 a2v(float angle) { return float2(std::cos(angle), std::sin(angle)); }
+inline float v2a(float2 vec) { return std::atan2(vec.y, vec.x); }
+inline double2 a2v(double angle) { return double2(std::cos(angle), std::sin(angle)); }
+inline double v2a(double2 vec) { return std::atan2(vec.y, vec.x); }
+
 // return [-1, 1] indicating how closely the angles are aligned
 inline float dotAngles(float a, float b)
 {
@@ -318,9 +335,9 @@ float2 circle_in_rect(float2 pos, float rad, float2 rcenter, float2 rrad);
 inline float max_dim(float2 v) { return max(v.x, v.y); }
 inline float min_dim(float2 v) { return min(v.x, v.y); }
 
-inline bool isZero(float2 v) { return fabsf(v.x) <= epsilon && fabsf(v.y) <= epsilon; }
-inline bool isZero(float3 v) { return fabsf(v.x) <= epsilon && fabsf(v.y) <= epsilon && fabsf(v.z) <= epsilon; }
-inline bool isZero(float v)  { return fabsf(v) <= epsilon; }
+inline bool nearZero(float2 v) { return fabsf(v.x) <= epsilon && fabsf(v.y) <= epsilon; }
+inline bool nearZero(float3 v) { return fabsf(v.x) <= epsilon && fabsf(v.y) <= epsilon && fabsf(v.z) <= epsilon; }
+inline bool nearZero(float v)  { return fabsf(v) <= epsilon; }
 
 // modulo (%), but result is [0-y) even for negative numbers
 inline int modulo(int x, int y)
@@ -387,28 +404,18 @@ inline float2 max_abs(float2 a, float2 b)
 }
 
 // prevent nans
-inline float2 normalize(float2 a)
+inline float2 normalize(const float2 &a)
 {
-    float l = length(a);
-    if (l < epsilon) {
-        ASSERT_FAILED("l < epsilon", "length({%f, %f}) = %f", a.x, a.y, l);
+    if (nearZero(a)) {
+        ASSERT_FAILED("l < epsilon", "{%f, %f}", a.x, a.y);
         return a;
     } else {
-        return a / l;
+        return glm::normalize(a);
     }
 }
 
-inline double2 normalize(double2 a) { return glm::normalize(a); }
-
-inline float2 normalize_orzero(float2 a)
-{
-    if (isZero(a)) {
-        return float2(0);
-    } else {
-        float l = length(a);
-        return a / l;
-    }
-}
+inline double2 normalize(const double2 &a) { return glm::normalize(a); }
+inline float2 normalize_orzero(const float2 &a) { return nearZero(a) ? float2() : glm::normalize(a); }
 
 inline float2 pow(float2 v, float e)
 {
@@ -482,6 +489,7 @@ inline float2 justY(float2 v)     { return float2(0.f, v.y); }
 inline float2 justY(float v=1.f)  { return float2(0.f, v); }
 inline float2 justX(float2 v)     { return float2(v.x, 0.f); }
 inline float2 justX(float v=1.f)  { return float2(v, 0.f); }
+inline float3 justZ(float v=1.f)  { return float3(0.f, 0.f, v); }
 
 template <typename T>
 inline T multiplyComponent(T v, int i, float x)
@@ -524,11 +532,10 @@ inline T lerp(const T &from, const T &to, float v)
     return (1.f - v) * from + v * to; 
 }
 
-template <typename T>
-inline T clamp_lerp(const T &from, const T &to, float v) 
+template <typename T, typename U>
+inline T clamp_lerp(const T &from, const T &to, U v)
 {
-    v = clamp(v, 0.f, 1.f);
-    return (1.f - v) * from + v * to; 
+    return lerp(from, to, clamp(v, U(0), U(1)));
 }
 
 template <typename T>
@@ -572,18 +579,11 @@ inline float lerpAngles(float a, float b, float v)
 template <typename T>
 inline T inv_lerp(T zero, T one, float val)
 {
-    bool inv = false;
-    if (zero > one) {
-        inv = true;
+    const bool inv = (zero > one);
+    if (inv)
         swap(zero, one);
-    }
-    float unorm;
-    if (val >= one)
-        unorm = 1.0;
-    else if (val <= zero)
-        unorm = 0.0;
-    else
-        unorm = (val - zero) / (one - zero);
+    const float unorm = (val >= one) ? 1.0 :
+                        (val <= zero) ? 0.0 : (val - zero) / (one - zero);
     return inv ? 1.0 - unorm : unorm;
 }
 
@@ -843,7 +843,7 @@ inline float2 closestPointOnSegment(float2 a, float2 b, float2 p)
 // ray starting at point a and extending in direction dir
 inline float2 closestPointOnRay(const float2 &a, float2 usegv, float2 p)
 {
-    if (isZero(usegv))
+    if (nearZero(usegv))
         return a;
     usegv = normalize(usegv);
     const float proj = dot(p - a, usegv);

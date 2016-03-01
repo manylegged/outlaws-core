@@ -19,9 +19,9 @@ from slpp import slpp as lua
 
 import polib
 
-all_languages = [ "ru", "fr", "de", "es", "pt", "pl", "ja" ]
+all_languages = [ "ru", "fr", "de", "es", "pt", "pl", "ja", "tr" ]
 steam_languages = {"ru":"russian", "en":"english", "de":"german", "fr":"french", "pl":"polish", "sv":"swedish",
-                   "ko":"korean", "ja":"japanese", "zh":"chinese", "es":"spanish", "pt":"portugese"}
+                   "ko":"korean", "ja":"japanese", "zh":"chinese", "es":"spanish", "pt":"portugese", "tr":"turkish"}
 languages = all_languages
 set_languages = False
 luafiles = ["tips", "popups", "messages", "tutorial"] # text.lua is special
@@ -31,6 +31,7 @@ imprt = False
 export = False
 uselua = False
 dozip = False
+dryrun = False
 
 def count_occur(v):
     y = {}
@@ -38,7 +39,7 @@ def count_occur(v):
         y[x] = y.get(x, 0) + 1
     return y
 
-fmt_re = re.compile("%[.0-9#]?[a-z]")
+fmt_re = re.compile("%[-'+ #0]*[0-9.]*[hljztL]*[a-zA-Z]")
 ws_re = re.compile("(\s*).*(\s*)$", re.DOTALL)
 color_re = re.compile("([\^][0-9])[^\n^]*([\^]7)")
 def check_format_strings(fil, orig, repl):
@@ -86,7 +87,7 @@ def open_po(pof):
         
 def header(luaf):
     return ("\nReassembly data/%s localization file\n" % os.path.basename(luaf)) + """
-Copyright (C) 2015 Arthur Danskin
+Copyright (C) 2015-2016 Arthur Danskin
 Content-Type: text/plain; charset=utf-8
 """
 
@@ -115,6 +116,7 @@ def lua2po(luaf, pof):
     newpo = polib.POFile()
     if "web_header" in luadata:
         luadata = luadata[:luadata.index("web_header")]
+    luadata = re.sub("--.*\n", "", luadata)
     for st in re.findall('"[^"]+"', luadata):
         st = st[1:-1].replace("\\\n", "")
         if len(st) > 2:
@@ -140,6 +142,8 @@ def achievements_vdf2po(pof):
     for key, val in load_achievements().iteritems():
         pofil.append(polib.POEntry(msgid=val, tcomment=key))
         pofil.header = header("achievements")
+    if dryrun:
+        return
     pofil.save(pof)
     print "wrote " + pof
 
@@ -150,6 +154,8 @@ def achievements_po2vdf(vdff, langs):
     for lang in langs:
         trans = dict((pe.msgid, pe.msgstr) for pe in open_po(os.path.join(ROOT, "lang", lang, "achievements.po")))
         dat[steam_languages[lang]] = {"Tokens":dict((k, trans[v]) for k, v in english)}
+    if dryrun:
+        return
     vdf.dump({"lang":dat}, codecs.open(vdff, 'w', 'utf-8'), pretty=True)
     print "wrote " + vdff
     
@@ -165,7 +171,7 @@ def po2lua_replace(outlua, baselua, pof):
             msgstr = pe.msgstr.replace('"', '\\"')
             dat = dat.replace('"' + pe.msgid + '"', '"' + msgstr + '"', 1)
             dat = dat.replace('"\\\n' + pe.msgid + '"', '"\\\n' + msgstr + '"', 1)
-    if count == 0:
+    if count == 0 or dryrun:
         return
     mkdir_p(os.path.dirname(outlua))
     with codecs.open(outlua, "w", "utf-8") as fil:
@@ -186,7 +192,7 @@ def po2lua_simple(outlua, pofs):
             if pe.msgstr:
                 check_format_strings(pof, pe.msgid, pe.msgstr)
                 dct[pe.msgid] = pe.msgstr
-    if not dct:
+    if not dct or dryrun:
         return
     mkdir_p(os.path.dirname(outlua))
     fil = codecs.open(outlua, "w", "utf-8")
@@ -210,10 +216,11 @@ def printhelp():
 -i : import .po files to game format
 -e : export .po files from game source
 -l : export translated lua files
+-n : only check, don't modify
 -h : print this message""" % sys.argv[0]
     exit(0)
 
-opts, cargs = getopt.getopt(sys.argv[1:], "iehz")
+opts, cargs = getopt.getopt(sys.argv[1:], "iehzn")
 for (opt, val) in opts:
     if opt == "-h":
         printhelp()
@@ -225,6 +232,8 @@ for (opt, val) in opts:
         uselua = True
     elif opt == "-z":
         dozip = True
+    elif opt == "-n":
+        dryrun = True
 
 if cargs:
     languages = cargs
@@ -250,7 +259,7 @@ if export:
                 "--copyright-holder=2015 Arthur Danskin"]
         if os.path.exists(outpt):
             args.append("--join-existing")
-        ret = subprocess.call(args + sources)
+        ret = subprocess.call(args + sources) if not dryrun else 0
         # ret = 0
         if ret != 0:
             print "%s\nreturned exit code %d" % (" ".join(args + sources), ret)

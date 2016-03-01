@@ -3,7 +3,7 @@
 // SpacialHash.h - fast spacial hash for nearest-neighbor type queries
 //
 
-// Copyright (c) 2013-2015 Arthur Danskin
+// Copyright (c) 2013-2016 Arthur Danskin
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -105,6 +105,7 @@ public:
 
     int   width()     const { return m_width; }
     float cell_size() const { return m_cell_size; }
+    int   cell_count() const { return m_cells.size(); }
     int   elements()  const { return m_elements.size(); }
 
     spatial_hash(float cell_size, uint cells) { reset(cell_size, cells); }

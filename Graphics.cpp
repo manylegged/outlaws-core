@@ -5,7 +5,7 @@
 // Created on 10/31/12.
 // 
 
-// Copyright (c) 2013-2015 Arthur Danskin
+// Copyright (c) 2013-2016 Arthur Danskin
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -75,14 +75,15 @@ GLenum glReportError1(const char *file, uint line, const char *function)
 {
     ASSERT_MAIN_THREAD();
 
+#if !IS_DEVEL
     if (!(globals.debugRender&DBG_GLERROR) && globals.frameStep > kDebugFrames)
         return GL_NO_ERROR;
+#endif
 
 	GLenum err = GL_NO_ERROR;
-	while (GL_NO_ERROR != (err = glGetError()))
+	while ((err = glGetError()) != GL_NO_ERROR)
     {
-        const char* msg = getGLErrorString(err);
-        OLG_OnAssertFailed(file, line, function, "glGetError", "%s", msg);
+        OLG_OnAssertFailed(file, line, function, "glGetError", "%s", getGLErrorString(err));
     }
     
 	return err;
@@ -206,6 +207,14 @@ static int textureFormatBytesPerPixel(GLint fmt)
 
 static GLint s_defaultFramebuffer = -1;
 
+uint GLRenderTexture::getSizeBytes() const
+{
+    uint size = GLTexture::getSizeBytes();
+    if (m_zflags&HASZ)
+        size += m_texsize.x * m_texsize.y * 2;
+    return size;
+}
+
 void GLRenderTexture::Generate(ZFlags zflags)
 {
     ASSERT_MAIN_THREAD();
@@ -250,7 +259,6 @@ void GLRenderTexture::Generate(ZFlags zflags)
         glTexImage2D(GL_TEXTURE_2D, 0, m_format, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, 0);
     }
     glReportError();
-    gpuMemoryUsed += width * height * textureFormatBytesPerPixel(m_format);
 
     glBindFramebuffer(GL_FRAMEBUFFER, m_fbname);
     glReportError();
@@ -267,8 +275,6 @@ void GLRenderTexture::Generate(ZFlags zflags)
         glReportError();
         glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, m_zrbname);
         glReportError();
-
-        gpuMemoryUsed += width * height * 2;
     }
     else
     {
@@ -290,6 +296,8 @@ void GLRenderTexture::Generate(ZFlags zflags)
     glDrawBuffers(1, DrawBuffers); // "1" is the size of DrawBuffers
 #endif
 
+    gpuMemoryUsed += getSizeBytes();
+
     // Always check that our framebuffer is ok
     glReportError();
     glReportFramebufferError();
@@ -300,13 +308,12 @@ void GLRenderTexture::clear()
     if (m_fbname)
         globals.deleteGLFramebuffers(1, &m_fbname);
     if (m_texname) {
-        gpuMemoryUsed -= m_size.x * m_size.y * textureFormatBytesPerPixel(m_format);
         globals.deleteGLTextures(1, &m_texname);
     }
     if (m_zrbname) {
-        gpuMemoryUsed -= m_size.x * m_size.y * 2;
         globals.deleteGLRenderbuffers(1, &m_zrbname);
     }
+    gpuMemoryUsed -= getSizeBytes();
     m_size = float2(0.f);
     m_texsize = float2(0.f);
     m_texname = 0;
@@ -322,7 +329,7 @@ void GLRenderTexture::clear()
 
 void GLRenderTexture::BindFramebuffer(float2 size, ZFlags zflags)
 {
-    ASSERT(!isZero(size));
+    ASSERT(!nearZero(size));
     if (size != m_size || ((zflags&HASZ) && !(m_zflags&HASZ)))
         clear();
     m_size = size;
@@ -394,17 +401,23 @@ void GLRenderTexture::UnbindFramebuffer() const
             glBindFramebuffer(GL_FRAMEBUFFER, s_defaultFramebuffer);
             glReportError();
             glReportFramebufferError();
-            glViewport(0, 0, globals.windowSizePixels.x, globals.windowSizePixels.y);
+            glViewport(0, 0, globals.viewportSizePixels.x, globals.viewportSizePixels.y);
             glReportError();
         }
     }
+}
+
+
+uint GLTexture::getSizeBytes() const
+{
+    return m_texsize.x * m_texsize.y * textureFormatBytesPerPixel(m_format);
 }
 
 void GLTexture::clear()
 {
     if (m_texname)
     {
-        gpuMemoryUsed -= m_texsize.x * m_texsize.y * textureFormatBytesPerPixel(m_format);
+        gpuMemoryUsed -= getSizeBytes();
         globals.deleteGLTextures(1, &m_texname);
     }
     m_texname = 0;
@@ -437,7 +450,7 @@ void GLTexture::TexImage2D(GLenum int_format, int2 size, GLenum format, GLenum t
     if (!m_texname) {
         glGenTextures(1, &m_texname);
     } else {
-        gpuMemoryUsed -= m_texsize.x * m_texsize.y * textureFormatBytesPerPixel(m_format);
+        gpuMemoryUsed -= getSizeBytes();
     }
     glBindTexture(GL_TEXTURE_2D, m_texname);
 
@@ -463,7 +476,7 @@ void GLTexture::TexImage2D(GLenum int_format, int2 size, GLenum format, GLenum t
 
     glBindTexture(GL_TEXTURE_2D, 0);
     m_size = float2(size);
-    gpuMemoryUsed += m_texsize.x * m_texsize.y * textureFormatBytesPerPixel(m_format);
+    gpuMemoryUsed += getSizeBytes();
 }
 
 void GLTexture::SetTexWrap(bool enable)
@@ -498,25 +511,14 @@ bool GLTexture::loadFile(const char* fname)
     OutlawImage image = OL_LoadImage(fname);
     if (!image.data)
         return false;
-    
-    glGenTextures(1, &m_texname);
-    glBindTexture(GL_TEXTURE_2D, m_texname);
-    //glTexParameteri(GL_TEXTURE_2D, GL_GENERATE_MIPMAP_SGIS, GL_TRUE);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image.width, image.height, 0, image.format, image.type, image.data);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE_SGIS);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE_SGIS);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-    glGenerateMipmap(GL_TEXTURE_2D);
 
-    glReportError();
-    
+    TexImage2D(GL_RGBA, int2(image.width, image.height), image.format, image.type, image.data);
+
+    glBindTexture(GL_TEXTURE_2D, m_texname);
+    glGenerateMipmap(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
     OL_FreeImage(&image);
-    
-    m_size.x  = image.width;
-    m_size.y  = image.height;
-    m_texsize = m_size;
-    m_format  = GL_RGBA;
     return true;
 }
 

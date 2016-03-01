@@ -126,12 +126,20 @@ static string loadCurrentFile(unzFile uf)
 
 static gzFile openGzip(const char* path, const char* mode)
 {
-    const string gzp = str_endswith(path, ".gz") ? string(path) : str_concat(path, ".gz");
+    string gzp = str_endswith(path, ".gz") ? string(path) : str_concat(path, ".gz");
     const char* abspath = OL_PathForFile(gzp.c_str(), mode);
     if (str_contains(mode, 'w'))
         OL_CreateParentDirs(abspath);
     gzFile gzf = GZ_OPEN(abspath, mode);
-    
+
+    // try opening uncompressed
+    if (!gzf && str_contains(mode, 'r'))
+    {
+        gzp.resize(gzp.size() - 3); // remove .gz
+        abspath = OL_PathForFile(gzp.c_str(), mode);
+        gzf = GZ_OPEN(abspath, mode);
+    }
+
     if (gzf) {
         DPRINT(SAVE, ("%s %s", (mode[0] == 'r') ? "load" : "save", abspath));
     }
@@ -166,9 +174,9 @@ string ZF_LoadFile(const char* path)
     }
 
     // 2. read uncompressed file
-    const char* fl = OL_LoadFile(path);
-    if (fl)
-        return fl;
+    // const char* fl = OL_LoadFile(path);
+    // if (fl)
+        // return fl;
 
     if (!kReadZipFiles)
         return string();
@@ -197,8 +205,7 @@ int ZF_SaveFile(const char* path, const char* data, size_t size)
     gzclose(gzf);
     const bool success = (written == size);
     if (!success) {
-        Reportf("gzwrite wrote %d of %d bytes to '%s'",
-                       written, (int)size, path);
+        Reportf("gzwrite wrote %d of %d bytes to '%s'", written, (int)size, path);
     }
     return success;
 }
@@ -216,10 +223,10 @@ ZFDirMap ZF_LoadDirectory(const char* path, float* progress)
         int i=0;
         for (const char** ptr=files; *ptr; ptr++)
         {
-            string fname = str_path_join(path, *ptr);
-            const char* data = OL_LoadFile(fname.c_str());
-            if (data) {
-                dir[fname] = data;
+            const string fname = str_path_join(path, *ptr);
+            string data = ZF_LoadFile(fname.c_str());
+            if (data.size()) {
+                dir[fname] = std::move(data);
             } else {
                 Reportf("Error loading '%s' from '%s'", *ptr, path);
             }

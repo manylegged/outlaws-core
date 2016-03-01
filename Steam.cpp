@@ -485,12 +485,8 @@ static void runSteamTests()
     }
 }
 
-string getSteamLanguageCode()
+static string getSteamLanguageCode1(const string &lang)
 {
-    if (!SteamApps())
-        return string();
-    string lang = SteamApps()->GetCurrentGameLanguage();
-    DPRINT(STEAM, ("Language: %s", lang.c_str()));
     if      (lang == "german")     { return "de"; }
     else if (lang == "polish")     { return "pl"; }
     else if (lang == "spanish")    { return "es"; }
@@ -498,7 +494,18 @@ string getSteamLanguageCode()
     else if (lang == "chinese")    { return "zh"; }
     else if (lang == "portuguese") { return "pt"; }
     else if (lang == "brazilian")  { return "pt"; }
+    else if (lang == "turkish")    { return "tr"; }
     return lang.substr(0, 2);
+}
+
+string getSteamLanguageCode()
+{
+    if (!SteamApps())
+        return string();
+    string lang = SteamApps()->GetCurrentGameLanguage();
+    string code = getSteamLanguageCode1(lang);
+    DPRINT(STEAM, ("Language: %s (%s)", lang.c_str(), code.c_str()));
+    return code;
 }
 
 static void __cdecl SteamAPIDebugTextHook( int nSeverity, const char *pchDebugText )

@@ -23,4 +23,4 @@ cp -v $outlaws/scripts/langtool.py scripts/
 cp -v $outlaws/scripts/stack_lookup.py scripts/
 cp -v $outlaws/scripts/nmsize.py scripts/
 
-hg status
+/opt/local/bin/hg status

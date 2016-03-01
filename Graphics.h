@@ -5,7 +5,7 @@
 // Created on 10/31/12.
 // 
 
-// Copyright (c) 2013-2015 Arthur Danskin
+// Copyright (c) 2013-2016 Arthur Danskin
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -214,6 +214,8 @@ protected:
     void DrawFSBegin(ShaderState &ss) const;
     void DrawFSEnd() const;
 
+    uint getSizeBytes() const;
+
 public:
 
     GLTexture(const GLTexture& tex) = delete; // not copyable
@@ -338,7 +340,8 @@ private:
     uint   m_zflags  = 0;
     
     static vector<GLRenderTexture*> s_bound;
-    
+
+    uint getSizeBytes() const;
     void Generate(ZFlags zflags);
     
 public:
@@ -772,6 +775,24 @@ public:
             DASSERT(start + pidx[i] < m_vl.size());
             m_il.push_back(start + pidx[i]);
         }
+    }
+
+    void PushI1(uint idx)
+    {
+        m_il.push_back(idx);
+    }
+
+    void PushI2(uint a, uint b)
+    {
+        m_il.push_back(a);
+        m_il.push_back(b);
+    }
+
+    void PushI3(uint a, uint b, uint c)
+    {
+        m_il.push_back(a);
+        m_il.push_back(b);
+        m_il.push_back(c);
     }
 
     template <typename Vec>
@@ -1340,17 +1361,17 @@ struct LineMesh : public PrimMesh<Vtx, 2> {
     }
 
     template <typename Vec>
-    void PushLine(const Vec &a, const Vec &b)
+    uint PushLine(const Vec &a, const Vec &b)
     {
         const Vec x[] = {a, b};
         const uint i[] = {0, 1};
-        this->Push(x, 2, i, 2);
+        return this->Push(x, 2, i, 2);
     }
     
-    void PushLineTri(float2 a, float2 b, float2 c)
+    uint PushLineTri(float2 a, float2 b, float2 c)
     {
         const float2 x[] = {a, b, c};
-        PushLoop(x, 3);
+        return PushLoop(x, 3);
     }
 
     void PushLinePrism(float2 a, float2 b, float2 c, float d)

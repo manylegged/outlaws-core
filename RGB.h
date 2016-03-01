@@ -1,7 +1,7 @@
 //
 // RGB.h - color transformations
 // 
-// Copyright (c) 2014-2015 Arthur Danskin
+// Copyright (c) 2014-2016 Arthur Danskin
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -278,6 +278,12 @@ inline float3 hsvf2rgbf(float3 hsv)
 
 inline uint hsvf2rgb(const float3 &hsv) { return rgbf2rgb(hsvf2rgbf(hsv)); }
 inline float3 rgb2hsvf(uint rgb) { return rgbf2hsvf(rgb2rgbf(rgb)); }
+
+inline uint hsvlerpXXX(uint color, uint color1, float v)
+{
+    return hsvf2rgb(lerp(rgb2hsvf(color), rgb2hsvf(color1), v));
+}
+
 
 inline float distanceHsv(float3 a, float3 b)
 {

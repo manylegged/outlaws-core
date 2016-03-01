@@ -2,7 +2,7 @@
 // Event.cpp - Input tracking utils
 // 
 
-// Copyright (c) 2014-2015 Arthur Danskin
+// Copyright (c) 2014-2016 Arthur Danskin
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -92,7 +92,7 @@ KeyState::KeyState()
 bool KeyState::anyAxis() const
 {
     foreach (const float2& ax, gamepadAxis)
-        if (!isZero(ax))
+        if (!nearZero(ax))
             return true;
     return false;
 }
@@ -356,7 +356,7 @@ void KeyState::OnEvent(const Event* event)
         default: return;
         }
 
-        if (!isZero(event->pos.y))
+        if (!nearZero(event->pos.y))
         {
             gamepadActive = true;
             if (cursorPosScreen == float2())
@@ -395,11 +395,11 @@ void KeyState::OnEvent(const Event* event)
 
 static string keyToUTF8(int key)
 {
-    if (key < 255) {
+    if (0 < key && key <= 255) {
         return std::isprint(key) ? str_format("%c", key) : string();
     } else if ((NSUpArrowFunctionKey <= key && key < SpecialKeyMax) ||
                (LeftMouseButton <= key && key < EventKeyMax)) {
-        return "";
+        return string();
     } else { 
         return utf8_encode(key);
     }

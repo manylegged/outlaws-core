@@ -3,7 +3,7 @@
 // Rand.h - random number generation and related utility functions
 //
 
-// Copyright (c) 2013-2015 Arthur Danskin
+// Copyright (c) 2013-2016 Arthur Danskin
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -100,7 +100,7 @@ typename Vec::value_type randselect_pop(Vec& vec)
     vec_pop(vec, index);
     return val;
 }
-    
+
 inline float randrange(float start, float end)
 {
     ASSERT(start <= end);
@@ -166,6 +166,12 @@ template <typename V>
 inline void vec_shuffle(V& vec)
 {
     std::random_shuffle(std::begin(vec), std::end(vec), myrandom_);
+}
+
+template <typename T>
+inline T randlerp(T a, T b)
+{
+    return lerp(a, b, randrange(0.f, 1.f));
 }
     
 

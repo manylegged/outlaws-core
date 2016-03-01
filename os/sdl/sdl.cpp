@@ -18,11 +18,13 @@ static bool         g_quitting       = false;
 static SDL_RWops   *g_logfile        = NULL;
 static const char*  g_logpath        = NULL;
 static string       g_logdata;
-static bool         g_openinglog = false;
+enum LogStates { LOG_INIT, LOG_OPENING, LOG_OPEN, LOG_CLOSED };
+static LogStates    g_logstate       = LOG_INIT;
 static int          g_supportsTearControl = -1;
 static bool         g_wantsLogUpload = false;
 
 static DEFINE_CVAR(bool, kOpenGLDebug, IS_DEVEL);
+static DEFINE_CVAR(bool, kMaximizeWindow, IS_DEVEL);
 static DEFINE_CVAR(bool, kTTFDebug, false);
 
 #if OL_WINDOWS
@@ -84,10 +86,28 @@ static const string loadFile(SDL_RWops *io, const char* name)
     return buf;
 }
 
-static bool readUploadLog(string& data)
+static bool closeLogCleanup(const char* reason, bool upload)
 {
-    data = loadFile(SDL_RWFromFile(g_logpath, "r"), g_logpath);
-    return data.size() ? OLG_UploadLog(data.c_str(), data.size()) : 0;
+    os_cleanup();
+    
+    if (!g_logfile)
+        return false;
+ 
+    ReportSDL("Closing log: %s\n", reason);
+    g_logstate = LOG_CLOSED;
+    SDL_RWwrite(g_logfile, OL_ENDL, strlen(OL_ENDL), 1);
+    SDL_RWclose(g_logfile);
+    fflush(NULL);
+    g_logfile = NULL;
+
+    if (!upload)
+        return false;
+    
+    string data = loadFile(SDL_RWFromFile(g_logpath, "r"), g_logpath);
+    if (!data.size())
+        return false;
+    
+    return OLG_UploadLog(data.c_str(), data.size());
 }
 
 void sdl_os_oncrash(const string &message)
@@ -95,19 +115,7 @@ void sdl_os_oncrash(const string &message)
     ReportSDL("%s\n", message.c_str());
     fflush(NULL);
 
-    os_cleanup();
-    
-    if (g_logfile)
-    {
-        ReportSDL("crash handler closing log\n");
-        SDL_RWclose(g_logfile);
-        g_logfile = NULL;
-    }
-    g_quitting = true;          // prevent log from reopening
-
-    string data;
-    bool success = readUploadLog(data);
-    // SteamAPI_SetMiniDumpComment(data.size() ? data.c_str() : "Error loading log");
+    bool success = closeLogCleanup("Crashed", true);
 
     static string errorm;
     if (success)
@@ -162,7 +170,7 @@ void anonymizeUsername(string &str)
 
 int OL_IsLogOpen(void)
 {
-    return g_logfile != NULL;
+    return g_logfile != NULL && g_logstate == LOG_OPEN;
 }
 
 void OL_ReportMessage(const char *str_)
@@ -172,18 +180,18 @@ void OL_ReportMessage(const char *str_)
 #endif
     printf("%s", str_);
 
-    if (g_quitting)
+    if (g_logstate == LOG_CLOSED)
         return;
 
     string str = str_;
     anonymizeUsername(str);
     
     if (!g_logfile) {
-        if (g_openinglog) {
+        if (g_logstate == LOG_OPENING) {
             g_logdata += str;
             return;
         }
-        g_openinglog = true;
+        g_logstate = LOG_OPENING;
         const char* path = OL_PathForFile(OLG_GetLogFileName(), "w");
         if (!g_logfile) { // may have been opened by OL_PathForFile
             OL_CreateParentDirs(path);
@@ -191,7 +199,7 @@ void OL_ReportMessage(const char *str_)
             if (!g_logfile)
                 return;
             g_logpath = lstring(path).c_str();
-            g_openinglog = false;
+            g_logstate = LOG_OPEN;
             if (g_logdata.size()) {
 #if OL_WINDOWS
                 g_logdata = str_replace(g_logdata, "\n", OL_ENDL);
@@ -294,15 +302,15 @@ void OL_SetFullscreen(int fullscreen)
 
 double OL_GetCurrentTime()
 {
-    static double frequency = 0.0;
-    if (frequency == 0.0)
-        frequency = (double) SDL_GetPerformanceFrequency();
-
     const Uint64 count = SDL_GetPerformanceCounter();
 
     static Uint64 start = count;
+    static double frequency = 0.0;
+    
+    if (frequency == 0.0)
+        frequency = (double) SDL_GetPerformanceFrequency();
 
-    const uint64 rel = count - start;
+    const Uint64 rel = count - start;
     return (double) rel / frequency;
 }
 
@@ -408,15 +416,13 @@ struct OutlawImage OL_LoadImage(const char* fname)
     GLenum texture_format = 0;
     const int nOfColors = surface->format->BytesPerPixel;
     if (nOfColors == 4) {
-        if (surface->format->Rmask == 0x000000ff)
-            texture_format = GL_RGBA;
-        else
-            texture_format = GL_BGRA;
+        texture_format = (surface->format->Rmask == 0x000000ff) ? GL_RGBA : GL_BGRA;
     } else if (nOfColors == 3) {
-        if (surface->format->Rmask == 0x000000ff)
-            texture_format = GL_RGB;
-        else
-            texture_format = GL_BGR;
+        texture_format = (surface->format->Rmask == 0x000000ff) ? GL_RGB : GL_BGR;
+    } else if (nOfColors == 2) {
+        texture_format = GL_LUMINANCE_ALPHA;
+    } else {
+        texture_format = GL_LUMINANCE;
     }
 
     ReportSDL("texture has %d colors, %dx%d pixels\n", nOfColors, surface->w, surface->h);
@@ -1088,17 +1094,6 @@ const char* sdl_os_autorelease(std::string &val)
     return AutoreleasePool::instance().autorelease(val);
 }
 
-const char *OL_LoadFile(const char *name)
-{
-    const char *fname = OL_PathForFile(name, "r");
-
-    SDL_RWops *io = SDL_RWFromFile(fname, "r");
-    if (!io)
-        return NULL;
-    string buf = loadFile(io, fname);
-    return sdl_os_autorelease(buf);
-}
-
 void OL_ThreadEndIteration()
 {
     AutoreleasePool::instance().drain();
@@ -1260,6 +1255,9 @@ int sdl_os_main(int argc, const char **argv)
         sdl_os_oncrash(str_format("SDL_CreateWindow failed: %s\nIs your desktop set to 32 bit color?", SDL_GetError()).c_str());
     }
 
+    if (kMaximizeWindow)
+        SDL_MaximizeWindow(g_displayWindow);
+
     SDL_GetWindowPosition( g_displayWindow, &g_savedWindowPos.x, &g_savedWindowPos.y );
     SDL_GetWindowSize( g_displayWindow, &g_savedWindowPos.w, &g_savedWindowPos.h );
 
@@ -1316,26 +1314,9 @@ int sdl_os_main(int argc, const char **argv)
 
     OLG_OnQuit();
 
-    os_cleanup();
-
-    if (g_logfile)
-    {
-        if (g_wantsLogUpload)
-            ReportSDL("Log upload requested");
-        ReportSDL("Closing log for shutdown");
-        SDL_RWwrite(g_logfile, OL_ENDL, strlen(OL_ENDL), 1);
-        SDL_RWclose(g_logfile);
-        fflush(NULL);
-        g_logfile = NULL;
-
-        if (g_wantsLogUpload)
-        {
-            string data;
-            readUploadLog(data);
-        }
-    }
-
-    fflush(NULL);
+    if (g_wantsLogUpload)
+        ReportSDL("Log upload requested");
+    closeLogCleanup("Shutdown", g_wantsLogUpload);
 
     SDL_DestroyWindow(g_displayWindow);
 

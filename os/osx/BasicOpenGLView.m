@@ -279,7 +279,7 @@ static void doMouseEvent(enum EventType type, NSEvent *theEvent)
     e.x = location.x;
     e.y = location.y;
     e.dx = [theEvent deltaX];
-    e.dy = -[theEvent deltaY];
+    e.dy = [theEvent deltaY];
     
     OLG_OnEvent(&e);
 }

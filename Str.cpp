@@ -5,7 +5,7 @@
 
 // Some routines borrowed from SDL_ttf
 // everything else
-// Copyright (c) 2013-2015 Arthur Danskin
+// Copyright (c) 2013-2016 Arthur Danskin
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -421,12 +421,18 @@ long chr_unshift(long chr)
     return chr;
 }
 
-static bool is_punct(uint32_t it)
+static bool is_wrap(uint32_t it, const str_wrap_options_t &ops)
 {
+    if (ops.wrap)
+        return it == '\0' || (it <= 255 && str_contains(ops.wrap, (char)it)) ;
+    if (str_isspace(it))
+        return true;
     switch (it)
     {
     case '|': case '_': case '.': case '?': case '!':
+    case ',': case '-': case '/': case ':': case ';': case '`':
     case 0x3001: case 0x3002: case 0xff1f: // 、。？
+    case '\0':
         return true;
     }
     return false;
@@ -443,19 +449,24 @@ std::string str_word_wrap(const std::string &utf8, const str_wrap_options_t &ops
     for (int i=0; i<=str.size(); i++)
     {
         uint32_t chr = (i == str.size()) ? '\0' : str[i];
-        if (chr == ' ' || is_punct(chr) || chr == '\n' || chr == '\0')
+        if (is_wrap(chr, ops))
         {
             const int word_len = utf8_width(word);
             if (line_length + word_len >= ops.width && line_length > nlsize)
             {
+                // eat spaces at end of line
                 while (ret.size() && ret.back() == ' ')
                     ret.pop_back();
                 ret += ops.newline;
                 line_length = nlsize;
             }
+            if (ret.size() && ret.back() == '\n')
+            {
+                while (word.size() && word.front() == ' ')
+                    word.erase(word.begin());
+            }
             ret += word;
             // replace newline with space if rewrapping
-            // FIXME japanese doesn't have spaces
             if (ops.rewrap && chr == '\n' && 0 < i && i < str.size()-1 &&
                 str[i-1] != '\n' && str[i+1] != '\n')
             {
@@ -596,11 +607,11 @@ std::string str_time_format_long(float seconds)
     const int minutes = floor(seconds / 60.f);
     const int hours   = floor(seconds / 3600.f);
     if (!minutes)
-        return str_format("%d seconds", floor_int(seconds));
+        return str_format(_("%d seconds"), floor_int(seconds));
     else if (!hours)
-        return str_format("%d minutes, %d seconds", minutes, modulo((int)floor(seconds), 60));
+        return str_format(_("%d minutes, %d seconds"), minutes, modulo((int)floor(seconds), 60));
     else
-        return str_format("%d hours, %d minutes, %d seconds", hours, modulo(minutes, 60),
+        return str_format(_("%d hours, %d minutes, %d seconds"), hours, modulo(minutes, 60),
                           modulo((int)floor(seconds), 60));
 }
 
@@ -614,25 +625,32 @@ std::string str_reltime_format(float seconds)
 
 std::string str_timestamp()
 {
-    std::chrono::time_point<std::chrono::system_clock> start = std::chrono::system_clock::now();
-    const std::time_t cstart = std::chrono::system_clock::to_time_t(start);
-    char mbstr[100];
-    std::strftime(mbstr, sizeof(mbstr), "%Y%m%d_%I.%M.%S.%p", std::localtime(&cstart));
+    return str_strftime("%Y%m%d_%I.%M.%S.%p");
+}
+
+std::string str_strftime(const char* fmt, const std::tm *time)
+{
+    char mbstr[128];
+    std::strftime(mbstr, sizeof(mbstr), fmt, time);
     return mbstr;    
 }
 
+std::string str_strftime(const char* fmt)
+{
+    std::chrono::time_point<std::chrono::system_clock> start = std::chrono::system_clock::now();
+    const std::time_t cstart = std::chrono::system_clock::to_time_t(start);
+    return str_strftime(fmt, std::localtime(&cstart));
+}
 
 std::string str_numeral_format(int num)
 {
-    if (!str_equals(OLG_GetLanguage(), "en"))
+    if (!str_equals(OLG_GetLanguage(), "en") || abs(num) >= 100)
         return str_format("%d", num);
     static const char* numerals[] = { "zero", "one", "two", "three", "four", "five", "six",
                                     "seven", "eight", "nine", "ten", "eleven", "twelve",
                                     "thirteen", "fourteen", "fifteen", "sixteen",
                                     "seventeen", "eighteen", "nineteen" };
     static const char* tens[] = { "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety" };
-    if (abs(num) >= 100)
-        return str_format("%d", num);
     std::string ret;
     if (num < 0)
         ret += "negative ";
@@ -930,6 +948,16 @@ bool str_runtests()
     ops.width = 16;
     TEST(str_word_wrap("で入手します。敵艦を破壊、仲間のスポ", ops),
          "で入手します。\n敵艦を破壊、\n仲間のスポ");
+
+    str_wrap_options_t ops1;
+    ops1.wrap = ",";
+    ops1.width = 10;
+    TEST(str_word_wrap("foo, bar", ops1), "foo, bar");
+    ops1.width = 5;
+    TEST(str_word_wrap("foo bar", ops1), "foo bar");
+    TEST(str_word_wrap("foo, bar", ops1), "foo,\nbar");
+    ops1.wrap = NULL;
+    TEST(str_word_wrap("foo  bar", ops1), "foo\nbar");
 
     TEST(str_chomp("스텔라 "), "스텔라");
     TEST(str_strip(" применить\n"), "применить");

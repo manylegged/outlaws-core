@@ -3,7 +3,7 @@
 // Nav.cpp - PD controller based movement
 // 
 
-// Copyright (c) 2013-2015 Arthur Danskin
+// Copyright (c) 2013-2016 Arthur Danskin
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -53,7 +53,7 @@ void snMover::reset(float2 offset, float angle, float force, float mass, float t
     float2 direction = angleToVector(angle);
     accel           = direction * force / mass;
     accelNorm       = direction;
-    accelAngAccel   = isZero(offset) ? 0.f : cross(offset, direction * force) / moment;
+    accelAngAccel   = nearZero(offset) ? 0.f : cross(offset, direction * force) / moment;
     angAccel        = torque / moment;
 
     // FIXME we actually want a different threshhold depending on total torque available
@@ -62,7 +62,7 @@ void snMover::reset(float2 offset, float angle, float force, float mass, float t
     useForRotation  = ((fabsf(accelAngAccel) / length(accel)) > 0.001) || (angAccel > epsilon);
 
     // FIXME we can't even hack this by itself - we need to look at all the movers.3
-    useForTranslation = !isZero(accel);
+    useForTranslation = !nearZero(accel);
 
     accelEnabled    = 0;
     angAccelEnabled = 0;
@@ -363,7 +363,7 @@ bool sNav::update()
 
             const float rotThresh = (isSpinner || (dest.dims&SN_POS_ANGLE)) ? 0.5f : 0.99f;
             
-            if (isZero(action.accel) || dot(normalize(action.accel), uBodyDir) < rotThresh)
+            if (nearZero(action.accel) || dot(normalize(action.accel), uBodyDir) < rotThresh)
             {
                 if (tryRotateForAccel(u))
                 {
@@ -420,7 +420,7 @@ bool sNav::update()
                 float2 accel = rotate(float2(clamp(ve.x, -1.f, 1.f), clamp(ve.y, -1.f, 1.f)), -state.angle);
                 float angAccel = (dest.dims&SN_VEL_ALLOW_ROTATION) ? -1.f : kMaxLinearAngAccel;
                 action.accel = moversForLinearAccel(accel, kLinearVelThreshold, &angAccel, true);
-                if (isZero(action.accel) && (dest.dims&SN_VEL_ALLOW_ROTATION))
+                if (nearZero(action.accel) && (dest.dims&SN_VEL_ALLOW_ROTATION))
                 {
                     tryRotateForAccel(accel);
                 }

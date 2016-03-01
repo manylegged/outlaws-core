@@ -3,9 +3,8 @@
 # This script parses Reassembly crashlog files and looks up symbols for the stack traces
 # Supports windows (visual studio) and linux
 # Also supports osx traces but assumes symbols are already looked up
-# Symbol paths are
 
-# Can also triage stack traces - generate a histogram of most stacks from hundreds of logs
+# Can also triage stack traces - generate a histogram of most stacks from thousands of logs
 
 # It also aggregates asserts and makes playtime histograms from timestamp logs
 # symbol paths are set in the following variables
@@ -657,30 +656,42 @@ def format_address(addr, func, lino, fil):
             fmt = func
     else:
         fmt = "<unknown>"
-    return hex(addr) + " " + fmt
+    return ("%0#8x " % addr) + fmt
 
 
 class extract_opts:
     def __init__(self):
         self.printall = False
         self.version = datetime.min;
-
+        self.greps = None
+        self.triage = None
+        self.handlers = []
+        self.matches = 0
 
 version_re = re.compile("Build Version: ([a-zA-Z]+).*(Release|Debug|Develop|Builder|Steam)(32|64) ([^,]*),")
 basere = re.compile("'([^']+)' base address is 0x([a-fA-F0-9]+), size is 0x([a-fA-F0-9]+)")
 addrre = re.compile("[cC]alled from 0x([a-fA-F0-9]+)")
+module_re = re.compile("In module: '([^']*)'")
 mac_stack_re = re.compile("0x[a-fA-F0-9]+ (.+) [+] [0-9]+ [(]([^)]+)[)]")
 hexre = re.compile("0x([a-fA-F0-9]{6,})")
 sched_re = re.compile("Log upload scheduled: (.*)$")
-        
-def extract_callstack(logf, opts, triage=None, handlers=None):
+
+UNKNOWN_FUNC = "<unknown func>"
+
+def close_inpt(data):
+    if data != sys.stdin:
+        data.close()
+
+def extract_callstack(logf, opts):
     module_map = []
     version = ""
-    platform = ""
-    stacktrace = []
-    trace_has_game = False
     lastfew = []
     exception_lines = []
+    stacktrace = []
+    trace_has_game = False
+    is_triage = (opts.triage != None)
+    is_full = (opts.triage is None)
+    greps_match = (opts.greps == None)
 
     if logf == "-":
         data = sys.stdin
@@ -699,13 +710,12 @@ def extract_callstack(logf, opts, triage=None, handlers=None):
         build = m.group(2) + m.group(3)
         dat = datetime.strptime(m.group(4), "%b %d %Y")
         version = dat.strftime("%Y_%m_%d")
-        if triage is None:
+        if is_full:
             log("Reassembly version:", version)
         if dat < opts.version or build.startswith("Debug") or build.startswith("Develop"):
-            if data != sys.stdin:
-                data.close()
+            close_inpt(data)
             return
-        if triage is None:
+        if is_full:
             print line,
             print data.next(), # platform info
         break
@@ -713,41 +723,50 @@ def extract_callstack(logf, opts, triage=None, handlers=None):
     # analytic log handlers
     for line in data:
         line = line.strip()
-        for h in handlers:
+        for h in opts.handlers:
             line = h.onLine(line)
         if opts.printall:
             print line
-        elif triage is None:
+        elif is_full:
             lastfew.append(line)
             while (len(lastfew) > 5):
                 lastfew.pop(0)
         m = sched_re.search(line)
         if m:
             reason = "CHECK: " + m.group(1)
-            if (reason not in stacktrace):
+            if (is_triage and reason not in stacktrace):
                 stacktrace.append(reason)
-            if not opts.printall and triage is None:
+            if opts.printall and is_full:
                 print line, '"' +  reason + '"'
+        if opts.greps and opts.greps.search(line):
+            greps_match = True
         if ("Unhandled Top Level Exception" in line or \
             "Caught SIG" in line or \
             "Dumping stack for thread" in line or\
             "Terminate Handler" in line or\
             "Time is " in line or\
             "Dumping loaded shared objects" in line):
-            if triage is None:
+            if is_full:
                 log("found crash:", line)
             break
 
-    if triage is None:
-        for h in handlers:
+    if not greps_match:
+        close_inpt(data)
+        return
+
+    if is_full:
+        for h in opts.handlers:
             h.onFinish()
 
     for ln in lastfew:
         print ln
 
+    opts.matches += 1
+
     # crash dump
     stacklines = 0
     skipped = 0
+    module = None
     for line in data:
         line = line.replace("\r", "")
         # print "LINE=", line
@@ -763,7 +782,7 @@ def extract_callstack(logf, opts, triage=None, handlers=None):
             module_map.append(mod)
             # log("module:", "%#10x+%#09x" % (mod.base, mod.size), os.path.basename(mod.name), mod.version)
             continue
-        elif triage is None and module_map:
+        elif module_map and is_full:
             for ln in exception_lines:
                 func, lino, fil = lookup_address(module_map, ln[1])
                 if func:
@@ -771,12 +790,18 @@ def extract_callstack(logf, opts, triage=None, handlers=None):
                     print ln[0] + fmt + ln[2],
             exception_lines = []
 
-        if "Dumping stack" in line:
-            if skipped and triage is None:
+        if "Dumping stack" in line or "Spacetime Segfault" in line:
+            if skipped and is_full:
                 print "...skipped %d stack frames" % skipped
             stacklines = 0
             skipped = 0
             if stacktrace:
+                if stacktrace[-1] == UNKNOWN_FUNC:
+                    for line in data:
+                        m = module_re.match(line)
+                        if m:
+                            module = m.group(1)
+                            break
                 break
             line = "\n" + line
 
@@ -797,19 +822,21 @@ def extract_callstack(logf, opts, triage=None, handlers=None):
                 fmt = format_address(addr, func, lino, fil)
                 line = line[:m.start()] + fmt + line[m.end():]
                 line = line.replace("[win32] ", "").replace("called from", "from")
-
-            if (triage != None and func):
-                if func.endswith (".DLL"):
-                    func = func.lower()
-                if "(" in func:
-                    func = func[:func.index("(")]
+            if is_triage:
+                if func:
+                    if func.endswith (".DLL"):
+                        func = func.lower()
+                    if "(" in func:
+                        func = func[:func.index("(")]
+                else:
+                    func = UNKNOWN_FUNC
                 if func not in TRIAGE_IGNORE_TRACE and (len(stacktrace) == 0 or stacktrace[-1] != func):
                     if has_game:
                         trace_has_game = True
                     stacktrace.append(func)
                     if len(stacktrace) >= TRIAGE_STACK_SIZE and trace_has_game:
                         break
-        elif triage is None:
+        elif is_full:
             m = hexre.search(line)
             if m and "thread 0x" not in line:
                 addr = int(m.group(1), 16)
@@ -819,22 +846,27 @@ def extract_callstack(logf, opts, triage=None, handlers=None):
                     line = line[:m.start()] + fmt + line[m.end():]
                 else:
                     exception_lines.append((line[:m.start()], addr, line[m.end():]))
-
-        if stacklines > MAX_STACK_DUMP and trace_has_game:
-            skipped += 1
-        elif triage is None:
+                    
+        if is_full:
             print line,
+        elif stacklines > MAX_STACK_DUMP and trace_has_game:
+            skipped += 1
 
-    if skipped and triage is None:
+    if skipped and is_full:
         print "...skipped %d stack frames" % skipped
 
-    if triage != None:
+    if is_triage:
         ver = version or "<unknown>"
+        if module:
+            if not stacktrace:
+                stacktrace = [module]
+            elif stacktrace[-1] == UNKNOWN_FUNC:
+                stacktrace[-1] = module
         key = tuple(stacktrace)
-        triage.setdefault(ver, dict()).setdefault(key, []).append(logf)
-    if data != sys.stdin:
-        data.close()
+        opts.triage.setdefault(ver, dict()).setdefault(key, []).append(logf)
+    close_inpt(data)
 
+    
 TOP_FUNC_COUNT = 10
 TOP_LOGS_PER_STACK_COUNT = 5
 TRIAGE_NOISE_THRESHOLD = 1
@@ -844,21 +876,28 @@ def do_triage(files, ops):
     handlers = [AssertionHandler()]
     ops1 = copy(ops)
     ops1.printall = False
+    ops1.triage = triage
+    ops1.handlers = handlers
     for fil in files:
         fil = os.path.normpath(fil)
-        extract_callstack(fil, ops1, triage, handlers)
+        extract_callstack(fil, ops1)
     tfiles = []
+    print "Triage found %d matches" % ops1.matches
     for version, data in sdict(triage, lambda x: x[0]):
         # data is dict(stacktrace -> list of logs)
         total = sum(len(x) for x in data.itervalues())
         print "============= %s (%d total) ================" % (version, total)
         func_counts = {}
+        max_func_count = 0
         for stack, files in data.iteritems():
             for func in set(stack):
                 func_counts[func] = func_counts.get(func, 0) + len(files)
-        for func, count in sdict(func_counts, lambda x: x[1])[:TOP_FUNC_COUNT]:
-            print "%d. %s" % (count, func)
+                max_func_count = max(max_func_count, func_counts[func])
+        if (max_func_count > 1 and len(func_counts) > 1):
+            for func, count in sdict(func_counts, lambda x: x[1])[:TOP_FUNC_COUNT]:
+                print "%d. %s" % (count, func)
         print ""
+        print_perc = 0
         for stack, files in sdict(data, lambda x: len(x[1])):
             pstack = "<no stack>"
             if stack:
@@ -868,8 +907,9 @@ def do_triage(files, ops):
             perc = 100.0 * len(files) / total
             print "%d(%.1f%%). %s" % (len(files), perc, pstack)
             if (perc < TRIAGE_NOISE_THRESHOLD):
-                print "stopping - below noise threshold"
+                print "stopping - below noise threshold (%.1f%%) ignored" % (100.0 - print_perc)
                 break
+            print_perc += perc
             for fl in sorted(files, reverse=True)[:TOP_LOGS_PER_STACK_COUNT]:
                 print "     ", fl.replace(os.path.expanduser("~"), "~")
                 tfiles.append(fl)
@@ -887,7 +927,7 @@ def do_triage(files, ops):
         print "#" * (len(fl) + 4)
         print "#", fl
         print "#" * (len(fl) + 4)
-        extract_callstack(fl, ops, None, [])
+        extract_callstack(fl, ops)
         print ""
 
 
@@ -896,21 +936,43 @@ def main():
 
     triage = False
     copy = False
-    handlers = []
-    opts, args = getopt.getopt(sys.argv[1:], "av:tcn")
+    latest = 1
+    opts, args = getopt.getopt(sys.argv[1:], "av:tcnl:g:h")
     for (opt, val) in opts:
         if opt == "-a":
             ops.printall = True
         if opt == "-v":
             if len(val) <= 5:
-                val = "2015_" + val
+                val = "2016_" + val
             ops.version = parse_version(val)
         if opt == "-t":
             triage = True
         if opt == "-c":
             copy = True
         if opt == "-n":
-            handlers = [TimestampHandler(), NotificationHandler(), AssertionHandler()]
+            ops.handlers = [TimestampHandler(), NotificationHandler(), AssertionHandler()]
+        if opt == "-l":
+            latest = int(val)
+        if opt == "-g":
+            ops.greps = re.compile(val)
+        if opt == "-h":
+            print """
+%s [log files...]
+
+Look up symbols in Reassembly crashlogs
+Without any options, run over the newest log in ~/Downloads
+
+Options:
+ -a            print each line of every log analyzed
+ -v <version>  filter by game version
+ -g <regex>    filter by grep match
+ -n            enable log analysis/summaries
+ -t            triage over logs in server/sync/crash
+ -l <count>    triage over newest <count> logs in ~/Downloads
+ -c            copy symbol files to local computer from network
+ -h            print this message
+""" % sys.argv[0]
+            exit(0)
 
     print "-*- mode: compilation -*-"
     log("ROOT=%s" % ROOT)
@@ -967,16 +1029,21 @@ def main():
                            os.path.join(os.path.expanduser("~/Downloads"), "log_latest*.txt"),
                            os.path.join(ROOT, "data", "log_latest.txt")])
         if len(logs):
+            print "picking %d most recently modified log(s)" % latest
             logs.sort(key=lambda x: os.path.getmtime(x))
-            last = logs[-1]
-            print "picking most recently modified log"
-            print "selected %s (considered %d)" % (last, len(logs))
-            extract_callstack(last, ops, None, handlers)
+            if latest > 1:
+                files = logs[-latest:]
+                print "Triaging over %d/%d crashlogs" % (len(files), len(logs))
+                do_triage(files, ops)
+            else:
+                last = logs[-1]
+                print "selected %s (considered %d)" % (last, len(logs))
+                extract_callstack(last, ops)
             exit(0)
         print "usage: %s <log>\n       %s <log1> <logn...>" % (sys.argv[0], sys.argv[0])
     elif len(args) == 1 and "*" not in args[0]:
         # cProfile.run("extract_callstack(args[1], None)", sort="tottime")
-        extract_callstack(args[0], ops, None, handlers)
+        extract_callstack(args[0], ops)
     else:
         files = []
         for fil in args:

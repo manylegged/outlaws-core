@@ -2,7 +2,7 @@
 // Geometry.cpp - general purpose geometry and math
 //
 
-// Copyright (c) 2013-2015 Arthur Danskin
+// Copyright (c) 2013-2016 Arthur Danskin
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -157,7 +157,7 @@ int convexHull(vector<float2> &points)
                   return vectorToAngle(a - points0) < vectorToAngle(b - points0);
               });
     vector<float2>::iterator nend = std::unique(points.begin(), points.end(),
-                                                [](float2 a, float2 b) { return isZero(a - b); });
+                                                [](float2 a, float2 b) { return nearZero(a - b); });
     
     const size_t N = std::distance(points.begin(), nend);
     long M = 1;
@@ -321,8 +321,8 @@ bool intersectSectorCircle(float2 ap, float ar, float ad, float aa, float2 cp, f
 
 int quadraticFormula(double* r0, double* r1, double a, double b, double c)
 {
-    if (isZero(a)) {
-        *r0 = isZero(b) ? (-c) : (-c / b);
+    if (nearZero(a)) {
+        *r0 = nearZero(b) ? (-c) : (-c / b);
         return 1;
     }
     

@@ -3,7 +3,7 @@
 //  Outlaws
 //
 //  Created by Arthur Danskin on 10/21/12.
-//  Copyright (c) 2012-2015 Arthur Danskin. All rights reserved.
+//  Copyright (c) 2012-2016 Arthur Danskin. All rights reserved.
 //
 // This file defines the interface between the platform independant game code and the platform
 // specific parts.
@@ -240,10 +240,7 @@ void OL_OnTerminate(const char* message);
 /////////// File IO
 // All functions take paths relative to main game directory
 
-// load text file into memory. pointer does not need to be freed, but is reused across calls
-const char *OL_LoadFile(const char *fname);
-
-// write text file to disk, atomically. Creates directories as needed.
+// write file to disk, atomically. Creates directories as needed.
 int OL_SaveFile(const char* fname, const char* data, size_t size);
 
 // create directories as needed for fname

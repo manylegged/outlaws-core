@@ -5,7 +5,7 @@
 // create an FMOD like Event API on top of cAudio/OpenAL
 // centralize allocation of sources so we can avoid trying to play too many at once
 
-// Copyright (c) 2014-2015 Arthur Danskin
+// Copyright (c) 2014-2016 Arthur Danskin
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
