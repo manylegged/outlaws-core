@@ -34,14 +34,6 @@
 #include <utility>
 #include <cctype>
 
-#ifndef NOEXCEPT
-#if _MSC_VER
-#define NOEXCEPT _NOEXCEPT
-#else
-#define NOEXCEPT noexcept
-#endif
-#endif
-
 namespace std {
     // extern template class basic_string<char>;
     // extern template class vector<string>;
@@ -620,12 +612,14 @@ inline std::string str_interpolate_variables(std::string str, const Fun& fun)
 std::string str_urlencode(const std::string &value);
 std::string str_urldecode(const std::string &value);
 
+#define STR_TIMESTAMP_FORMAT "%Y%m%d_%I.%M.%S.%p"
 std::string str_time_format(float seconds);
 std::string str_time_format_long(float seconds);
 std::string str_reltime_format(float seconds);
 std::string str_timestamp();
 std::string str_strftime(const char* fmt, const std::tm *time);
 std::string str_strftime(const char* fmt);
+bool str_strptime(const char* str, const char* fmt, std::tm *tm);
 
 // return one, two, three, etc
 std::string str_numeral_format(int num);
@@ -650,6 +644,23 @@ int str_append_bytes(std::string& str, const T &bytes)
 {
     str.append((const char*)&bytes, sizeof(T));
     return sizeof(T);
+}
+
+template <typename T>
+int str_write_bytes(std::string& str, int idx, const T &bytes)
+{
+    if (size_t(idx + sizeof(T)) > str.size())
+        return 0;
+    memcpy(&str[idx], (void*)&bytes, sizeof(T));
+    return sizeof(T);
+}
+
+inline int str_write_bytes(std::string& str, int idx, const std::string &bytes)
+{
+    if (size_t(idx + bytes.size()) > str.size())
+        return 0;
+    memcpy(&str[idx], &bytes[0], bytes.size());
+    return bytes.size();
 }
 
 // read binary data from string at index

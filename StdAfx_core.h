@@ -17,6 +17,15 @@
 #include <thread>
 #include <mutex>
 
+#ifndef NOEXCEPT
+#if _MSC_VER <= 1800
+// Visual studio 2013 does not support noexcept
+#define NOEXCEPT _NOEXCEPT
+#else
+#define NOEXCEPT noexcept
+#endif
+#endif
+
 #include "Str.h"
 
 using std::deque;
@@ -127,6 +136,8 @@ struct IDeletable {
 
 #if _MSC_VER
 #define THREAD_LOCAL __declspec(thread)
+#elif TARGET_OS_IPHONE
+#define THREAD_LOCAL            // not supported
 #else
 #define THREAD_LOCAL __thread
 #endif

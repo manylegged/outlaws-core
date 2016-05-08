@@ -40,14 +40,6 @@
 // c++17 simplified ranged for loop
 #define for_(A, B) for (auto &&A : (B))
 
-#ifndef NOEXCEPT
-#if _MSC_VER
-#define NOEXCEPT _NOEXCEPT
-#else
-#define NOEXCEPT noexcept
-#endif
-#endif
-
 
 #define unless(X) if (!(X))
 
@@ -427,9 +419,42 @@ inline size_t vec_find_index(const V &v, const T& t)
         return it - begin;
 }
 
+struct dummy_ref_t {
+    enum { max_bytes = 16 };
+    char bytes[max_bytes];
+};
+extern dummy_ref_t the_dummy_ref;
+
+template <typename T>
+struct can_use_zero {
+    typedef typename std::remove_reference<T>::type type;
+    enum { value = std::is_pod<type>::value || std::is_scalar<T>::value };
+};
+
+// default values when we need a reference
+template <typename T>
+const T &dummy_ref(typename std::enable_if<can_use_zero<T>::value>::type* = 0)
+{
+    static_assert(sizeof(T) <= sizeof(dummy_ref_t), "increase dummy_ref_t::max_bytes");
+    return (const T&) the_dummy_ref;
+}
+
+template <typename T>
+const T &dummy_ref_()
+{
+    static T v = T();
+    return v;
+}
+
+template <typename T>
+const T &dummy_ref(typename std::enable_if<!can_use_zero<T>::value>::type* = 0)
+{
+    return dummy_ref_<typename std::remove_reference<typename std::remove_cv<T>::type>::type>();
+}
+
 template <typename V, typename Fun>
 const typename V::value_type &vec_find(
-    const V &vec, const Fun& fun, const typename V::value_type &def=typename V::value_type())
+    const V &vec, const Fun& fun, const typename V::value_type &def=dummy_ref<typename V::value_type>())
 {
     foreach (auto& x, vec) {
         if (fun(x))
@@ -471,14 +496,14 @@ inline V vec_intersection(const V &v, const V1& t)
 
 template <typename Vec>
 const typename Vec::value_type &vec_at(const Vec &v, int i,
-                                       const typename Vec::value_type &def=typename Vec::value_type())
+                                       const typename Vec::value_type &def=dummy_ref<typename Vec::value_type>())
 {
     return ((uint)i < v.size()) ? v[i] :
         ((uint)(-1-i) < v.size()) ? v[v.size() + i] : def;
 }
 
 template <typename T, size_t S>
-const T &vec_at(const T (&v)[S], int i, const T &def=T())
+const T &vec_at(const T (&v)[S], int i, const T &def=dummy_ref<T>())
 {
     return ((int)i < S) ? v[i] :
         ((uint)(-1) < S) ? v[S + i] : def;
@@ -738,12 +763,22 @@ inline void vec_sort(T& col, const F& comp) { std::sort(col.begin(), col.end(), 
 template <typename T>
 inline void vec_sort(T& col) { std::sort(col.begin(), col.end()); }
 
-// sort entire vector, using supplied function to get comparison key
+// sort entire collection, using supplied function to get comparison key
 template <typename T, typename F>
 inline void vec_sort_key(T& col, const F& gkey)
 {
     std::sort(col.begin(), col.end(), [&](const typename T::value_type &a,
                                           const typename T::value_type &b) {
+                  return gkey(a) < gkey(b); });
+}
+
+// sort iterator, using supplied function to get comparison key
+template <typename IT, typename F>
+inline void vec_sort_key(IT beg, IT end, const F& gkey)
+{
+    typedef decltype(*beg) value_type;
+    std::sort(beg, end, [&](const value_type &a,
+                            const value_type &b) {
                   return gkey(a) < gkey(b); });
 }
 
@@ -823,14 +858,37 @@ inline void vec_selection_sort(T& vec, size_t count, const F& comp)
 template <typename T>
 inline void vec_reverse(T &vec)
 {
-    std::reverse(vec.begin(), vec.end());
+    std::reverse(std::begin(vec), std::end(vec));
 }
 
 template <typename T>
 inline T vec_reversed(T vec)
 {
-    std::reverse(vec.begin(), vec.end());
+    std::reverse(std::begin(vec), std::end(vec));
     return vec;
+}
+
+template <typename A, typename B>
+inline auto vec_interleaved(const A& a, const B& b) -> std::vector<typename A::value_type>
+{
+    std::vector<typename A::value_type> ret;
+    auto ait = std::begin(a);
+    auto bit = std::begin(b);
+    const auto aend = std::end(a);
+    const auto bend = std::end(b);
+
+    for (; ait != aend && bit != bend; ++ait, ++bit)
+    {
+        ret.push_back(*ait);
+        ret.push_back(*bit);
+    }
+
+    for (; ait != aend; ++ait)
+        ret.push_back(*ait);
+    for (; bit != bend; ++bit)
+        ret.push_back(*bit);
+    
+    return ret;
 }
 
 template <typename T>
@@ -1107,15 +1165,15 @@ inline bool map_contains(const M &m, const typename M::key_type& key)
 }
 
 template <typename M>
-const typename M::mapped_type &map_get(const M &m, const typename M::key_type& key,
-                                       const typename M::mapped_type& def=typename M::mapped_type())
+inline const typename M::mapped_type &map_get(const M &m, const typename M::key_type& key,
+                                              const typename M::mapped_type& def=dummy_ref<typename M::mapped_type>())
 {
     const typename M::const_iterator it = m.find(key);
     return (it != m.end()) ? it->second : def;
 }
 
 template <typename V>
-inline const V &map_get(const std::map<std::string, V> &m, const char* key, const V& def=V())
+inline const V &map_get(const std::map<std::string, V> &m, const char* key, const V& def=dummy_ref<V>())
 {
     const typename std::map<std::string, V>::const_iterator it = m.find(key);
     return (it != m.end()) ? it->second : def;
@@ -1137,7 +1195,7 @@ inline V &map_set(std::map<K, V> &m, const K& key, const V& val)
 }
 
 template <typename M, typename K, typename V>
-inline typename M::mapped_type &map_setdefault(M &m, const K& key, const V& def=V())
+inline typename M::mapped_type &map_setdefault(M &m, const K& key, const V& def=dummy_ref<V>())
 {
     typename M::iterator it = m.find(key);
     if (it != m.end())
@@ -1147,7 +1205,7 @@ inline typename M::mapped_type &map_setdefault(M &m, const K& key, const V& def=
 }
     
 template <typename V>
-inline V &map_setdefault(std::map<std::string, V> &m, const char *key, const V& def=V())
+inline V &map_setdefault(std::map<std::string, V> &m, const char *key, const V& def=dummy_ref<V>())
 {
     typename std::map<std::string, V>::iterator it = m.find(key);
     if (it != m.end())
@@ -1459,6 +1517,24 @@ template <typename U, typename T>
 bool instanceof(const U* ptr)
 {
     return dynamic_cast<T*>(ptr) != NULL;
+}
+
+template <typename T>
+bool test_min(const T &dist, T *mindist)
+{
+    if (dist >= *mindist)
+        return false;
+    *mindist = dist;
+    return true;
+}
+
+template <typename T>
+bool test_max(const T &dist, T *maxdist)
+{
+    if (dist <= *maxdist)
+        return false;
+    *maxdist = dist;
+    return true;
 }
 
 #endif

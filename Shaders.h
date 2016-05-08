@@ -35,31 +35,23 @@ struct ShaderPosBase : public ShaderProgramBase {
 
 
     // a b
-    // c d
-    void DrawQuad(const ShaderState& ss, float2 a, float2 b, float2 c, float2 d) const
-    {
-        const float2 v[] = { a, b, c, d };
-        static const ushort i[] = {0, 1, 2, 1, 3, 2};
-
-        UseProgram(ss, &v[0]);
-        ss.DrawElements(GL_TRIANGLES, 6, i);
-        UnuseProgram();
-    }
+    // d c
+    void DrawQuad(const ShaderState& ss, float2 a, float2 b, float2 c, float2 d) const;
 
     void DrawSquare(const ShaderState &ss, float r) const
     {
-        DrawQuad(ss, float2(-r, -r), float2(-r, r), float2(r, -r), float2(r, r));
+        DrawQuad(ss, float2(-r, -r), float2(-r, r), float2(r, r), float2(r, -r));
     }
 
     void DrawRect(const ShaderState &ss, float2 r) const
     {
-        DrawQuad(ss, float2(-r.x, -r.y), float2(-r.x, r.y), float2(r.x, -r.y), r);
+        DrawQuad(ss, float2(-r.x, -r.y), float2(-r.x, r.y), r, float2(r.x, -r.y));
     }
 
     void DrawRect(const ShaderState &ss, float2 pos, float2 r) const
     {
         DrawQuad(ss, pos + float2(-r.x, -r.y), pos + float2(-r.x, r.y), 
-                 pos + float2(r.x, -r.y), pos + r);
+                 pos + r, pos + float2(r.x, -r.y));
     }
 
     void DrawColorRect(ShaderState& ss, uint color, float2 r) const
@@ -74,30 +66,12 @@ struct ShaderPosBase : public ShaderProgramBase {
     {
         float2 bl(min(a.x, b.x), min(a.y, b.y));
         float2 ur(max(a.x, b.x), max(a.y, b.y));
-        DrawQuad(ss, float2(bl.x, ur.y), ur, bl, float2(ur.x, bl.y));
-    }
-
-    void DrawColorRectCorners(ShaderState &ss, uint color, float2 a, float2 b) const
-    {
-        if (color&ALPHA_OPAQUE) {
-            ss.color32(color);
-            float2 bl(min(a.x, b.x), min(a.y, b.y));
-            float2 ur(max(a.x, b.x), max(a.y, b.y));
-            DrawQuad(ss, float2(bl.x, ur.y), ur, bl, float2(ur.x, bl.y));
-        }
+        DrawQuad(ss, float2(bl.x, ur.y), ur, float2(ur.x, bl.y), bl);
     }
 
     void DrawLineRect(const ShaderState &ss, float2 pos, float2 rad) const
     {
         DrawLineRectCorners(ss, pos - rad, pos + rad);
-    }
-
-    void DrawColorLineRect(ShaderState& ss, uint color, float2 r) const
-    {
-        if (color&ALPHA_OPAQUE) {
-            ss.color32(color);
-            DrawLineRect(ss, r);
-        }
     }
 
     // a b
@@ -106,7 +80,7 @@ struct ShaderPosBase : public ShaderProgramBase {
                       bool outline=true, bool cross=false) const
     {
         const float2        v[] = { a, b, c, d };
-        static const ushort i[] = {0, 1, 1, 3, 3, 2, 2, 0, 0, 3, 1, 2};
+        static const ushort i[] = {0,1, 1,3, 3,2, 2,0, 0,3, 1,2};
 
         UseProgram(ss, v);
         ss.DrawElements(GL_LINES, (outline ? 8 : 0) + (cross ? 4 : 0), outline ? i : (i + 8));
@@ -158,8 +132,8 @@ struct ShaderPosBase : public ShaderProgramBase {
 
     void DrawGrid(const ShaderState &ss, double width, double3 first, double3 last) const;
 
-    void DrawLineCircle(const ShaderState& ss, float radius, int numVerts=32) const;
-    void DrawCircle(const ShaderState& ss, float radius, int numVerts=32) const;
+    void DrawLineCircle(const ShaderState& ss, float radius, uint numVerts=32) const;
+    void DrawCircle(const ShaderState& ss, float radius, uint numVerts=32) const;
 };
 
 struct ShaderUColor final : public ShaderPosBase, public ShaderBase<ShaderUColor> {
@@ -270,12 +244,12 @@ struct ShaderWormhole : public ShaderProgramBase, public ShaderBase<ShaderWormho
 struct ShaderTextureBase : public ShaderProgramBase {
 
     void bindTextureDrawElements(const ShaderState &ss, const GLTexture &texture,
-                                 VertexPosTex *vtx, int icount, const ushort *idxs) const;
+                                 VertexPosTex *vtx, int icount, const uint *idxs) const;
     
     virtual void UseProgram(const ShaderState &ss, const VertexPosTex *ptr, const GLTexture& ot) const = 0;
 
     // a b
-    // c d
+    // d c
     void DrawQuad(const ShaderState& ss, const GLTexture& texture,
                   float2 a, float2 b, float2 c, float2 d) const;
 
@@ -283,18 +257,7 @@ struct ShaderTextureBase : public ShaderProgramBase {
     {
         float2 bl(min(a.x, b.x), min(a.y, b.y));
         float2 ur(max(a.x, b.x), max(a.y, b.y));
-        DrawQuad(ss, texture, float2(bl.x, ur.y), ur, bl, float2(ur.x, bl.y));
-    }
-
-    void DrawRectCornersUpsideDown(const ShaderState &ss, const GLTexture& texture, float2 a, float2 b) const
-    {
-        // OpenGL texture coordinate origin is in the lower left.
-        // but all my image loaders put the origin in the upper left
-        // so flip it
-
-        float2 bl(min(a.x, b.x), min(a.y, b.y));
-        float2 ur(max(a.x, b.x), max(a.y, b.y));
-        DrawQuad(ss, texture, bl, float2(ur.x, bl.y), float2(bl.x, ur.y), ur);
+        DrawQuad(ss, texture, float2(bl.x, ur.y), ur, float2(ur.x, bl.y), bl);
     }
 
     void DrawRect(const ShaderState &ss, const GLTexture& texture, float2 pos, float2 rad) const
@@ -309,11 +272,6 @@ struct ShaderTextureBase : public ShaderProgramBase {
     {
         float2 rad(width, width * texture.size().y / texture.size().x);
         DrawRect(ss, texture, pos, rad);
-    }
-
-    void DrawRectUpsideDown(const ShaderState &ss, const GLTexture& texture, float2 pos, float2 rad) const
-    {
-        DrawRectCornersUpsideDown(ss, texture, pos - rad, pos + rad);
     }
 
     void DrawButton(const ShaderState &ss, const GLTexture& texture, float2 pos, float2 r) const;

@@ -184,6 +184,7 @@ enum : uint {
     EventKeyMax
 };
 
+static const int kMouseButtonCount = MouseButtonSix - LeftMouseButton + 1;
 
 struct Event {
     // !!! KEEP IN SYNC WITH Outlaws.h VERSION !!!
@@ -199,6 +200,9 @@ struct Event {
     bool   synthetic = false;
     float2 pos;
     float2 vel;
+
+    Event() {}
+    Event(const OLEvent &ev);
 
     string toString() const;
     string toUTF8() const;
@@ -333,11 +337,7 @@ public:
     // update current button state
     void OnEvent(const Event* event);
 
-    static KeyState &instance()
-    {
-        static KeyState v;
-        return v;
-    }
+    static KeyState &instance();
 
 };
 

@@ -7,9 +7,18 @@
 
 static DEFINE_CVAR(bool, kReadZipFiles, false);
 
+static void ZF_Report(const char* format, ...)
+{
+    va_list vl;
+    va_start(vl, format);
+    Report("[ZF] " + str_vformat(format, vl));
+    va_end(vl);
+}
+
 #if WIN32
 
 #define GZ_OPEN(F, M) gzopen_w(s2ws(F).c_str(), (M))
+#define FOPEN(F, M) _wfopen(s2ws(F).c_str(), L ## M)
 
 #include "../minizip/iowin32.h"
 static unzFile openZip(const string &fil)
@@ -22,6 +31,7 @@ static unzFile openZip(const string &fil)
 #else
 
 #define GZ_OPEN(F, M) gzopen((F), (M))
+#define FOPEN(F, M) fopen((F), (M))
 
 static unzFile openZip(const string &fil)
 {
@@ -164,7 +174,7 @@ string ZF_LoadFile(const char* path)
                 buf.resize(offset * 2);
             }
             if (read == -1) {
-                Reportf("Error reading '%s': %s", path, gzerror(gzf, NULL));
+                ZF_Report("Error reading '%s': %s", path, gzerror(gzf, NULL));
                 read = 0;
             }
             buf.resize(offset + read);
@@ -193,7 +203,40 @@ string ZF_LoadFile(const char* path)
     return loadCurrentFile(zd->first);
 }
 
-int ZF_SaveFile(const char* path, const char* data, size_t size)
+string ZF_LoadFileRaw(const char *path)
+{
+    path = OL_PathForFile(path, "r");
+    FILE *fil = FOPEN(path, "rb");
+    if (!fil)
+        return string();
+    if (fseek(fil, 0, SEEK_END))
+    {
+        ZF_Report("fseek(0, SEEK_END) failed: %s", strerror(errno));
+        return string();
+    }
+    const long size = ftell(fil);
+    if (fseek(fil, 0, SEEK_SET))
+    {
+        ZF_Report("fseek(0, SEEK_SET) failed: %s", strerror(errno));
+        return string();
+    }
+    
+    string buf;
+    buf.resize(size);
+    const size_t read = fread(&buf[0], 1, size, fil);
+    if (fclose(fil))
+    {
+        ZF_Report("fclose '%s' failed: %s", path, strerror(errno));
+        return string();
+    }
+    
+    ASSERT(read == size);
+    buf.resize(read);
+    return buf;
+}
+
+
+bool ZF_SaveFile(const char* path, const char* data, size_t size)
 {
     gzFile gzf = openGzip(path, "w");
     if (!gzf) {
@@ -205,10 +248,78 @@ int ZF_SaveFile(const char* path, const char* data, size_t size)
     gzclose(gzf);
     const bool success = (written == size);
     if (!success) {
-        Reportf("gzwrite wrote %d of %d bytes to '%s'", written, (int)size, path);
+        ZF_Report("gzwrite wrote %d of %d bytes to '%s'", written, (int)size, path);
     }
     return success;
 }
+
+bool ZF_SaveFileRaw(const char* path, const char* data, size_t size)
+{
+    const char* fname = OL_PathForFile(path, "w");
+    const string fnameb = string(fname) + ".b";
+    OL_CreateParentDirs(fname);
+
+    FILE *fil = FOPEN(fnameb.c_str(), "wb");
+    if (!fil)
+    {
+        ZF_Report("error opening '%s' for writing", fnameb.c_str());
+        return 0;
+    }
+    
+    int bytesWritten = 0;
+    int bytesExpected = size;
+
+    // translate newlines
+#if WIN32
+    if (str_endswith(fname, ".txt") || str_endswith(fname, ".lua"))
+    {
+        string data1;
+        data1.reserve(size);
+        for (const char* ptr=data; *ptr != '\0'; ptr++) {
+            if (*ptr == '\n')
+                data1 += "\r\n";
+            else
+                data1 += *ptr;
+        }
+        bytesWritten = fwrite(&data1[0], 1, data1.size(), fil);
+        bytesExpected = data1.size();
+    }
+    else
+#endif
+    {
+        bytesWritten = fwrite(data, 1, size, fil);    
+    }
+    
+    if (bytesWritten != bytesExpected)
+    {
+        ZF_Report("writing to '%s', wrote %d bytes of expected %d", fnameb.c_str(), bytesWritten, bytesExpected);
+        return 0;
+    }
+    if (fclose(fil))
+    {
+        ZF_Report("error closing temp file from '%s': %s'", fnameb.c_str(), strerror(errno));
+        return 0;
+    }
+
+#if WIN32
+    // rename does not support overwriting dest on windows
+    if (!MoveFileEx(s2ws(fnameb).c_str(), s2ws(fname).c_str(), MOVEFILE_REPLACE_EXISTING))
+    {
+        
+        ReportWin32Err1(str_format("MoveFileEx('%s')", fname).c_str(), GetLastError(), __FILE__, __LINE__);
+        return 0;
+    }
+#else
+    if (rename(fnameb.c_str(), fname))
+    {
+        ZF_Report("error renaming temp file from '%s' to '%s': %s'", fnameb.c_str(), fname, strerror(errno));
+        return 0;
+    }
+#endif
+
+    return 1;
+}
+
 
 ZFDirMap ZF_LoadDirectory(const char* path, float* progress)
 {
@@ -228,7 +339,7 @@ ZFDirMap ZF_LoadDirectory(const char* path, float* progress)
             if (data.size()) {
                 dir[fname] = std::move(data);
             } else {
-                Reportf("Error loading '%s' from '%s'", *ptr, path);
+                ZF_Report("Error loading '%s' from '%s'", *ptr, path);
             }
             if (progress)
                 *progress = (float) i / count;

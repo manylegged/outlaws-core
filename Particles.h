@@ -32,7 +32,7 @@ struct ParticleSystem : public IDeletable {
         void setColor(uint c, float alpha)
         {
             color = ALPHAF(alpha)|rgb2bgr(PremultiplyAlphaAXXX(c));
-            DASSERT(color != 0);
+            //DASSERT(color != 0);
         }
     };
     

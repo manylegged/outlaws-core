@@ -36,56 +36,83 @@
 //    F(SQUARE,   0)                               \
 //    F(OCTAGON,  1)                               \
 //
-// DEFINE_ENUM(SerialShape, char, BLOCK_SHAPES);
+// DEFINE_ENUM(EShape, char, BLOCK_SHAPES);
 //
+// ...
+//
+// EShape sqr = EShape::SQUARE
+// printf("name: %s\n", sqr.toString().c_str());
+// 
 
-#define DEFINE_ENUM_OP(X)                                          \
-    U operator X(U val) const { return value X val; }    \
-    U operator X##=(U val) { return value X##= val; }   \
-    U operator X(SerialEnum val) const { return value X val.value; } \
-    U operator X##=(SerialEnum val) { return value X##= val.value; }
+// non-templated information describing the enum.
+// basically a string<->uint64 map
+struct EnumType {
+    typedef uint64 value_type;
+    typedef std::pair<lstring, uint64> Pair;
 
-typedef std::pair<lstring, uint64> SaveEnum;
+    std::vector<Pair> elems;
 
-template <typename T, typename U=uint64>
+private:
+    std::unordered_map<string, uint64>  s2v;
+    std::unordered_map<uint64, lstring> v2s;
+    bool                                m_isBitset = true;
+public:
+
+    EnumType(std::initializer_list<Pair> el);
+
+    lstring getName(uint64 val) const { return map_get(v2s, val); }
+    uint64 getVal(const string &str) const { return map_get(s2v, str, ~0); }
+    bool isBitset() const { return m_isBitset; }
+};
+
+
+#define DEFINE_ENUM_OP(X)                                               \
+    value_type operator X(value_type val) const { return value X val; } \
+    value_type operator X##=(value_type val) { return value X##= val; } \
+    value_type operator X(SerialEnum val) const { return value X val.value; } \
+    value_type operator X##=(SerialEnum val) { return value X##= val.value; }
+
+// templated enum class. Overloads all the operators, etc.
+template <typename T>
 struct SerialEnum : public T {
 
+    typedef typename T::value_type value_type;
+
+    value_type value = 0;
     SerialEnum() {}
-    SerialEnum(const U &init) : value(init) {}
+    SerialEnum(const value_type &init) : value(init) {}
     SerialEnum(const SerialEnum &o) : value(o.value) {}
-    
-    U value = 0;
-    
+
     DEFINE_ENUM_OP(&)
     DEFINE_ENUM_OP(|)
     DEFINE_ENUM_OP(^)
 
-    U operator==(U o) const { return value == o; }
-    U operator==(SerialEnum o) const { return value == o.value; }
-    U operator!=(U o) const { return value != o; }
-    U operator!=(SerialEnum o) const { return value != o.value; }
+    value_type operator==(value_type o) const { return value == o; }
+    value_type operator==(SerialEnum o) const { return value == o.value; }
+    value_type operator!=(value_type o) const { return value != o; }
+    value_type operator!=(SerialEnum o) const { return value != o.value; }
     bool operator<(SerialEnum o) const { return value < o.value; }
-    U operator~() const { return ~value; }
-    SerialEnum& operator=(U o) { value = o; return *this; }
+    value_type operator~() const { return ~value; }
+    SerialEnum& operator=(value_type o) { value = o; return *this; }
     SerialEnum& operator=(SerialEnum o) { value = o.value; return *this; }
     explicit operator bool() const { return bool(value); }
 
-    U get() const { return value; }
+    value_type get() const { return value; }
     typename T::Fields enm() const { return (typename T::Fields) value; }
     string toString() const;
 
-    U set(U bits, bool val) { return setBits<U>(value, bits, val); }
-    friend U setBits(SerialEnum &en, U bits, bool val) { return setBits<U>(en.value, bits, val); }
+    value_type set(value_type bits, bool val) { return setBits<value_type>(value, bits, val); }
+    friend value_type setBits(SerialEnum &en, value_type bits, bool val) { return setBits<value_type>(en.value, bits, val); }
 
-    bool has(U bits) const { return hasBits<U>(value, bits); }
-    friend bool hasBits(const SerialEnum &en, U bits) { return hasBits<U>(en.value, bits); }
+    bool has(value_type bits) const { return hasBits<value_type>(value, bits); }
+    friend bool hasBits(const SerialEnum &en, value_type bits) { return hasBits<value_type>(en.value, bits); }
     
     static uint getBitUnion()
     {
-        static typename T::Type uni = 0;
+        static typename T::value_type uni = 0;
         if (uni == 0) {
-            for (const SaveEnum *se=T::getFields(); se->first; se++)
-                uni |= se->second;
+            foreach (const EnumType::Pair &se, T::getType().elems)
+                uni |= se.second;
         }
         return uni;
     }
@@ -97,10 +124,10 @@ struct SerialEnum : public T {
 
     static uint getCount()
     {
-        static typename T::Type mx = 0;
+        static typename T::value_type mx = 0;
         if (mx == 0) {
-            for (const SaveEnum *se=T::getFields(); se->first; se++)
-                mx = max(mx, (typename T::Type)se->second);
+            foreach (const EnumType::Pair &se, T::getType().elems)
+                mx = max(mx, (typename T::value_type)se.second);
             mx++;
         }
         return mx;
@@ -109,22 +136,42 @@ struct SerialEnum : public T {
 
 #undef DEFINE_ENUM_OP
 
-#define SERIAL_TO_SAVEENUM(K, V) SaveEnum(#K, (V)),
+namespace std {
+    
+    template <typename T>
+    struct hash< SerialEnum<T> > {
+        std::size_t operator()(const SerialEnum<T> &enm) const
+        {
+            return std::hash<typename T::value_type>()(enm.value);
+        }
+    };
+}
+
+
+
+#define SERIAL_TO_SAVEENUM(K, V) EnumType::Pair(#K, (V)),
 #define SERIAL_TO_ENUM(X, V) X=(V),
+
+#define SERIAL_ENUM_CONTENTS(TYPE, NAME, FIELDS)                         \
+    enum Fields : TYPE { ZERO=0, FIELDS(SERIAL_TO_ENUM) };              \
+    static const EnumType &getType()                                  \
+    {                                                                   \
+        static_assert(std::is_unsigned<TYPE>::value, "enum type must be unsigned"); \
+        static EnumType val({ FIELDS(SERIAL_TO_SAVEENUM) });            \
+        return val;                                                     \
+    }                                                                   \
+    typedef TYPE value_type
+
+
 
 #define DEFINE_ENUM(TYPE, NAME, FIELDS)                                 \
     struct NAME ## _ {                                                  \
-        typedef TYPE Type;                                              \
-        enum Fields : TYPE { ZERO=0, FIELDS(SERIAL_TO_ENUM) };            \
-        static const SaveEnum *getFields()                              \
-        {                                                               \
-            static const SaveEnum val[] = { FIELDS(SERIAL_TO_SAVEENUM) { NULL, 0}  }; \
-            return val;                                                 \
-        }                                                               \
+        SERIAL_ENUM_CONTENTS(TYPE, NAME ## _, FIELDS);                   \
     };                                                                  \
-    typedef SerialEnum< NAME ## _, TYPE > NAME
+    typedef SerialEnum< NAME ## _> NAME
 
-#define DECLARE_ENUM(TYPE, NAME) struct NAME ## _; typedef SerialEnum< NAME ## _, TYPE > NAME
+
+#define DECLARE_ENUM(TYPE, NAME) struct NAME ## _; typedef SerialEnum< NAME ## _ > NAME
 
 
 /////////////////////////////////////////////////////////////////////////////////

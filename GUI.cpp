@@ -38,7 +38,15 @@
 #define PLAY_BUTTON_HOVER()
 #define PLAY_BUTTON_PRESS()
 #endif
+
+#define HAS_KEYS 1
+#if HAS_KEYS
 #include "Keys.h"
+#define GET_MENU_TRANSLATION(E) KeyBindings::instance().getMenuTranslation(E)
+#else
+struct KeyBinding;
+#define GET_MENU_TRANSLATION(E) int2()
+#endif
 
 static DEFINE_CVAR(float, kScrollbarWidth, 25.f);
 DEFINE_CVAR(float2, kButtonPad, float2(4.f));
@@ -1111,29 +1119,7 @@ bool OptionButtons::HandleEvent(const Event* event, int* butActivate, int* butPr
     return handled;
 }
 
-BContext::BContext()
-{
-
-}
-
-// key is displayed, val is what selection is set to
-void BContext::pushItem(const string &key, const string &val)
-{
-    const int i = menu.lines.size();
-    vec_set_index(vals, i, val);
-    menu.setLine(i, key.c_str());
-}
-
-void BContext::setSelection(int index)
-{
-    index = clamp(index, 0, vals.size()-1);
-    selection = vals[index];
-    // FIXME bug, text is read in render thread!
-    text = title + ": " + menu.lines[index];
-}
-
-
-bool BContext::HandleEventMenu(const Event* event, bool* changed)
+bool BContextBase::HandleEventMenu(const Event* event, bool* changed)
 {
     bool isPress = false;
     if (menu.active)
@@ -1143,7 +1129,7 @@ bool BContext::HandleEventMenu(const Event* event, bool* changed)
         {
             if (selected >= 0)
             {
-                string last = selection;
+                const int last = selection;
                 setSelection(selected);
                 if (changed && last != selection)
                     *changed = true;
@@ -1162,9 +1148,20 @@ bool BContext::HandleEventMenu(const Event* event, bool* changed)
     return false;
 }
 
-void BContext::renderContents(const ShaderState &ss)
+
+void BContextBase::setSelection(int index)
+{
+    selection = clamp(index, 0, menu.lines.size()-1);
+    if (showSelection) {
+        // FIXME bug, text is read in render thread!
+        text = title + ": " + menu.lines[selection];
+    }
+}
+
+void BContextBase::renderContents(const ShaderState &ss)
 {
     Button::renderContents(ss);
+    menu.alpha = alpha;
     menu.render(ss);
 }
 
@@ -1504,12 +1501,14 @@ bool TabWindow::HandleEvent(const Event* event, bool *istoggle)
                 swapToTab(i);
             handled = true;
         }
+#if HAS_KEYS
         if ((istoggle || i != selected) && but.key && but.key->isDownEvent(event))
         {
             if (!swapToTab(i) && istoggle)
                 *istoggle = true;
             return true;
         }
+#endif
         i++;
     }
 
@@ -1937,7 +1936,7 @@ void OverlayMessage::render(const ShaderState &ss)
     std::lock_guard<std::mutex> l(mutex);
     if (!isVisible())
         return;
-    const float a = alpha * easeOutExpo(inv_lerp(startTime + totalTime, startTime, (float)globals.renderTime));
+    const float a = alpha * easeOutExpo(inv_lerp_clamp(startTime + totalTime, startTime, (float)globals.renderTime));
     if (border)
     {
         const GLText *txt = GLText::get(font, textSize, message);
@@ -2333,7 +2332,7 @@ bool ButtonWindowBase::HandleEvent(const Event *event,
             *activated = bu;
             handled = true;
         }
-        if (dragged && bu->pressed && event->type == Event::MOUSE_DRAGGED) {
+        if (dragged && bu->pressed && event->type == Event::MOUSE_DRAGGED && !drag) {
             *dragged = bu;
             handled = true;
         }
@@ -2343,6 +2342,12 @@ bool ButtonWindowBase::HandleEvent(const Event *event,
         }
     }
 
+    if (dragged && drag && event->type == Event::MOUSE_DRAGGED)
+    {
+        *dragged = drag;
+        handled = true;
+    }
+    
     return handled || (dropped && event->type == Event::MOUSE_UP);
 }
 
@@ -2360,10 +2365,13 @@ ButtonBase ** ButtonWindowBase::getPtr(ButtonBase *but)
 
 bool ButtonWindowBase::setupDragPtr(const Event *event, ButtonBase *drag)
 {
+    if (!event->isMouse())
+        return NULL;
     if (drag && !dragPtr)
     {
         dragPos = drag->position;
         dragOffset = drag->position - event->pos;
+        Reportf("dragOffset changed for %s", event->toString().c_str());
     }
     dragPtr = getPtr(drag);
     return drag && dragPtr;
@@ -2381,15 +2389,19 @@ ButtonBase *ButtonWindowBase::HandleRearrange(const Event *event, ButtonBase *dr
     drag->position = clamp(event->pos + dragOffset,
                            position - rad + drag->size/2.f,
                            position + rad - drag->size/2.f);
+    
     foreach (ButtonBase *&bu, buttons)
     {
         if (bu != drag &&
             bu->visible &&
-            distanceSqr(drag->position, bu->position) < distanceSqr(drag->position, dragPos))
+            distance(drag->position, bu->position) + min_dim(bu->size)/6.f < distance(drag->position, dragPos))
         {
             std::swap(bu->position, dragPos);
+            ButtonBase* other = bu;
             std::swap(bu, *dragPtr);
-            return *dragPtr;    // button we swapped with
+            dragPtr = &bu;
+            ASSERT(*dragPtr == drag);
+            return other; // button we swapped with
         }
     }
     return NULL;

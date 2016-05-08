@@ -4,7 +4,7 @@
 # sector files contain stored map data and are just gzipped text
 # sector clusters are a bunch of sector files with a header - up to 256 sectors per cluster
 
-import struct, sys
+import struct, sys, re
 import getopt
 import cStringIO, gzip
 
@@ -50,17 +50,28 @@ for fname in args:
         print "%d sectors, %.1f KB" % (count, len(data) / 1024.0)
     offset += 4
     uncompressed_total = 0
+    base_x = 0
+    base_y = 0
+    m = re.search("cluster([0-9]+)x([0-9]+)_([0-9]+)x([0-9]+).dat", fname)
+    if m:
+        base_x = int(m.group(1))
+        base_y = int(m.group(2))
     for idx in xrange(count):
         px, py, offs, size, res = struct.unpack_from("iiiii", data, offset)
         gzf = gzip.GzipFile(fileobj=cStringIO.StringIO(data[offs:offs+size]))
-        sector = gzf.read()
+        err = ""
+        try:
+            sector = gzf.read()
+        except Exception as e:
+            err = " [" + str(e) + "]"
+            sector = ""
         gzf.close()
         uncompressed_total += len(sector)
         if printcontents:
             print sector,
         else:
-            print "%3d. {%2d,%2d} %7d - %7d (%5.1f KB) %d: %5.1f KB" % \
-                (idx, px, py, offs, offs+size, size / 1024.0, res, len(sector) / 1024.0)
+            print "%3d. {%2d,%2d} {%2d,%2d} %8d - %8d (%5.1f KB) %d: %5.1f KB%s" % \
+                (idx, px, py, base_x + px, base_y + py, offs, offs+size, size / 1024.0, res, len(sector) / 1024.0, err)
         offset += 4 * 5
     if not printcontents:
         print "end at %d (%.1f MB), uncompressed total is %.1f MB" % \

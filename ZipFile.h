@@ -10,11 +10,19 @@
 // read file, gzip compressed file, or file in zip file
 string ZF_LoadFile(const char* path);
 
+// read file with no decompression
+string ZF_LoadFileRaw(const char *path);
+
 // close any cached zip files
 void ZF_ClearCached();
 
 // write gzip compressed file
-int ZF_SaveFile(const char* path, const char* data, size_t size);
+bool ZF_SaveFile(const char* path, const char* data, size_t size);
+inline bool ZF_SaveFile(const char* path, const string &data) { return ZF_SaveFile(path, &data[0], data.size()); }
+
+// write uncompressed file
+bool ZF_SaveFileRaw(const char* path, const char* data, size_t size);
+inline bool ZF_SaveFileRaw(const char* path, const string &data) { return ZF_SaveFileRaw(path, &data[0], data.size()); }
 
 // compress data/size into gzip format
 string ZF_Compress(const char* data, size_t size);

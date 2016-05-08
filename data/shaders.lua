@@ -42,6 +42,31 @@
         }" 
    },
 
+   -- draws stars
+   ShaderStars = {
+      "varying vec4 DestinationColor;"
+      ,
+      "attribute vec4 SourceColor;
+       attribute float Size;
+       uniform float ToPixels;
+       uniform float EyeZ;
+       void main(void) {
+           DestinationColor = SourceColor;
+           gl_PointSize = ToPixels * Size / (EyeZ - Position.z);
+           gl_Position = Transform * Position;
+       }"
+      ,
+      "void main(void) {
+           vec2 coord = 2.0 * (gl_PointCoord - 0.5);
+           //float val = abs(coord.x) + abs(coord.y);
+           float val = (length(coord) + abs(coord.x) + abs(coord.y)) / 2.0;
+           float alpha = min(1.0 - val, 1.0);
+           if (alpha <= 0.0)
+               discard;
+           gl_FragColor = DestinationColor * vec4(1.0, 1.0, 1.0, alpha);
+       }"
+   },
+
    -- draws the wormhole
    ShaderWormhole = {
       "varying vec4 DestColor0;

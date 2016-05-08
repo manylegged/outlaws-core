@@ -74,19 +74,12 @@ const T &randselect(std::initializer_list<T> l)
     return *(l.begin() + randrange(0, l.size()));
 }
 
-template <typename T>
-T _randselect_dummy()
-{
-    static T dummy{};
-    return dummy;
-}
-
 template <typename Vec>
 auto randselect(const Vec& vec) -> decltype(*std::begin(vec))
 {
     const size_t size = std::distance(std::begin(vec), std::end(vec));
     if (size == 0)
-        return _randselect_dummy<decltype(*std::begin(vec))>();
+        return dummy_ref<decltype(*std::begin(vec))>();
     return *(std::begin(vec) + randrange(0, size));
 }
 
@@ -94,7 +87,7 @@ template <typename Vec>
 typename Vec::value_type randselect_pop(Vec& vec)
 {
     if (vec.empty())
-        return _randselect_dummy<typename Vec::value_type>();
+        return dummy_ref<typename Vec::value_type>();
     const int index = randrange(0, vec.size());
     typename Vec::value_type val = std::move(vec[index]);
     vec_pop(vec, index);

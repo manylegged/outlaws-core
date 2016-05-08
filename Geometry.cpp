@@ -102,6 +102,17 @@ int intersectPolySegment(float2 *outp, const float2 *points, int npoints, float2
     return count;
 }
 
+bool intersectPolyPoint(const float2 *points, int npoints, float2 ca)
+{
+    for (int i=0; i<npoints; i++)
+    {
+        if (orient(ca, points[i], points[(i+1) % npoints]) > 0)
+            return false;
+    }
+    return true;
+}
+
+
 
 /*               Return a positive value if the point pd lies inside the     */
 /*               circle passing through pa, pb, and pc; a negative value if  */
@@ -343,6 +354,8 @@ int quadraticFormula(double* r0, double* r1, double a, double b, double c)
 
 float2 clamp_rect(float2 v, float2 rad)
 {
+    if (intersectPointRectangle(v, f2(), rad))
+        return v;
     float x = intersectBBSegmentV(-rad.x, -rad.y, rad.x, rad.y, float2(0.f), v);
     return (0 <= x && x <= 1.f) ? x * v : v;
 }
@@ -400,6 +413,7 @@ static vec3 permute(vec3 x) {
     return mod289(((x*34.f)+1.f)*x);
 }
 
+// output range is about -1 to 1
 float snoise(vec2 v)
 {
     const vec4 C = vec4(0.211324865405187f,  // (3.0-sqrt(3.0))/6.0
@@ -530,32 +544,41 @@ float rand_normal(float mean, float stddev)
     return result;
 }
 
-// from http://codesam.blogspot.com/2011/06/least-square-linear-regression-of-data.html
-SlopeLine leastSqrRegression(float2* xyCollection, int dataSize)
+void LinearRegression::insert(float2 p)
+{
+    sum += d2(p);
+    sumx += double(p.x) * d2(p);
+    count++;
+}
+
+SlopeLine LinearRegression::calculate() const
 {
     SlopeLine sl;
-    if (xyCollection == NULL || dataSize == 0)
-        return sl;
-
-    double SUMx = 0;     //sum of x values
-    double SUMy = 0;     //sum of y values
-    double SUMxy = 0;    //sum of x * y
-    double SUMxx = 0;    //sum of x^2
-
-    for (int i = 0; i < dataSize; i++)
+    if (count)
     {
-        SUMx = SUMx + xyCollection[i].x;
-        SUMy = SUMy + xyCollection[i].y;
-        SUMxy = SUMxy + xyCollection[i].x * xyCollection[i].y;
-        SUMxx = SUMxx + xyCollection[i].x * xyCollection[i].x;
+        double denom = (count * sumx.x - sum.x*sum.x);
+        if (nearZero(denom))
+            denom = epsilon;
+        sl.slope = (count * sumx.y - sum.x * sum.y) / denom;
+        sl.y_int = (sum.y/count) - sl.slope * (sum.x/count);
     }
-
-    //calculate the means of x and y
-    double AVGy = SUMy / dataSize;
-    double AVGx = SUMx / dataSize;
-
-
-    sl.slope = (dataSize * SUMxy - SUMx * SUMy) / (dataSize * SUMxx - SUMx*SUMx);
-    sl.y_int = AVGy - sl.slope * AVGx;
+    ASSERT(!fpu_error(sl.slope) && !fpu_error(sl.y_int));
     return sl;
+}
+
+void Variance::insert(double val, double weight)
+{
+    const double sw = weight + sumweight;
+    const double delta = val - mean;
+    mean += delta * weight / sw;
+    m2 += weight * delta * (val - mean);
+    sumweight = sw;
+    n++;
+}
+
+double Variance::calculate() const
+{
+    if (n < 2)
+        return 0;
+    return (n * m2) / (sumweight * (n-1));
 }

@@ -34,6 +34,16 @@
 extern uint graphicsDrawCount;
 extern uint gpuMemoryUsed;
 
+// 0 1
+// 2 3
+
+// 0 1
+// 3 2
+static const uint kQuadIndices[] = {0,1,3, 1,2,3};
+static const uint kCircleMaxVerts = 64;
+extern float kButtonCorners;
+
+
 GLenum glReportError1(const char *file, uint line, const char *function);
 #define glReportError() glReportError1(__FILE__, __LINE__, __func__)
 
@@ -44,29 +54,47 @@ bool isGLExtensionSupported(const char *name);
 
 class ShaderProgramBase;
 
-struct GLEnableScope {
-    const GLenum val;
-    GLEnableScope(GLenum v) : val(v) { glEnable(v); }
-    ~GLEnableScope() { glDisable(val); }
+struct GLScope {
+    const GLenum enm;
+    enum Type { FLOAT, BOOL };
+    const Type type;
+
+    union GLval {
+        GLboolean bval;
+        GLfloat fval;
+    };
+
+    GLval saved, current;
+
+    void set(bool val);
+    void set(float val);
+        
+    GLScope(GLenum e, bool val) : enm(e), type(BOOL)
+    {
+        glGetBooleanv(enm, &saved.bval);
+        current.bval = saved.bval;
+        set(val);
+    }
+
+    GLScope(GLenum e, float val) : enm(e), type(FLOAT)
+    {
+        glGetFloatv(enm, &saved.fval);
+        current.fval = saved.fval;
+        set(val);
+    }
+    
+    ~GLScope();
 };
 
-struct GLDisableScope {
-    const GLenum val;
-    GLDisableScope(GLenum v) : val(v) { glDisable(v); }
-    ~GLDisableScope() { glEnable(val); }
-};
+struct GLScopeBlend {
+    GLint src_alpha, dst_alpha, src_color, dst_color;
+    bool changed;
 
-#if OPENGL_ES
-struct GLDisableAlphaTest {};
-struct GLEnableAlphaTest {};
-#else
-struct GLDisableAlphaTest : public GLDisableScope {
-    GLDisableAlphaTest() : GLDisableScope(GL_ALPHA_TEST) {}
+    GLScopeBlend(GLenum srgb, GLenum drgb,
+                 GLenum salpha=0, GLenum dalpha=0);
+    ~GLScopeBlend();
+    
 };
-struct GLEnableAlphaTest : public GLEnableScope {
-    GLEnableAlphaTest() : GLEnableScope(GL_ALPHA_TEST) {}
-};
-#endif
 
 void deleteBufferInMainThread(GLuint buffer);
 
@@ -132,7 +160,10 @@ public:
 
     void BufferData(uint size, Type* data, uint mode)
     {
-        if (m_id == 0) {
+        if (size == 0) {
+            clear();
+            return;
+        } else if (m_id == 0) {
             glGenBuffers(1, &m_id);
         } else if (m_size == size && m_usage == mode) {
             BufferSubData(0, size, data);
@@ -210,9 +241,7 @@ protected:
     float2 m_texsize;
     GLuint m_texname = 0;
     GLint  m_format  = GL_RGB;
-
-    void DrawFSBegin(ShaderState &ss) const;
-    void DrawFSEnd() const;
+    bool   m_flipped = false;   // true if origin is in the upper left (default is lower left)
 
     uint getSizeBytes() const;
 
@@ -242,6 +271,8 @@ public:
     
     void setFormat(GLint format) { m_format = format; }
     GLint getFormat() const { return m_format; }
+    void setFlipped(bool flipped) { m_flipped = flipped; }
+    bool isFlipped() const { return m_flipped; }
     float2 size() const { return m_size; }
     float2 tcoordmax() const { return m_size / m_texsize; }
     bool  empty() const { return m_texname == 0; } 
@@ -323,9 +354,12 @@ void GLTexture::DrawFullscreen(const Shader& shader, uint color) const
 {
     ShaderState ss;
     ss.uColor = color;
-    DrawFSBegin(ss);
+    GLScope s0(GL_DEPTH_WRITEMASK, false);
+    GLScope s1(GL_DEPTH_TEST, false);
+    GLScope s2(GL_ALPHA_TEST, false);
+    ss.uTransform = glm::ortho(0.f, 1.f, 0.f, 1.f, -1.f, 1.f);
     shader.DrawRectCorners(ss, *this, float2(0.f), float2(1.f));
-    DrawFSEnd();
+    glReportError();
 }
 
 // RAII for a render target
@@ -454,6 +488,8 @@ struct View {
 
     void setScreenLineWidth(float scl=1.f) const;
     void setWorldLineWidth() const;
+    float getScreenLineWidth(float scl=1.f) const;
+    float getWorldLineWidth() const;
 
     void setWorldRadius(float rad)
     {
@@ -696,32 +732,23 @@ inline float2 getCircleVertOffset(uint idx, uint verts)
 // store a bunch of geometry
 // lots of routines for drawing shapes
 // tracks the current vertex and transform for stateful OpenGL style drawing
-template <typename Vtx>
+template <typename V>
 struct Mesh : public Transform2D {
 
 protected:
 
-    typedef std::vector<uint> IndexVector;
-
-    Vtx               m_curVert;
-    VertexBuffer<Vtx> m_vbo;
-    IndexBuffer       m_ibo;
-    std::vector<Vtx>  m_vl;
-    IndexVector       m_il;
+    V               m_curVert;
+    VertexBuffer<V> m_vbo;
+    std::vector<V>  m_vl;
 
 public:
 
-    size_t getSizeof() const
-    {
-        return sizeof(Vtx) * m_vl.size() + 
-            sizeof(uint) * m_il.size() +
-            sizeof(*this);
-    }
+    size_t getSizeof() const { return sizeof(V) * m_vl.size() + sizeof(*this); }
 
     struct scope {
         
         Mesh &p;
-        Vtx    curVert;
+        V    curVert;
         mat3   transform;
 
         scope(Mesh &p_) : p(p_), curVert(p_.m_curVert), transform(p_.transform) {}
@@ -737,26 +764,20 @@ public:
         clear();
     }
 
+    // do not clear vbo / ibo!
     void clear()
     {
-        // do not clear vbo / ibo!
         m_vl.clear();
-        m_il.clear();
         transform = glm::mat3();
         m_curVert.pos.z = 0.f;
         //m_curVert.color = 0xffffffff;
     }
 
-    void shrink_to_fit()
-    {
-        m_vl.shrink_to_fit();
-        m_il.shrink_to_fit();
-    }
-
-    uint indexCount() const { return m_il.size(); }
+    void shrink_to_fit() { m_vl.shrink_to_fit(); }
     bool empty() const { return m_vl.empty(); }
+    bool BuffersEmpty() const { return m_vbo.empty(); }
 
-    Vtx& cur() { return m_curVert; }
+    V& cur() { return m_curVert; }
     void color(uint c, float a=1)   { m_curVert.color = argb2abgr(c|0xff000000, a); }
     void color32(uint c, float a=1) { m_curVert.color = argb2abgr(c, a); }
 
@@ -767,12 +788,110 @@ public:
         m_curVert.pos.z += z;
     }
 
+    V& getVertex(uint idx) { return m_vl[idx]; }
+    uint getVertexCount() const { return m_vl.size(); }
+
+    template <typename T>
+    uint PushV(const T *pv, size_t vc)
+    {
+        V v = m_curVert;
+        for (uint i=0; i<vc; i++)
+        {
+            v.pos = m_curVert.pos;
+            apply(v.pos, pv[i]);
+            m_vl.push_back(v);
+        }
+        return m_vl.size()-vc;
+    }
+
+    uint PushV(const V *pv, size_t vc)
+    {
+        V v;
+        for (uint i=0; i<vc; i++)
+        {
+            v = pv[i];
+            v.pos = m_curVert.pos;
+            apply(v.pos, pv[i].pos);
+            m_vl.push_back(v);
+        }
+        return m_vl.size()-vc;
+    }
+
+    uint PushV1(const V &vtx)
+    {
+        V v = vtx;
+        v.pos = m_curVert.pos;
+        apply(v.pos, vtx.pos);
+        m_vl.push_back(v);
+        return m_vl.size()-1;
+    }
+
+    template <typename T>
+    uint PushV1(const T &pos)
+    {
+        V v = m_curVert;
+        apply(v.pos, pos);
+        m_vl.push_back(v);
+        return m_vl.size()-1;
+    }
+
+    // pre-transformed vertices
+    template <typename T>
+    uint PushVTrans(const T *pv, size_t vc)
+    {
+        const uint start = (uint) m_vl.size();
+
+        V v = m_curVert;
+        for (uint i=0; i<vc; i++)
+        {
+            v.pos = float3(pv[i]);
+            m_vl.push_back(v);
+        }
+        return start;
+    }
+
+    void UpdateBuffers(bool use)
+    {
+        if (use) {
+            m_vbo.BufferData(m_vl, GL_STATIC_DRAW);
+        } else {
+            m_vbo.clear();
+        }
+    }
+};
+
+template <typename V, uint PrimSize>
+struct PrimMesh : public Mesh<V> {
+
+protected:
+    typedef std::vector<uint> IndexVector;
+    IndexBuffer m_ibo;
+    IndexVector m_il;
+
+public:
+
+    size_t getSizeof() const { return Mesh<V>::getSizeof() + sizeof(uint) * m_il.size(); }
+
+    void clear()
+    {
+        Mesh<V>::clear();
+        m_il.clear();
+    }
+
+    void shrink_to_fit()
+    {
+        Mesh<V>::shrink_to_fit();
+        m_il.shrink_to_fit();
+    }
+
+    uint indexCount() const { return m_il.size(); }
+
     void PushI(uint start, const uint *pidx, uint ic)
     {
         ASSERT(start + ic < std::numeric_limits<uint>::max());
         for (uint i=0; i<ic; i++)
         {
-            DASSERT(start + pidx[i] < m_vl.size());
+            DASSERT(start + pidx[i] < this->m_vl.size());
             m_il.push_back(start + pidx[i]);
         }
     }
@@ -798,86 +917,24 @@ public:
     template <typename Vec>
     uint Push(const Vec *pv, uint vc, const uint *pidx, uint ic)
     {
-        uint start = PushV(pv, vc);
+        uint start = this->PushV(pv, vc);
         PushI(start, pidx, ic);
         return start;
     }
 
-    Vtx& getVertex(uint idx) { return m_vl[idx]; }
-    uint getVertexCount() const { return m_vl.size(); }
-
-    template <typename T>
-    uint PushV(const T *pv, size_t vc)
+    uint Push(const PrimMesh &pusher)
     {
-        Vtx v = m_curVert;
-        for (uint i=0; i<vc; i++)
-        {
-            v.pos = m_curVert.pos;
-            apply(v.pos, pv[i]);
-            m_vl.push_back(v);
-        }
-        return m_vl.size()-vc;
-    }
-
-    uint PushV(const Vtx *pv, size_t vc)
-    {
-        Vtx v;
-        for (uint i=0; i<vc; i++)
-        {
-            v = pv[i];
-            v.pos = m_curVert.pos;
-            apply(v.pos, pv[i].pos);
-            m_vl.push_back(v);
-        }
-        return m_vl.size()-vc;
-    }
-
-    uint PushV1(const Vtx &vtx)
-    {
-        Vtx v = vtx;
-        v.pos = m_curVert.pos;
-        apply(v.pos, vtx.pos);
-        m_vl.push_back(v);
-        return m_vl.size()-1;
-    }
-
-    template <typename T>
-    uint PushV1(const T &pos)
-    {
-        Vtx v = m_curVert;
-        apply(v.pos, pos);
-        m_vl.push_back(v);
-        return m_vl.size()-1;
-    }
-
-    // pre-transformed vertices
-    template <typename T>
-    uint PushVTrans(const T *pv, size_t vc)
-    {
-        const uint start = (uint) m_vl.size();
-
-        Vtx v = m_curVert;
-        for (uint i=0; i<vc; i++)
-        {
-            v.pos = float3(pv[i]);
-            m_vl.push_back(v);
-        }
-        return start;
-    }
-
-    uint Push(const Mesh<Vtx> &pusher)
-    {
-        const uint start = m_vl.size();
-        m_vl.reserve(m_vl.size() + pusher.m_vl.size());
+        const uint start = this->m_vl.size();
+        this->m_vl.reserve(this->m_vl.size() + pusher.m_vl.size());
         m_il.reserve(m_il.size() + pusher.m_il.size());
         
-        Vtx v;
-        foreach (const Vtx& vtx, pusher.m_vl)
+        V v;
+        foreach (const V& vtx, pusher.m_vl)
         {
             v = vtx;
-            v.pos = m_curVert.pos;
-            apply(v.pos, vtx.pos);
-            m_vl.push_back(v);
+            v.pos = this->m_curVert.pos;
+            this->apply(v.pos, vtx.pos);
+            this->m_vl.push_back(v);
         }
 
         foreach (uint idx, pusher.m_il)
@@ -898,52 +955,11 @@ public:
     template <typename Vec>
     uint PushArray(const Vec *pv, size_t vc)
     {
-        uint start = PushV(pv, vc);
+        uint start = this->PushV(pv, vc);
         return PushArrayIndexes(start, vc);
     }
 
-    void UpdateBuffers(bool use)
-    {
-        if (use && m_vl.size()) {
-            m_vbo.BufferData(m_vl, GL_STATIC_DRAW);
-            m_ibo.BufferData(m_il, GL_STATIC_DRAW);
-        } else {
-            m_vbo.clear();
-            m_ibo.clear();
-        }
-    }
-
-    bool BuffersEmpty() const { return m_vbo.empty(); }
-
-    template <typename Prog>
-    void Draw(const ShaderState &s, uint type, const Prog &program) const
-    {
-        if (!program.isLoaded())
-            return;
-
-        if (!m_vbo.empty())
-        {
-            ASSERT(m_ibo.size());
-            m_vbo.Bind();
-            program.UseProgram(s, &m_vl[0], &m_vl[0]);
-            s.DrawElements(type, m_ibo);
-            program.UnuseProgram();
-            m_vbo.Unbind();
-        }
-        else if (!m_vl.empty())
-        {
-            ASSERT(m_il.size() > 1);
-            
-            program.UseProgram(s, &m_vl[0], (Vtx*)NULL);
-            s.DrawElements(type, m_il.size(), &m_il[0]);
-            program.UnuseProgram();
-        }
-    }
-};
-
-template <typename Vtx1, uint PrimSize>
-struct PrimMesh : public Mesh<Vtx1> {
-
+    
     struct IndxPrim {
         uint indxs[PrimSize];
         friend bool operator==(const IndxPrim &a, const IndxPrim &b) {
@@ -951,17 +967,17 @@ struct PrimMesh : public Mesh<Vtx1> {
         }
     };
 
-    IndxPrim* primBegin() { return (IndxPrim*) &this->m_il[0]; }
-    IndxPrim* primEnd()   { return (IndxPrim*) (&this->m_il[0] + this->m_il.size()); }
+    IndxPrim* primBegin() { return (IndxPrim*) &m_il[0]; }
+    IndxPrim* primEnd()   { return (IndxPrim*) (&m_il[0] + m_il.size()); }
     
     void primErase(IndxPrim* beg, IndxPrim* end) 
     {
-        typename Mesh<Vtx1>::IndexVector::iterator ilbeg = this->m_il.begin() + (beg - primBegin()) * PrimSize;
-        typename Mesh<Vtx1>::IndexVector::iterator ilend = this->m_il.begin() + (end - primBegin()) * PrimSize;
-        this->m_il.erase(ilbeg, ilend);
+        IndexVector::iterator ilbeg = m_il.begin() + (beg - primBegin()) * PrimSize;
+        IndexVector::iterator ilend = m_il.begin() + (end - primBegin()) * PrimSize;
+        m_il.erase(ilbeg, ilend);
     }
 
-    uint primSize() const { return this->m_il.size() / PrimSize; }
+    uint primSize() const { return m_il.size() / PrimSize; }
 
     static bool SortByFirstIndex(const IndxPrim& a, const IndxPrim& b) {
         return a.indxs[0] < b.indxs[0];
@@ -969,7 +985,7 @@ struct PrimMesh : public Mesh<Vtx1> {
 
     void SortByZ()
     {
-        if (this->m_il.empty())
+        if (m_il.empty())
             return;
         // just re-arrange the indices
         // the other option is to leave the indices and rearange vertices
@@ -987,16 +1003,16 @@ struct PrimMesh : public Mesh<Vtx1> {
     // remove redundant vertices and then redundant primitives
     void Optimize()
     {
-        if (!this->m_il.size())
+        if (!m_il.size())
             return;
 
         static const float kUnifyDist = 0.1f;
         std::set<uint> replacedIndices;
         uint maxIndex = 0;
         spatial_hash<uint> verthash(10.f, this->m_vl.size() * 5);
-        for (uint i=0; i<this->m_il.size(); i++)
+        for (uint i=0; i<m_il.size(); i++)
         {
-            const uint index = this->m_il[i];
+            const uint index = m_il[i];
             const float3 vert = this->m_vl[index].pos;
             const float2 vert2(vert.x, vert.y);
             const uint   col  = this->m_vl[index].color;
@@ -1010,9 +1026,9 @@ struct PrimMesh : public Mesh<Vtx1> {
                     this->m_vl[idx].color == col && 
                     fabsf(this->m_vl[idx].pos.z - vert.z) < kUnifyDist)
                 {
-                    OPT_DBG(replacedIndices.insert(this->m_il[i]));
+                    OPT_DBG(replacedIndices.insert(m_il[i]));
                     replaced = true;
-                    this->m_il[i] = idx; 
+                    m_il[i] = idx; 
                     break;
                 }
             }
@@ -1042,6 +1058,41 @@ struct PrimMesh : public Mesh<Vtx1> {
 
         // TODO compact vertices
     }
+
+    void UpdateBuffers(bool use)
+    {
+        Mesh<V>::UpdateBuffers(use);
+        if (use) {
+            m_ibo.BufferData(m_il, GL_STATIC_DRAW);
+        } else {
+            m_ibo.clear();
+        }
+    }
+
+    template <typename Prog>
+    void Draw(const ShaderState &s, uint type, const Prog &program) const
+    {
+        if (!program.isLoaded())
+            return;
+
+        if (!this->m_vbo.empty())
+        {
+            ASSERT(m_ibo.size());
+            this->m_vbo.Bind();
+            program.UseProgram(s, &this->m_vl[0], &this->m_vl[0]);
+            s.DrawElements(type, m_ibo);
+            program.UnuseProgram();
+            this->m_vbo.Unbind();
+        }
+        else if (!this->m_vl.empty())
+        {
+            ASSERT(m_il.size() > 1);
+            
+            program.UseProgram(s, &this->m_vl[0], (V*)NULL);
+            s.DrawElements(type, m_il.size(), &m_il[0]);
+            program.UnuseProgram();
+        }
+    }
 };
 
 enum SpiralType {
@@ -1052,19 +1103,12 @@ enum SpiralType {
 };
 
 
+template <typename V>
+struct PointMesh : public Mesh<V> {
 
-template <typename Vtx>
-struct PointMesh : public Mesh<Vtx> {
-
-    void PushPoint(float2 pos)
-    {
-        this->PushV1(pos);
-    }
-
-    void PushPoint(const Vtx &pos)
-    {
-        this->PushV1(pos);
-    }
+    void PushPoint(float2 pos) { this->PushV1(pos); }
+    void PushPoint(float3 pos) { this->PushV1(pos); }
+    void PushPoint(const V &pos) { this->PushV1(pos); }
 
     template <typename Prog>
     void Draw(const ShaderState &s, const Prog &program) const
@@ -1082,15 +1126,15 @@ struct PointMesh : public Mesh<Vtx> {
         }
         else if (!this->m_vl.empty())
         {
-            program.UseProgram(s, &this->m_vl[0], (Vtx*)NULL);
+            program.UseProgram(s, &this->m_vl[0], (V*)NULL);
             s.DrawArrays(GL_POINTS, this->m_vl.size());
             program.UnuseProgram();
         }
     }
 };
     
-template <typename Vtx>
-struct LineMesh : public PrimMesh<Vtx, 2> {
+template <typename V>
+struct LineMesh : public PrimMesh<V, 2> {
 
     template <typename Vec>
     uint PushLoop(const Vec *pv, uint c)
@@ -1172,10 +1216,9 @@ struct LineMesh : public PrimMesh<Vtx, 2> {
     void PushSpiral(const float2 &pos, SpiralType type, float maxTheta, float a, float b,
                     uint numVerts=32, float startAngle=0.f)
     {
-        static const uint maxVerts = 64;
         ASSERT(numVerts >= 3);
-        numVerts = min(maxVerts, numVerts);
-        float2 verts[maxVerts];
+        numVerts = min(kCircleMaxVerts, numVerts);
+        float2 verts[kCircleMaxVerts];
 
         const float angleIncr = maxTheta / (float) numVerts;
     
@@ -1223,10 +1266,9 @@ struct LineMesh : public PrimMesh<Vtx, 2> {
 
     uint PushCircle(const float2 &pos, float radius, uint numVerts=32, float startAngle=0.f)
     {
-        static const uint maxVerts = 64;
         ASSERT(numVerts >= 3);
-        numVerts = min(maxVerts, numVerts);
-        float2 verts[maxVerts];
+        numVerts = min(kCircleMaxVerts, numVerts);
+        float2 verts[kCircleMaxVerts];
 
         float2       offset = radius * angleToVector(startAngle);
         const float2 rot    = angleToVector(2.f * M_PIf / (float) numVerts);
@@ -1242,10 +1284,9 @@ struct LineMesh : public PrimMesh<Vtx, 2> {
 
     uint PushEllipse(const float2 &pos, const float2 &radius, uint numVerts=32, float startAngle=0.f)
     {
-        static const uint maxVerts = 64;
         ASSERT(numVerts >= 3);
-        numVerts = min(maxVerts, numVerts);
-        float2 verts[maxVerts];
+        numVerts = min(kCircleMaxVerts, numVerts);
+        float2 verts[kCircleMaxVerts];
 
         const float dangle = 2.f * M_PIf / (float) numVerts;
         for (uint i=0; i != numVerts; ++i)
@@ -1388,13 +1429,13 @@ struct LineMesh : public PrimMesh<Vtx, 2> {
     template <typename Prog>
     void Draw(const ShaderState &s, const Prog& prog) const
     {
-        Mesh<Vtx>::Draw(s, GL_LINES, prog);
+        PrimMesh<V, 2>::Draw(s, GL_LINES, prog);
     }
 
 };
 
-template <typename Vtx>
-struct TriMesh : public PrimMesh<Vtx, 3> {
+template <typename V>
+struct TriMesh : public PrimMesh<V, 3> {
 
     void PushPoly(const float2* verts, uint vc)
     {
@@ -1408,7 +1449,7 @@ struct TriMesh : public PrimMesh<Vtx, 3> {
     }
 
     // a b
-    // c d
+    // d c
     uint PushQuad(float2 a, float2 b, float2 c, float2 d)
     {
         const float2 v[] = { a, b, c, d };
@@ -1418,22 +1459,21 @@ struct TriMesh : public PrimMesh<Vtx, 3> {
     template <typename Vec>
     uint PushQuadV(const Vec *v)
     {
-        static const uint i[] = {0, 1, 2, 1, 3, 2};
-        return this->Push(v, 4, i, arraySize(i));
+        return this->Push(v, 4, kQuadIndices, arraySize(kQuadIndices));
     }
 
     uint PushRect(float2 p, float2 r)
     {
         return PushQuad(p + float2(-r.x, r.y), p + r, 
-                        p-r, p + float2(r.x, -r.y));
+                        p + float2(r.x, -r.y), p-r);
     }
 
     uint PushRect(float3 p, float2 r)
     {
         const float3 v[] = { p + float3(-r.x,  r.y, 0),
                              p + float3( r.x,  r.y, 0),
-                             p + float3(-r.x, -r.y, 0),
-                             p + float3( r.x, -r.y, 0) };
+                             p + float3( r.x, -r.y, 0),
+                             p + float3(-r.x, -r.y, 0) };
         return PushQuadV(v);
     }
 
@@ -1442,7 +1482,7 @@ struct TriMesh : public PrimMesh<Vtx, 3> {
         float2 ll(min(a.x, b.x), min(a.y, b.y));
         float2 ur(max(a.x, b.x), max(a.y, b.y));
         PushQuad(float2(ll.x, ur.y), ur,
-                 ll, float2(ur.x, ll.y));
+                 float2(ur.x, ll.y), ll);
     }
 
     void PushTri(float2 a, float2 b, float2 c)
@@ -1563,7 +1603,7 @@ struct TriMesh : public PrimMesh<Vtx, 3> {
     template <typename Prog>
     void Draw(const ShaderState &s, const Prog& prog) const
     {
-        Mesh<Vtx>::Draw(s, GL_TRIANGLES, prog);
+        PrimMesh<V, 3>::Draw(s, GL_TRIANGLES, prog);
     }
 };
 

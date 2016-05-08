@@ -2,11 +2,19 @@
 #include "StdAfx.h"
 #include "Shaders.h"
 
-void ShaderPosBase::DrawLineCircle(const ShaderState& ss, float radius, int numVerts) const
+void ShaderPosBase::DrawQuad(const ShaderState& ss, float2 a, float2 b, float2 c, float2 d) const
 {
-    static const int maxVerts = 64;
-    numVerts = std::min(maxVerts, numVerts);
-    float2 verts[maxVerts];
+    const float2 v[] = { a, b, c, d };
+
+    UseProgram(ss, &v[0]);
+    ss.DrawElements(GL_TRIANGLES, 6, kQuadIndices);
+    UnuseProgram();
+}
+
+void ShaderPosBase::DrawLineCircle(const ShaderState& ss, float radius, uint numVerts) const
+{
+    numVerts = std::min(kCircleMaxVerts, numVerts);
+    float2 verts[kCircleMaxVerts];
     
     for (int i=0; i != numVerts; ++i)
     {
@@ -20,11 +28,10 @@ void ShaderPosBase::DrawLineCircle(const ShaderState& ss, float radius, int numV
     UnuseProgram();
 }
 
-void ShaderPosBase::DrawCircle(const ShaderState& ss, float radius, int numVerts) const
+void ShaderPosBase::DrawCircle(const ShaderState& ss, float radius, uint numVerts) const
 {
-    static const int maxVerts = 64;
-    numVerts = std::min(maxVerts - maxVerts/3, numVerts);
-    float2 verts[maxVerts];
+    numVerts = std::min(kCircleMaxVerts - kCircleMaxVerts/3, numVerts);
+    float2 verts[kCircleMaxVerts];
     
     verts[0].x = 0;
     verts[0].y = 0;
@@ -48,15 +55,24 @@ void ShaderPosBase::DrawCircle(const ShaderState& ss, float radius, int numVerts
     UnuseProgram();
 }
 
-static const ushort kQuadIndices[] = {0, 1, 2, 1, 3, 2};
-
 void ShaderTextureBase::bindTextureDrawElements(const ShaderState &ss, const GLTexture &texture,
-                                                VertexPosTex *vtx, int icount, const ushort *idxs) const
-{
+                                                VertexPosTex *vtx, int icount, const uint *idxs) const
+{    
     texture.BindTexture(0);
     UseProgram(ss, vtx, texture);
     ss.DrawElements(GL_TRIANGLES, icount, idxs);
     UnuseProgram();
+}
+
+static void flipTexCoords(const GLTexture& texture, VertexPosTex *vtx, int count)
+{
+    // OpenGL texture coordinate origin is in the lower left.
+    // My image loaders like to use upper left.
+    if (texture.isFlipped())
+    {
+        for (int i=0; i<count; i++)
+            vtx[i].tex.y = 1.f - vtx[i].tex.y;
+    }
 }
 
 void ShaderTextureBase::DrawQuad(const ShaderState& ss, const GLTexture& texture,
@@ -65,8 +81,9 @@ void ShaderTextureBase::DrawQuad(const ShaderState& ss, const GLTexture& texture
     const float2 tc = texture.tcoordmax();
     VertexPosTex v[] = { { float3(a, 0), float2(0, tc.y) },
                          { float3(b, 0), tc },
-                         { float3(c, 0), float2() },
-                         { float3(d, 0), float2(tc.x, 0) } };
+                         { float3(c, 0), float2(tc.x, 0) },
+                         { float3(d, 0), float2() } };
+    flipTexCoords(texture, v, arraySize(v));
     bindTextureDrawElements(ss, texture, v, arraySize(kQuadIndices), kQuadIndices);
 }
 
@@ -78,20 +95,21 @@ void ShaderTextureBase::DrawRectScale(const ShaderState &ss, const GLTexture& te
 
     const float2 a = pos + flipX(rad);
     const float2 b = pos + rad;
-    const float2 c = pos - rad;
-    const float2 d = pos + flipY(rad);
+    const float2 c = pos + flipY(rad);
+    const float2 d = pos - rad;
 
     VertexPosTex v[] = { { float3(a, 0), float2(0, tc.y) },
                          { float3(b, 0), tc },
-                         { float3(c, 0), float2() },
-                         { float3(d, 0), float2(tc.x, 0) } };
+                         { float3(c, 0), float2(tc.x, 0) },
+                         { float3(d, 0), float2() } };
+    flipTexCoords(texture, v, arraySize(v));
     bindTextureDrawElements(ss, texture, v, arraySize(kQuadIndices), kQuadIndices);
 }
 
 
 void ShaderTextureBase::DrawButton(const ShaderState &ss, const GLTexture& texture, float2 pos, float2 r) const
 {
-    static const float o = 0.1f;
+    const float o = kButtonCorners;
     VertexPosTex v[6] = { 
         { float3(pos + float2(-r.x, lerp(r.y, -r.y, o)), 0.f), float2(0.f, 1.f - o) },
         { float3(pos + float2(lerp(-r.x, r.x, o), r.y),  0.f), float2(o, 1.f)       },
@@ -99,7 +117,8 @@ void ShaderTextureBase::DrawButton(const ShaderState &ss, const GLTexture& textu
         { float3(pos + float2(r.x, lerp(-r.y, r.y, o)),  0.f), float2(1.f, o),      },
         { float3(pos + float2(lerp(r.x, -r.x, o), -r.y), 0.f), float2(1.f - o, 0.f) },
         { float3(pos + float2(-r.x, -r.y),               0.f), float2(0.f)          } };
-    static const ushort i[] = { 0,1,2, 0,2,3, 0,3,4, 0,4,5 };
+    static const uint i[] = { 0,1,2, 0,2,3, 0,3,4, 0,4,5 };
+    flipTexCoords(texture, v, arraySize(v));
     bindTextureDrawElements(ss, texture, v, arraySize(i), i);
 }
 

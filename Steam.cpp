@@ -257,7 +257,7 @@ int SteamFileExists(const char* fname)
 bool SteamFileDelete(const char* fname)
 {
     ISteamRemoteStorage *ss = SteamRemoteStorage();
-    if (!ss)
+    if (!ss || !SteamFileExists(fname))
         return false;
     
     {
@@ -267,6 +267,12 @@ bool SteamFileDelete(const char* fname)
     const bool success = ss->FileDelete(fname);
     ASSERTF(success, "FileDelete failed on '%s'", fname);
     return success;
+}
+
+bool SteamFileForget(const char* fname)
+{
+    ISteamRemoteStorage *ss = SteamRemoteStorage();
+    return ss && ss->FileForget(fname);
 }
 
 int SteamFileCount()
@@ -309,8 +315,10 @@ bool steamFileWrite(const char* fname, const char* data, int size, int ucsize)
         return false;
     }
 
-    std::lock_guard<std::mutex> m(steamIndexMutex());
-    steamIndex()[fname] = size;
+    {
+        std::lock_guard<std::mutex> m(steamIndexMutex());
+        steamIndex()[fname] = size;
+    }
     DPRINT(SAVE, ("save steam/%s", fname));
     return true;
 }
@@ -345,11 +353,9 @@ int steamDeleteRecursive(const char *path)
     if (!ss)
         return 0;
     int deleted = 0;
-    if (SteamFileExists(path)) {
-        if (SteamFileDelete(path))
-        {
-            deleted++;
-        }
+    if (SteamFileDelete(path))
+    {
+        deleted++;
     }
     else
     {

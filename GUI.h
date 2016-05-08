@@ -387,19 +387,39 @@ struct ContextMenu : public WidgetBase {
     void render(const ShaderState &s_);
 };
 
-struct BContext : public Button {
-    vector<string> vals;
-    ContextMenu    menu;
-    string         title;
-    string         selection;
+// button which allows selecting one of several options
+// creates pop up menu (ContextMenu) when clicked on
 
-    BContext();
-    void pushItem(const string &key, const string &val);
-    void setSelection(int index);
+struct BContextBase : public Button {
+    ContextMenu menu;
+    string      title;
+    int         selection = -1;
+    bool        showSelection = true;
+
     bool HandleEventMenu(const Event* event, bool* selectionChanged);
     void renderContents(const ShaderState &ss);
+    void setSelection(int index);
+
 private:
     using ButtonBase::HandleEvent;
+};
+
+template <typename T>
+struct BContext : public BContextBase {
+    vector<T>   vals;
+
+    BContext() {}
+
+    // key is displayed, val is what selection is set to
+    void pushItem(const string &key, const T &val)
+    {
+        const int i = menu.lines.size();
+        vec_set_index(vals, i, val);
+        menu.setLine(i, key.c_str());
+    }
+
+    const T &getSelection() { return vals[selection]; }
+    void select(const T& val) { setSelection(vec_find_index(vals, val)); }
 };
 
 

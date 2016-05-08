@@ -992,7 +992,7 @@ Options:
             # print ver, typ, osd
 
             if ops.version == datetime.min:
-                ops.version = datetime.now() - timedelta(weeks=1)
+                ops.version = datetime.now() - timedelta(weeks=12)
             vtime = parse_version(ver)
             if vtime < ops.version:
                 verignore += 1

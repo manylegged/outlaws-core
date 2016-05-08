@@ -92,6 +92,7 @@ static const std::wstring& getDataDir()
     return str;
 }
 
+// used in ZipFile.cpp and stl_ext.cpp
 void ReportWin32Err1(const char *msg, DWORD dwLastError, const char* file, int line)
 {
     if (dwLastError == 0)
@@ -398,58 +399,6 @@ bool os_symlink_f(const char* source, const char* dest)
     return status ? true : false;
 }
 
-int OL_SaveFile(const char *name, const char* data, size_t size)
-{
-    const std::wstring fname = pathForFile(name, "w");
-    const std::wstring wfnameb = fname + L".b";
-    const string fnameb = ws2s(wfnameb);
-
-    if (!CreateParentDirs(fname))
-        return 0;
-
-    SDL_RWops *io = SDL_RWFromFile(fnameb.c_str(), "w");
-
-    if (!io)
-    {
-        ReportWin32("error opening '%s' for writing: %s", fnameb.c_str(), SDL_GetError());
-        return 0;
-    }
-
-    // translate newlines
-#if 1
-    string data1;
-    data1.reserve(size);
-    for (const char* ptr=data; *ptr != '\0'; ptr++) {
-        if (*ptr == '\n')
-            data1 += "\r\n";
-        else
-            data1 += *ptr;
-    }
-#else
-    string data1 = data;
-#endif
-
-    const int bytesWritten = SDL_RWwrite(io, data1.c_str(), sizeof(char), data1.size());
-    if (bytesWritten != data1.size())
-    {
-        ReportWin32("writing to '%s', wrote %d bytes of expected %d", fnameb.c_str(), bytesWritten, data1.size());
-        return 0;
-    }
-    if (SDL_RWclose(io) != 0)
-    {
-        ReportWin32("error closing temp file from '%s': %s", fnameb.c_str(), SDL_GetError());
-        return 0;
-    }
-    
-    if (!MoveFileEx(wfnameb.c_str(), fname.c_str(), MOVEFILE_REPLACE_EXISTING))
-    {
-		ReportWin32ErrF(("MoveFileEx('%s')", ws2s(fname).c_str()), GetLastError());
-        return 0;
-    }
-
-    return 1;
-}
-
 int OL_RemoveFileOrDirectory(const char* dirname)
 {
     std::wstring path = pathForFile(dirname, "w");
@@ -468,6 +417,17 @@ int OL_RemoveFileOrDirectory(const char* dirname)
         ReportWin32Err("SHFileOperation(FO_DELETE)", val);
     }
 	return val == 0 ? 1 : 0;
+}
+
+int OL_RemoveFile(const char* fname)
+{
+    std::wstring path = pathForFile(fname, "w");
+    if (!DeleteFile(path.c_str()))
+    {
+        ReportWin32Err("DeleteFile", GetLastError());
+        return 0;
+    }
+    return 1;
 }
 
 int OL_OpenWebBrowser(const char* url)

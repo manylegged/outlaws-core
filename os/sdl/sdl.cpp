@@ -399,17 +399,16 @@ float OL_GetCurrentBackingScaleFactor(void)
 
 struct OutlawImage OL_LoadImage(const char* fname)
 {
-    // FIXME implement me
     OutlawImage img;
     memset(&img, 0, sizeof(img));
     
     const char *buf = OL_PathForFile(fname, "r");
-    ReportSDL("loading [%s]...\n", buf);
+    ReportSDL("loading [%s]...", buf);
 
     SDL_Surface *surface = IMG_Load(buf);
  
     if (!surface) {
-        ReportSDL("SDL could not load '%s': %s\n", buf, SDL_GetError());
+        ReportSDL("SDL could not load '%s': %s", buf, SDL_GetError());
         return img;
     }
 
@@ -425,7 +424,7 @@ struct OutlawImage OL_LoadImage(const char* fname)
         texture_format = GL_LUMINANCE;
     }
 
-    ReportSDL("texture has %d colors, %dx%d pixels\n", nOfColors, surface->w, surface->h);
+    ReportSDL("texture has %d colors, %dx%d pixels", nOfColors, surface->w, surface->h);
 
     img.width = surface->w;
     img.height = surface->h;
@@ -760,7 +759,7 @@ int StringRenderer::StringImage(OutlawImage *img)
             }
             else
             {
-                ReportSDL("TTF Error: %s\n", TTF_GetError());
+                ReportSDL("TTF Error: %s", TTF_GetError());
             }
         }
 

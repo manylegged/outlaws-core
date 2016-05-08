@@ -207,6 +207,9 @@ inline float floor(float a, float v)
     return v * floor(a / v);
 }
 
+inline float2 floor(float2 a, float v) { return f2(floor(a.x, v), floor(a.y, v)); }
+inline float2 ceil(float2 a, float v) { return f2(ceil(a.x, v), ceil(a.y, v)); }
+
 inline int floor_int(float f)
 {
     DASSERT(fabsf(f) < (2<<23));
@@ -289,6 +292,11 @@ inline float distanceAngles(float a, float b)
     return M_PI_2f * e;
 }
 
+inline int distance(int a, int b)
+{
+    return abs(a - b);
+}
+
 static const double kGoldenRatio = 1.61803398875;
 
 inline float2 toGoldenRatioY(float y) { return float2(y * kGoldenRatio, y); }
@@ -300,6 +308,8 @@ inline int clamp(int v, int mn, int mx) { return min(max(v, mn), mx); }
 inline float clamp(float v, float mn=0.f, float mx=1.f) { return min(max(v, mn), mx); }
 inline float2 clamp(float2 v, float2 mn, float2 mx) { return float2(clamp(v.x, mn.x, mx.x),
                                                                     clamp(v.y, mn.y, mx.y)); }
+
+
 
 inline float2 clamp_length(float2 v, float mn=0.f, float mx=1.f)
 {
@@ -574,10 +584,48 @@ inline float lerpAngles(float a, float b, float v)
     return vectorToAngle(lerp(angleToVector(a), angleToVector(b), v));
 }
 
-// return 0-1 depending how close value is to inputs zero and one (clamps if outside)
-// inv_lerp(a, b, lerp(a, b, v)) == v, for 0 <= v <= 1
+// return 0-1 depending how close value is to inputs zero and one
+// inv_lerp(a, b, lerp(a, b, v)) == v
 template <typename T>
-inline T inv_lerp(T zero, T one, float val)
+inline T inv_lerp(T zero, T one, T val)
+{
+    const T denom = one - zero;
+    if (nearZero(denom))
+        return T(0);
+    return (val - zero) / denom;
+}
+
+template <typename T>
+inline glm::tvec2<T> inv_lerp(glm::tvec2<T> zero, glm::tvec2<T> one, glm::tvec2<T> val)
+{
+    const glm::tvec2<T> denom = one - zero;
+    return (nearZero(denom.x) ? glm::tvec2<T>(inv_lerp(zero.y, one.y, val.y)) :
+            nearZero(denom.y) ? glm::tvec2<T>(inv_lerp(zero.x, one.x, val.x)) :
+            (val - zero) / denom);
+}
+
+template <typename T>
+inline glm::tvec3<T> inv_lerp(glm::tvec3<T> zero, glm::tvec3<T> one, glm::tvec3<T> val)
+{
+    const glm::tvec3<T> denom = one - zero;
+    if (nearZero(denom.x)) {
+        glm::tvec2<T> yz = inv_lerp(glm::tvec2<T>(zero.y, zero.z), glm::tvec2<T>(one.y, one.z), glm::tvec2<T>(val.y, val.z));
+        return glm::tvec3<T>((yz.x + yz.y) / 2.f, yz.x, yz.y);
+    } else if (nearZero(denom.y)) {
+        glm::tvec2<T> xz = inv_lerp(glm::tvec2<T>(zero.x, zero.z), glm::tvec2<T>(one.x, one.z), glm::tvec2<T>(val.x, val.z));
+        return glm::tvec3<T>(xz.x, (xz.x + xz.y) / 2.f, xz.y);
+    } else if (nearZero(denom.z)) {
+        glm::tvec2<T> xy = inv_lerp(glm::tvec2<T>(zero.x, zero.y), glm::tvec2<T>(one.x, one.y), glm::tvec2<T>(val.x, val.y));
+        return glm::tvec3<T>(xy.x, xy.y, (xy.x + xy.y) / 2.f);
+    } else {
+        return (val - zero) / denom;
+    }
+}
+
+// return 0-1 depending how close value is to inputs zero and one (clamps if outside)
+// inv_lerp(a, b, lerp(a, b, v)) == v, for 0 < v < 1
+template <typename T>
+inline float inv_lerp_clamp(T zero, T one, T val)
 {
     const bool inv = (zero > one);
     if (inv)
@@ -767,18 +815,8 @@ bool intersectSegmentSegment(float2 *o, float2 a1, float2 a2, float2 b1, float2 
 // return count, up to two points in OUTP
 int intersectPolySegment(float2 *outp, const float2 *points, int npoints, float2 sa, float2 sb);
 
-// distance from point P to closest point on line A B
-// FIXME could probably do this with only one sqrt...
-inline float perpendicularDistance(float2 a, float2 b, float2 p)
-{
-    float2 segv    = b - a;
-    float2 ptv     = p - a;
-    float  seglen  = length(segv);
-    float2 usegv   = segv / seglen;
-    float  proj    = dot(ptv, usegv);
-    float2 closest = a + proj * usegv;
-    return distance(closest, p);
-}
+// assume clockwise winding
+bool intersectPolyPoint(const float2 *points, int npoints, float2 ca);
 
 // orient and incircle are adapted from Jonathan Richard Shewchuk's "Fast Robust Geometric Predicates"
 
@@ -981,6 +1019,9 @@ struct AABBox {
     AABBox operator+(const float2& vec) const { return AABBox(mn + vec, mx + vec); }
     AABBox &operator+=(const float2& vec) { mn += vec; mx += vec; return *this; }
 
+    AABBox operator+(const AABBox &box) const { return AABBox(min(mn, box.mn), max(mx, box.mx)); }
+    AABBox &operator+=(const AABBox &box) { insertAABBox(box); return *this; }
+
     void start(float2 pt) 
     {
         if (mn.x != 0.f || mn.y != 0.f || mx.x != 0.f || mx.y != 0.f)
@@ -1072,19 +1113,6 @@ float2 rectangleEdge(float2 rpos, float2 rrad, float2 dir);
 
 // from http://www.blackpawn.com/texts/pointinpoly/
 bool intersectPointTriangle(float2 P, float2 A, float2 B, float2 C);
-
-// quad points must have clockwise winding
-inline bool intersectPointQuad(float2 P, float2 A, float2 B, float2 C, float2 D)
-{
-    ASSERT(orient(A, B, C) >= 0 && 
-           orient(B, C, D) >= 0 &&
-           orient(C, D, A) >= 0);
-
-    return (orient(P, A, B) >= 0 &&
-            orient(P, B, C) >= 0 &&
-            orient(P, C, D) >= 0 &&
-            orient(P, D, A) >= 0);
-}
 
 // angle must be acute
 inline bool intersectSectorPointAcute(float2 ap, float ad, float aa, float2 cp)
@@ -1227,6 +1255,22 @@ struct SlopeLine {
     float eval(float x) const { return slope * x + y_int; }
 };
 
-SlopeLine leastSqrRegression(float2* xyCollection, int dataSize);
+// least squares
+struct LinearRegression {
+    double2 sum;                // sum of values
+    double2 sumx;               // sum of x * values
+    int     count = 0;
+
+    void insert(float2 p);
+    SlopeLine calculate() const;
+};
+
+struct Variance {
+    int n = 0;
+    double sumweight=0.0, mean=0.0, m2=0.0;
+
+    void insert(double val, double weight=1.0);
+    double calculate() const;
+};
 
 #endif

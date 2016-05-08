@@ -84,6 +84,8 @@ void GLText::load(const string& str, int font_, float size, float pointSize)
         return;
     
     texture.TexImage2D(img);
+    texture.setFlipped(true);
+    
     OL_FreeImage(&img);
 
     texChars     = chars;
@@ -100,11 +102,9 @@ void GLText::render(const ShaderState* s, float2 pos) const
     
     const float2 textSizePoints = getSize();
 
-    glDisable(GL_DEPTH_TEST);
-    glDepthMask(GL_FALSE);
-    ShaderTexture::instance().DrawRectCornersUpsideDown(*s, texture, pos, pos + textSizePoints);
-    glDepthMask(GL_TRUE);
-    glEnable(GL_DEPTH_TEST);
+    GLScope s0(GL_DEPTH_TEST, false);
+    GLScope s1(GL_DEPTH_WRITEMASK, false);
+    ShaderTexture::instance().DrawRectCorners(*s, texture, pos, pos + textSizePoints);
 }
 
 

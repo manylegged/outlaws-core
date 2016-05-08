@@ -240,9 +240,6 @@ void OL_OnTerminate(const char* message);
 /////////// File IO
 // All functions take paths relative to main game directory
 
-// write file to disk, atomically. Creates directories as needed.
-int OL_SaveFile(const char* fname, const char* data, size_t size);
-
 // create directories as needed for fname
 // fname must be an absolute path - PathForFile is NOT called
 int OL_CreateParentDirs(const char* fname);
@@ -261,6 +258,9 @@ const char *OL_PathForFile(const char *fname, const char *mode);
 
 // recursively delete a file or directory
 int OL_RemoveFileOrDirectory(const char* dirname);
+
+// delete just a file
+int OL_RemoveFile(const char* fname);
 
 // return true if path is a file or directory
 int OL_FileDirectoryPathExists(const char* fname);

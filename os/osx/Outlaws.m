@@ -210,31 +210,6 @@ const char** OL_ListDirectory(const char* path)
     return array;
 }
  
-int OL_SaveFile(const char *fname, const char* data, size_t size)
-{
-    NSString *path = pathForFileName(fname, "w");
-
-    if (!createParentDirectories(path))
-        return 0;
-
-    NSError *error = nil;
-#if 0
-    // NSString *nsdata = [NSString stringWithUTF8String:data];
-    NSString *nsdata = [NSString initWithBytes:data length:size encoding:NSUTF8StringEncoding];
-    BOOL success = nsdata && [nsdata writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:&error];
-#else
-    NSData *nsdata = [NSData dataWithBytesNoCopy:(void*)data length:size freeWhenDone:NO];
-    BOOL success = nsdata && [nsdata writeToFile:path options:NSDataWritingAtomic error:&error];
-#endif    
-    if (!success)
-    {
-        LogMessage([NSString stringWithFormat:@"Error writing to file at %@: %@", 
-                           path, error ? [error localizedFailureReason] : @"unknown"]);
-    }
-
-    return success ? 1 : 0;
-}
-
 int OL_RemoveFileOrDirectory(const char* dirname)
 {
     NSString *astr = pathForFileName(dirname, "r");
@@ -247,13 +222,19 @@ int OL_RemoveFileOrDirectory(const char* dirname)
     }
 
     NSError* err = nil;
-    BOOL success = [[NSFileManager defaultManager] removeItemAtPath: astr error:&err];
+    BOOL success = [[NSFileManager defaultManager] removeItemAtPath:astr error:&err];
     if (success == NO)
     {
         LogMessage([NSString stringWithFormat:@"Error clearing directory %@: %@", astr, [err localizedFailureReason]]);
     }
     return success ? 1 : 0;
 }
+
+int OL_RemoveFile(const char* fname)
+{
+    return OL_RemoveFileOrDirectory(fname);
+}
+
 
 int OL_FileDirectoryPathExists(const char* fname)
 {

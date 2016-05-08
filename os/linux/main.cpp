@@ -179,40 +179,6 @@ bool os_symlink_f(const char* source, const char* dest)
     return true;
 }
 
-int OL_SaveFile(const char *name, const char* data, size_t size)
-{
-    const char* fname = OL_PathForFile(name, "w");
-    OL_CreateParentDirs(fname);
-    
-    string fnameb = string(fname) + ".b";
-
-    FILE *f = fopen(fnameb.c_str(), "w");
-    if (!f)
-    {
-        ReportLinux("error opening '%s' for writing\n", fnameb.c_str());
-        return 0;
-    }
-    const int bytesWritten = fwrite(data, 1, size, f);
-    if (bytesWritten != size)
-    {
-        ReportLinux("writing to '%s', wrote %d bytes of expected %d\n", fnameb.c_str(), bytesWritten, size);
-        return 0;
-    }
-    if (fclose(f) != 0)
-    {
-        ReportLinux("error closing temp file from '%s': %s'\n", fnameb.c_str(), strerror(errno));
-        return 0;
-    }
-    
-    if (rename(fnameb.c_str(), fname) != 0)
-    {
-        ReportLinux("error renaming temp file from '%s' to '%s': %s'\n", fnameb.c_str(), fname, strerror(errno));
-        return 0;
-    }
-
-    return 1;
-}
-
 int unlink_cb(const char *fpath, const struct stat *sb, int typeflag, struct FTW *ftwbuf)
 {
     int rv = remove(fpath);
@@ -228,6 +194,16 @@ int OL_RemoveFileOrDirectory(const char* dirname)
 {
     const char *path = OL_PathForFile(dirname, "r");
     nftw(path, unlink_cb, 64, FTW_DEPTH | FTW_PHYS);
+    return 1;
+}
+
+int OL_RemoveFile(const char* fname)
+{
+    const char *path = OL_PathForFile(fname, "r");
+    if (remove(path)) {
+        ReportLinux("Error removing '%s': %s", path, strerror(errno));
+        return 0;
+    }
     return 1;
 }
 

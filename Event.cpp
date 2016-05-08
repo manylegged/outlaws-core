@@ -27,6 +27,32 @@
 #include "Event.h"
 
 static DEFINE_CVAR(float, kGamepadKeyThreshold, 0.5f);
+static DEFINE_CVAR(float, kScrollWheelDirection, 1);
+
+Event::Event(const OLEvent &ev)
+{
+    type   = (Event::Type) ev.type; // hack...
+    which  = ev.which;
+    key    = ev.key;
+    rawkey = chr_unshift(ev.key);
+    pos    = float2(ev.x, ev.y);
+    vel    = float2(ev.dx, ev.dy);
+
+    if (isMouse() && !isBetween(key, 0, kMouseButtonCount-1))
+        return;
+
+    if (type == Event::SCROLL_WHEEL) {
+        vel.y *= kScrollWheelDirection;
+    }
+
+    // mouse emulation
+    switch (type) {
+    case Event::TOUCH_BEGIN: type = Event::MOUSE_DOWN; break;
+    case Event::TOUCH_ENDED: type = Event::MOUSE_UP; break;
+    case Event::TOUCH_MOVED: type = Event::MOUSE_DRAGGED; break;
+    default: break;
+    }
+}
 
 string Event::toString() const
 {
@@ -391,6 +417,13 @@ void KeyState::OnEvent(const Event* event)
     default:
         break;
     }
+}
+
+KeyState & KeyState::instance()
+{
+    static KeyState mn;
+    static KeyState up;
+    return globals.isMainThread() ? mn : up;
 }
 
 static string keyToUTF8(int key)

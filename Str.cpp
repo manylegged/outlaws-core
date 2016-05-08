@@ -29,6 +29,10 @@
 #include "Str.h"
 #include <cstdint>
 
+// #include <time.h>
+#include <iomanip>
+#include <sstream>
+
 namespace std {
     // template class basic_string<char>;
     // template class vector<string>;
@@ -625,7 +629,20 @@ std::string str_reltime_format(float seconds)
 
 std::string str_timestamp()
 {
-    return str_strftime("%Y%m%d_%I.%M.%S.%p");
+    return str_strftime(STR_TIMESTAMP_FORMAT);
+}
+
+bool str_strptime(const char* str, const char* fmt, std::tm *tm)
+{
+    memset(tm, 0, sizeof(std::tm));
+#if __GNUC__
+    return strptime(str, fmt, tm) != NULL;
+#else
+    std::istringstream input(str);
+    input.imbue(std::locale(setlocale(LC_ALL, nullptr)));
+    input >> std::get_time(tm, fmt);
+    return !input.fail();
+#endif
 }
 
 std::string str_strftime(const char* fmt, const std::tm *time)

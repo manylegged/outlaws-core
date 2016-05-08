@@ -2,6 +2,8 @@
 #include "StdAfx.h"
 #include "stl_ext.h"
 
+dummy_ref_t the_dummy_ref = dummy_ref_t();
+
 int findLeadingOne(uint v, int i)
 {
     if (v&0xffff0000) { i += 16; v >>= 16; }
@@ -102,9 +104,6 @@ void SetThreadName(DWORD dwThreadID, const char* threadName)
     {
     }
 }
-
-// Win32Main.cpp
-void ReportWin32Err1(const char *msg, DWORD dwLastError, const char* file, int line);
 
 #endif
 
@@ -335,3 +334,23 @@ void MemoryPool::deallocate(void *ptr)
     first = chunk;
     used--;
 }
+
+// SerialCore.h
+EnumType::EnumType(std::initializer_list<Pair> el) : elems(el)
+{
+    foreach (const Pair &it, el)
+    {
+        s2v[it.first.str()] = it.second;
+        v2s[it.second] = it.first;
+    }
+
+    // its a bitset if the first 4 values don't overlap
+    uint64 bit = 0;
+    for (int i=0; i<min((int)elems.size(), 4); i++)
+    {
+        if (elems[i].second&bit)
+            m_isBitset = false;
+        bit |= elems[i].second;
+    }
+}
+

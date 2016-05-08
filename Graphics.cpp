@@ -39,15 +39,22 @@ template struct TriMesh<VertexPosColor>;
 template struct LineMesh<VertexPosColor>;
 template struct MeshPair<VertexPosColor, VertexPosColor>;
 
+#ifndef GL_CLAMP_TO_EDGE_SGIS
+#define GL_CLAMP_TO_EDGE_SGIS GL_CLAMP_TO_EDGE
+#endif
+
+#ifndef GL_UNSIGNED_INT_8_8_8_8_REV
+#define GL_UNSIGNED_INT_8_8_8_8_REV GL_BGRA
+#endif
+
 bool supports_ARB_Framebuffer_object = false;
 
 static const uint kDebugFrames = 10;
 
 bool isGLExtensionSupported(const char *name)
 {
-    static const GLubyte* val = glGetString(GL_EXTENSIONS);
-    static const string str((const char*)val);
-    return str.find(name) != std::string::npos;
+    static const char* val = (const char*) glGetString(GL_EXTENSIONS);
+    return str_contains(val, name);
 }
 
 uint graphicsDrawCount = 0;
@@ -131,6 +138,81 @@ static GLenum glReportFramebufferError1(const char *file, uint line, const char 
 
 #define glReportFramebufferError() glReportFramebufferError1(__FILE__, __LINE__, __func__)
 
+void GLScope::set(bool val)
+{
+    DASSERT(type == BOOL);
+    if ((bool)current.bval == val)
+        return;
+    current.bval = val;
+                   
+    switch (enm)
+    {
+    case GL_DEPTH_WRITEMASK:
+        glDepthMask(val ? GL_TRUE : GL_FALSE);
+        break;
+    case GL_BLEND:
+    case GL_DEPTH_TEST:
+    case GL_ALPHA_TEST:
+        if (val)
+            glEnable(enm);
+        else
+            glDisable(enm);
+        break;
+    default:
+        ASSERT_FAILED("GLScope", "Unknown bool enum %#x", (int)enm);
+    }
+}
+
+void GLScope::set(float val)
+{
+    DASSERT(type == FLOAT);
+    if (current.fval == val)
+        return;
+    current.fval = val;
+        
+    switch (enm)
+    {
+    case GL_LINE_WIDTH:
+        glLineWidth(val);
+        break;
+    default:
+        ASSERT_FAILED("GLScope", "Unknown float enum %#x", (int)enm);
+    }
+}
+
+GLScope::~GLScope()
+{
+    switch (type)
+    {
+    case BOOL: set((bool)saved.bval); break;
+    case FLOAT: set((float)saved.fval); break;
+    }
+}
+
+GLScopeBlend::GLScopeBlend(GLenum srgb, GLenum drgb,
+             GLenum salpha, GLenum dalpha)
+{
+    if (salpha == 0)
+        salpha = srgb;
+    if (dalpha == 0)
+        dalpha = drgb;
+    glGetIntegerv(GL_BLEND_SRC_RGB, &src_color);
+    glGetIntegerv(GL_BLEND_DST_RGB, &dst_color);
+    glGetIntegerv(GL_BLEND_SRC_ALPHA, &src_alpha);
+    glGetIntegerv(GL_BLEND_DST_ALPHA, &dst_alpha);
+
+    changed = (srgb != src_color || drgb != dst_color || salpha != src_alpha || dalpha != dst_alpha);
+    if (changed)
+        glBlendFuncSeparate(srgb, drgb, salpha, dalpha);
+}
+
+GLScopeBlend::~GLScopeBlend()
+{
+    if (changed)
+        glBlendFuncSeparate(src_color, dst_color, src_alpha, dst_alpha);
+}
+
+
 static bool ignoreShaderLog(const char* buf)
 {
     // damnit ATI driver
@@ -184,6 +266,9 @@ static const char* textureFormatToString(GLint fmt)
         CASE_STR(GL_RGB);
         CASE_STR(GL_RGBA);
         CASE_STR(GL_BGRA);
+        CASE_STR(GL_ALPHA);
+        CASE_STR(GL_LUMINANCE_ALPHA);
+        CASE_STR(GL_LUMINANCE);
 #if OPENGL_ES
         CASE_STR(GL_RGB16F_EXT);
 #else
@@ -198,8 +283,18 @@ static const char* textureFormatToString(GLint fmt)
 static int textureFormatBytesPerPixel(GLint fmt)
 {
     switch (fmt) {
+#if OPENGL_ES
+    case GL_RGB16F_EXT:
+#else
     case GL_RGB16F_ARB:
-    case GL_RGBA16F_ARB: return 2 * 4;
+    case GL_RGBA16F_ARB:
+#endif
+        return 2 * 4;
+    case GL_LUMINANCE_ALPHA:
+        return 2;
+    case GL_LUMINANCE:
+    case GL_ALPHA:
+        return 1;
     default:
         return 4;
     }
@@ -249,7 +344,7 @@ void GLRenderTexture::Generate(ZFlags zflags)
     glReportError();
  
 #if OPENGL_ES
-    if (m_format == GL_RGBA16F_ARB)
+    if (m_format == GL_RGBA16F_EXT)
     {
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_HALF_FLOAT_OES, 0);
     }
@@ -423,29 +518,26 @@ void GLTexture::clear()
     m_texname = 0;
 }
 
-void GLTexture::DrawFSBegin(ShaderState& ss) const
-{
-    glDepthMask(GL_FALSE);
-    glDisable(GL_DEPTH_TEST);
-#if !OPENGL_ES
-    glDisable(GL_ALPHA_TEST);
-#endif
-
-    ss.uTransform = glm::ortho(0.f, 1.f, 0.f, 1.f, -1.f, 1.f);
-}
-
-void GLTexture::DrawFSEnd() const
-{
-    glDepthMask(GL_TRUE);
-    glEnable(GL_DEPTH_TEST);
-#if !OPENGL_ES
-    glEnable(GL_ALPHA_TEST);
-#endif
-    glReportError();
-}
-
 void GLTexture::TexImage2D(GLenum int_format, int2 size, GLenum format, GLenum type, const void *data)
 {
+    if (!int_format)
+    {
+        switch (format)
+        {
+        case GL_RGBA: case GL_RGB:
+        case GL_LUMINANCE_ALPHA: case GL_LUMINANCE: case GL_ALPHA:
+            int_format = format;
+            break;
+        default:
+        case GL_BGRA:
+            int_format = GL_RGBA;
+            break;
+        case GL_BGR:
+            int_format = GL_RGB;
+            break;
+        }
+    }
+    
     m_format = int_format;
     if (!m_texname) {
         glGenTextures(1, &m_texname);
@@ -458,19 +550,15 @@ void GLTexture::TexImage2D(GLenum int_format, int2 size, GLenum format, GLenum t
     m_texsize = float2(roundUpPower2(size.x), roundUpPower2(size.y));
     glTexImage2D(GL_TEXTURE_2D, 0, format,
                  m_texsize.x, m_texsize.y, 0, format, GL_UNSIGNED_BYTE, data);
-    glReportError();
-    
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 #else
     m_texsize = float2(size);
     glTexImage2D(GL_TEXTURE_2D, 0, m_format,
                  size.x, size.y, 0, format, type, data);
-    glReportError();
+#endif
 
+    glReportError();
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE_SGIS);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE_SGIS);
-#endif
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 
@@ -512,7 +600,8 @@ bool GLTexture::loadFile(const char* fname)
     if (!image.data)
         return false;
 
-    TexImage2D(GL_RGBA, int2(image.width, image.height), image.format, image.type, image.data);
+    TexImage2D(image);
+    m_flipped = true;
 
     glBindTexture(GL_TEXTURE_2D, m_texname);
     glGenerateMipmap(GL_TEXTURE_2D);
@@ -539,6 +628,9 @@ static void invert_image(uint *pix, int width, int height)
 
 bool GLTexture::writeFile(const char *fname) const
 {
+#if OPENGL_ES
+    return false;
+#else
     const int2 sz = ceil_int(m_texsize);
     const size_t size = sz.x * sz.y * 4;
     if (size == 0 || m_texname == 0)
@@ -562,6 +654,7 @@ bool GLTexture::writeFile(const char *fname) const
     const int success = OL_SaveImage(&img, fname);
     free(pix);
     return success;
+#endif
 }
 
 
@@ -847,14 +940,16 @@ void ShaderPosBase::DrawGrid(const ShaderState &ss_, double width, double3 first
     delete[] v;
 }
 
+DEFINE_CVAR(float, kButtonCorners, 0.1f);
+
+// rectangle missing 2 corners
 void PushButton(TriMesh<VertexPosColor>* triP, LineMesh<VertexPosColor>* lineP, float2 pos, float2 r, uint bgColor, uint fgColor, float alpha)
 {
-    static const float o = 0.1f;
-    const float2 v[6] = { pos + float2(-r.x, lerp(r.y, -r.y, o)),
-                          pos + float2(lerp(-r.x, r.x, o), r.y),
+    const float2 v[6] = { pos + float2(-r.x, lerp(r.y, -r.y, kButtonCorners)),
+                          pos + float2(lerp(-r.x, r.x, kButtonCorners), r.y),
                           pos + float2(r.x, r.y),
-                          pos + float2(r.x, lerp(-r.y, r.y, o)),
-                          pos + float2(lerp(r.x, -r.x, o), -r.y),
+                          pos + float2(r.x, lerp(-r.y, r.y, kButtonCorners)),
+                          pos + float2(lerp(r.x, -r.x, kButtonCorners), -r.y),
                           pos + float2(-r.x, -r.y) };
 
     if (triP && (bgColor&ALPHA_OPAQUE) && alpha > epsilon) {
@@ -868,13 +963,13 @@ void PushButton(TriMesh<VertexPosColor>* triP, LineMesh<VertexPosColor>* lineP, 
     }
 }
 
+// only missing 1 corner
 void PushButton1(TriMesh<VertexPosColor>* triP, LineMesh<VertexPosColor>* lineP, float2 pos, float2 r, uint bgColor, uint fgColor, float alpha)
 {
-    static const float o = 0.1f;
     const float2 v[5] = { pos + float2(-r.x, r.y),
                           pos + float2(r.x, r.y),
-                          pos + float2(r.x, lerp(-r.y, r.y, o)),
-                          pos + float2(lerp(r.x, -r.x, o), -r.y),
+                          pos + float2(r.x, lerp(-r.y, r.y, kButtonCorners)),
+                          pos + float2(lerp(r.x, -r.x, kButtonCorners), -r.y),
                           pos + float2(-r.x, -r.y) };
 
     if (triP && (bgColor&ALPHA_OPAQUE) && alpha > epsilon) {
@@ -915,7 +1010,7 @@ float2 DrawBar(const ShaderState &s1, uint fill, uint line, float alpha, float2 
     ss.color(fill, alpha);
     const float2 wp = p + float2(1.f, -1.f);
     const float2 ws = s - float2(2.f);
-    ShaderUColor::instance().DrawQuad(ss, wp, wp + a * justX(ws), wp - justY(ws), wp + float2(a*ws.x, -ws.y));
+    ShaderUColor::instance().DrawQuad(ss, wp, wp + a * justX(ws), wp + float2(a*ws.x, -ws.y), wp - justY(ws));
     ss.color(line, alpha);
     ShaderUColor::instance().DrawLineQuad(ss, p, p + justX(s), p - justY(s), p + flipY(s));
     return s;
@@ -939,13 +1034,11 @@ void fadeFullScreen(const View& view, uint color)
 {
     if (view.alpha < epsilon)
         return;
-    glDepthMask(GL_FALSE);
-    glDisable(GL_DEPTH_TEST);
+    GLScope s0(GL_DEPTH_WRITEMASK, false);
+    GLScope s1(GL_DEPTH_TEST, false);
     ShaderState ss = view.getScreenShaderState();
     ss.color(color, view.alpha);
     ShaderUColor::instance().DrawRectCorners(ss, -0.1f * view.sizePoints, 1.1f * view.sizePoints);
-    glEnable(GL_DEPTH_TEST);
-    glDepthMask(GL_TRUE);
 }
 
 void sexyFillScreen(const ShaderState &ss, const View& view, uint color0, uint color1)
@@ -953,26 +1046,23 @@ void sexyFillScreen(const ShaderState &ss, const View& view, uint color0, uint c
     if (view.alpha < epsilon || (color0 == 0 && color1 == 0))
         return;
 
-    glDepthMask(GL_FALSE);
-    glDisable(GL_DEPTH_TEST);
+    GLScope s0(GL_DEPTH_WRITEMASK, false);
+    GLScope s1(GL_DEPTH_TEST, false);
     const float2 ws = 1.2f * view.sizePoints;
     const float2 ps = -0.1f * view.sizePoints;
     const float t = globals.renderTime / 20.f;
     const uint a = ALPHAF(view.alpha);
 
-    // 1 2
-    // 0 3
+    // 0 1
+    // 3 2
     const VertexPosColor v[] = {
-        VertexPosColor(ps,  a|rgb2bgr(lerpXXX(color0, color1, unorm_sin(t)))),
         VertexPosColor(ps + justY(ws), a|rgb2bgr(lerpXXX(color0, color1, unorm_sin(3.f * t)))),
         VertexPosColor(ps + ws,        a|rgb2bgr(lerpXXX(color0, color1, unorm_sin(5.f * t)))),
         VertexPosColor(ps + justX(ws), a|rgb2bgr(lerpXXX(color0, color1, unorm_sin(7.f * t)))),
+        VertexPosColor(ps,  a|rgb2bgr(lerpXXX(color0, color1, unorm_sin(t)))),
     };
-    static const uint i[] = {0, 1, 2, 0, 2, 3};
-    DrawElements(ShaderColorDither::instance(), ss, GL_TRIANGLES, v, i, arraySize(i));
-
-    glEnable(GL_DEPTH_TEST);
-    glDepthMask(GL_TRUE);
+    DrawElements(ShaderColorDither::instance(), ss, GL_TRIANGLES, v,
+                 kQuadIndices, arraySize(kQuadIndices));
 }    
 
 void PushUnlockDial(TriMesh<VertexPosColor> &mesh, float2 pos, float rad, float progress,
@@ -1025,7 +1115,7 @@ void PostProc::Draw(bool bindFB)
 
     if (m_blur)
     {
-        glDisable(GL_BLEND);
+        GLScope s(GL_BLEND, false);
         
         swapRW(); 
         BindWriteFramebuffer();
@@ -1038,8 +1128,6 @@ void PostProc::Draw(bool bindFB)
         blurShader->setDimension(0);
         getRead().DrawFullscreen(*blurShader);
         UnbindWriteFramebuffer();
-
-        glEnable(GL_BLEND);
     }
 
     if (!bindFB)
@@ -1105,21 +1193,27 @@ bool View::intersectRectangle(const float3 &a, const float2 &r) const
                                        position, zPlaneSize);
 }
 
+float View::getScreenLineWidth(float scl) const
+{
+    const float pointSize = sizePixels.x / sizePoints.x;
+    return clamp(getScreenPointSizeInPixels(), 0.1f, 1.5f * pointSize) * scl;
+}
+
+float View::getWorldLineWidth() const
+{
+    const float pointSize = sizePixels.x / sizePoints.x;
+    return clamp(getWorldPointSizeInPixels(), 0.1f, 1.5f * pointSize);
+}
+
 void View::setScreenLineWidth(float scl) const
 {
-    const float width     = getScreenPointSizeInPixels();
-    const float pointSize = sizePixels.x / sizePoints.x;
-    const float lineWidth = clamp(width, 0.1f, 1.5f * pointSize);
-    glLineWidth(lineWidth * scl);
+    glLineWidth(getScreenLineWidth(scl));
     glReportError();
 }
 
 void View::setWorldLineWidth() const
 {
-    const float width     = getWorldPointSizeInPixels();
-    const float pointSize = sizePixels.x / sizePoints.x;
-    const float lineWidth = clamp(width, 0.1f, 1.5f * pointSize);
-    glLineWidth(lineWidth);
+    glLineWidth(getWorldLineWidth());
     glReportError();
 }
 
@@ -1143,7 +1237,7 @@ ShaderState View::getWorldShaderState(float2 zminmax) const
     const float dist   = s.y;
     // const float mznear = min(1.f, dist - 100.f);
     const float mznear = clamp(dist + zminmax.x - 10.f, dist / 10.f, dist / 2.f);
-    const float mzfar  = dist + ((zminmax.y == 0.f) ? 2000.f : clamp(zminmax.y, 5.f, 10000.f));
+    const float mzfar  = dist + ((zminmax.y == 0.f) ? 2000.f : max(zminmax.y, 5.f));
     ASSERT(mznear < mzfar);
 
     const glm::mat4 view = glm::lookAt(float3(position, dist),
