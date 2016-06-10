@@ -214,13 +214,6 @@ int OL_RemoveFileOrDirectory(const char* dirname)
 {
     NSString *astr = pathForFileName(dirname, "r");
     
-    NSRange saverange = [astr rangeOfString:@"data/save"];
-    if (saverange.location == NSNotFound)
-    {
-        LogMessage([NSString stringWithFormat:@"Error, trying to clear invalid path %@", astr]);
-        return 0;
-    }
-
     NSError* err = nil;
     BOOL success = [[NSFileManager defaultManager] removeItemAtPath:astr error:&err];
     if (success == NO)

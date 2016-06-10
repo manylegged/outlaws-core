@@ -243,10 +243,10 @@ size_t MemoryPool::create(size_t cnt)
         if (!pool)
             Reportf("malloc(%#x) failed: %s", (int) (count * element_size), strerror(errno));
 #endif
-        Reportf("Allocating MemoryPool(%db, %d) %.1fMB: %s", 
-                       (int)element_size, (int)count, 
-                       (element_size * count) / (1024.0 * 1024.0),
-                       pool ? "OK" : "FAILED");
+        Reportf("Allocating MemoryPool[%d](%db, %d) %.1fMB: %s", 
+                index, (int)element_size, (int)count,
+                (element_size * count) / (1024.0 * 1024.0),
+                pool ? "OK" : "FAILED");
         if (!pool)
             count /= 2;
     } while (count && !pool);

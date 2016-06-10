@@ -8,7 +8,7 @@ import sys, os
 import getopt
 import subprocess
 import glob, re
-import codecs
+import codecs, io
 import vdf
 import shutil
 
@@ -19,7 +19,7 @@ from slpp import slpp as lua
 
 import polib
 
-all_languages = [ "ru", "fr", "de", "es", "pt", "pl", "ja", "tr" ]
+all_languages = [ "ru", "fr", "de", "es", "pt", "pl", "ja", "tr", "zh" ]
 steam_languages = {"ru":"russian", "en":"english", "de":"german", "fr":"french", "pl":"polish", "sv":"swedish",
                    "ko":"korean", "ja":"japanese", "zh":"chinese", "es":"spanish", "pt":"portugese", "tr":"turkish"}
 languages = all_languages
@@ -29,9 +29,9 @@ txtfiles = ["ships"]
 
 imprt = False
 export = False
-uselua = False
 dozip = False
 dryrun = False
+validate = False
 
 def count_occur(v):
     y = {}
@@ -40,14 +40,17 @@ def count_occur(v):
     return y
 
 fmt_re = re.compile("%[-'+ #0]*[0-9.]*[hljztL]*[a-zA-Z]")
-ws_re = re.compile("(\s*).*(\s*)$", re.DOTALL)
+ws_re = re.compile("(\s*).*?(\s*)$", re.DOTALL)
 color_re = re.compile("([\^][0-9])[^\n^]*([\^]7)")
-def check_format_strings(fil, orig, repl):
+key_re = re.compile("[$][a-zA-Z0-9]+")
+capital_re = re.compile("\s*(\w)")
+
+def check_format_strings(fil, linenum, orig, repl):
     fil = os.path.relpath(fil)
     orig_f = fmt_re.findall(orig)
     repl_f = fmt_re.findall(repl)
     if (orig_f != repl_f):
-        print "%s: error: format mismatch %r -> %r" % (fil, orig, repl)
+        print "%s:%d: error: format mismatch %r -> %r" % (fil, linenum, orig, repl)
     elif orig_f:
         # print "%s -> %s" % (orig_f, repl_f)
         pass
@@ -55,14 +58,76 @@ def check_format_strings(fil, orig, repl):
     repl_c = count_occur(x.group(1) for x in color_re.finditer(repl))
     # print '%r -> %r' % (orig_c, repl_c)
     if (orig_c != repl_c):
-        print "%s: warning: color mismatch (%s -> %s) %r -> %r" % (fil, orig_c, repl_c, orig, repl)
+        print "%s:%d: warning: color mismatch (%s -> %s) %r -> %r" % (fil, linenum, orig_c, repl_c, orig, repl)
     # print "'%s' -> '%s'" % (orig, repl) 
     orig_ws = ws_re.match(orig).groups()
     repl_ws = ws_re.match(repl).groups()
     # print orig_ws, "->", repl_ws
     if orig_ws != repl_ws:
-        print "%s: error: whitespace mismatch %r -> %r" % (fil, orig, repl)
-    
+        print "%s:%d: error: whitespace mismatch %r -> %r" % (fil, linenum, orig, repl)
+    orig_cap_m = capital_re.match(orig)
+    repl_cap_m = capital_re.match(repl)
+    if orig_cap_m and repl_cap_m:
+        orig_cap = orig_cap_m.group(1)
+        repl_cap = repl_cap_m.group(1)
+        orig_is_upper = orig_cap == orig_cap.upper()
+        repl_is_upper = repl_cap == repl_cap.upper()
+        if orig_is_upper != repl_is_upper:
+            print "%s:%d: warning: %r capitalization mismatch %s -> %s" % (fil, linenum, orig, orig_cap, repl_cap)
+    orig_keys = key_re.findall(orig)
+    repl_keys = key_re.findall(repl)
+    if (orig_keys != repl_keys):
+        print "%s%d: error: key escape mismatch (%s -> %s) %r -> %r" % (fil, linenum, orig_keys, repl_keys, orig, repl)
+        
+
+        
+def read_lua(path):
+    fil = io.open(path, encoding="utf-8")
+    text = lua.decode(fil.read())
+    fil.close()
+    return text
+
+
+def check_dict(name, lang):
+    path = os.path.join(ROOT, "data/lang", lang, name)
+    text = read_lua(path)
+    print "checking %s/%s with %d items" % (lang, name, len(text))
+    for en, ln in text.iteritems():
+        # print ('%r, %r' % (en, ln)), type(en), type(ln)
+        check_format_strings(path, 0, en, ln)
+
+
+def check_len(epath, lpath, etext, ltext):
+    print "checking %s with %d items" % (os.path.relpath(lpath), len(ltext))
+    if len(etext) != len(ltext):
+        print "%s has %d items but %s has %d items" % (os.path.relpath(epath), len(etext),
+                                                       os.path.relpath(lpath), len(ltext))
+        
+def check_list(name, lang):
+    epath = os.path.join(ROOT, "data", name)
+    lpath = os.path.join(ROOT, "data/lang", lang, name)
+    etext = read_lua(epath)
+    ltext = read_lua(lpath)
+    check_len(epath, lpath, etext, ltext)
+    # i = 1
+    for en, ln in zip(etext, ltext):
+        # print i, en
+        # i += 1
+        check_format_strings(lpath, en, ln)
+
+        
+def check_values(name, lang):
+    epath = os.path.join(ROOT, "data", name)
+    lpath = os.path.join(ROOT, "data/lang", lang, name)
+    etext = read_lua(epath)
+    ltext = read_lua(lpath)
+    # for x in etext:
+        # print "[" + x + "]", etext[x]
+    check_len(epath, lpath, etext, ltext)
+    for key in etext:
+        if val in ltext:
+            check_format_strings(lpath, etext[key], ltext[key])
+
 
 def mkdir_p(path):
     try:
@@ -84,7 +149,6 @@ def open_po(pof):
         fil.close()
     return polib.pofile(pof)
         
-        
 def header(luaf):
     return ("\nReassembly data/%s localization file\n" % os.path.basename(luaf)) + """
 Copyright (C) 2015-2016 Arthur Danskin
@@ -92,22 +156,25 @@ Content-Type: text/plain; charset=utf-8
 """
 
 
-def txt2po(txtf, pof):
+def list2po(name, words, pof, comment=""):
     entries = {}
     if os.path.exists(pof):
         for pe in open_po(pof):
             entries[pe.msgid] = pe.msgstr
-    
+
+    words = sorted(list(set(words)))
     pofil = polib.POFile()
-    for line in open(txtf):
-        line = line.strip()
-        args = { "msgid":line, "tcomment":"this is the name of a ship" }
-        if line in entries:
-            args["msgstr"] = entries[line]
+    for word in words:
+        # skip A-100 type names
+        if len(word) < 7 and (word[1] == "-" or word[2] == "-"):
+            continue
+        args = { "msgid":word, "tcomment":comment }
+        if word in entries:
+            args["msgstr"] = entries[word]
         pofil.append(polib.POEntry(**args))
-    pofil.header = header(txtf)
+    pofil.header = header(name)
     pofil.save(pof)
-    print "wrote " + pof + " (%d entries updated)" % len(entries)
+    print "wrote " + os.path.relpath(pof) + " (%d entries updated)" % len(entries)
 
     
 def lua2po(luaf, pof):
@@ -156,7 +223,7 @@ def achievements_po2vdf(vdff, langs):
         dat[steam_languages[lang]] = {"Tokens":dict((k, trans[v]) for k, v in english)}
     if dryrun:
         return
-    vdf.dump({"lang":dat}, codecs.open(vdff, 'w', 'utf-8'), pretty=True)
+    vdf.dump({"lang":dat}, io.open(vdff, 'w', encoding='utf-8'), pretty=True)
     print "wrote " + vdff
     
     
@@ -166,7 +233,7 @@ def po2lua_replace(outlua, baselua, pof):
     count = 0
     for pe in open_po(pof):
         if pe.msgstr:
-            check_format_strings(pof, pe.msgid, pe.msgstr)
+            check_format_strings(pof, pe.linenum, pe.msgid, pe.msgstr)
             count += 1
             msgstr = pe.msgstr.replace('"', '\\"')
             dat = dat.replace('"' + pe.msgid + '"', '"' + msgstr + '"', 1)
@@ -174,7 +241,7 @@ def po2lua_replace(outlua, baselua, pof):
     if count == 0 or dryrun:
         return
     mkdir_p(os.path.dirname(outlua))
-    with codecs.open(outlua, "w", "utf-8") as fil:
+    with io.open(outlua, "w", encoding="utf-8") as fil:
         fil.write(dat)
 
         
@@ -190,7 +257,7 @@ def po2lua_simple(outlua, pofs):
             continue
         for pe in open_po(pof):
             if pe.msgstr:
-                check_format_strings(pof, pe.msgid, pe.msgstr)
+                check_format_strings(pof, pe.linenum, pe.msgid, pe.msgstr)
                 dct[pe.msgid] = pe.msgstr
     if not dct or dryrun:
         return
@@ -220,7 +287,7 @@ def printhelp():
 -h : print this message""" % sys.argv[0]
     exit(0)
 
-opts, cargs = getopt.getopt(sys.argv[1:], "iehzn")
+opts, cargs = getopt.getopt(sys.argv[1:], "iehznt")
 for (opt, val) in opts:
     if opt == "-h":
         printhelp()
@@ -228,16 +295,21 @@ for (opt, val) in opts:
         imprt = True
     elif opt == "-e":
         export = True
-    elif opt == "-l":
-        uselua = True
     elif opt == "-z":
         dozip = True
     elif opt == "-n":
         dryrun = True
+    elif opt == "-t":
+        validate = True
 
 if cargs:
-    languages = cargs
+    if cargs[0][0] == '-':
+        for ar in cargs:
+            languages.remove(ar[1:])
+    else:
+        languages = cargs
     set_languages = True
+    print languages
 
 if export:
     sources = []
@@ -256,7 +328,7 @@ if export:
         mkdir_p(lroot)
         args = ["xgettext", "--keyword=_", "--output=" + outpt, "--omit-header",
                 "--no-location", "--no-wrap",
-                "--copyright-holder=2015 Arthur Danskin"]
+                "--copyright-holder=2015-2016 Arthur Danskin"]
         if os.path.exists(outpt):
             args.append("--join-existing")
         ret = subprocess.call(args + sources) if not dryrun else 0
@@ -272,7 +344,13 @@ if export:
         for fil in txtfiles:
             pof = os.path.join(lroot, fil + ".po")
             pofils.append(pof)
-            txt2po(os.path.join(ROOT, "lang", fil + ".txt"), pof)
+            with open(os.path.join(ROOT, "lang", fil + ".txt")) as fil:
+                snames = [l.strip() for l in fil]
+            lua_names = read_lua(os.path.join(ROOT, "data/shipnames.lua"))
+            # for key, val in lua_names.iteritems():
+                # print repr(key), repr(val)
+            snames.extend(lua_names.values())
+            list2po("shipnames.lua", snames, pof, comment="this is the name of a ship")
         achievements_vdf2po(os.path.join(lroot, "achievements.po"))
     # subprocess.call(["unix2dos", "-q"] + pofils)
     print "export complete"
@@ -296,6 +374,11 @@ elif imprt:
 
     achievements_po2vdf(os.path.expanduser("~/Downloads/achievements.vdf"), languages)
     print "import complete"
+elif validate:
+    for lang in languages:
+        check_dict("text.lua", lang)
+        check_values("messages.lua", lang)
+        check_list("tips.lua", lang)
         
 
 elif not dozip:
@@ -305,5 +388,8 @@ if dozip:
     zipfile = os.path.expanduser("~/Downloads/Reassembly_lang.zip")
     if os.path.exists(zipfile):
         os.remove(zipfile)
-    subprocess.call(["zip", zipfile] + glob.glob(os.path.relpath(os.path.join(ROOT, "lang", "*", "*.po"))))
+    pos = []
+    for lang in languages:
+        pos.extend(glob.glob(os.path.relpath(os.path.join(ROOT, "lang", lang, "*.po"))))
+    subprocess.call(["zip", zipfile] + pos)
     print "wrote %s" % (zipfile)

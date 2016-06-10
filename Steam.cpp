@@ -352,34 +352,33 @@ int steamDeleteRecursive(const char *path)
     ISteamRemoteStorage *ss = SteamRemoteStorage();
     if (!ss)
         return 0;
-    int deleted = 0;
     if (SteamFileDelete(path))
     {
-        deleted++;
+        DPRINT(STEAM, ("Deleted cloud file '%s'", path));
+        return 1;
     }
-    else
+    int deleted = 0;
+    vector<string> files;
+    const string base = str_path_standardize(path) + "/";
     {
-        vector<string> files;
-        const string base = str_path_standardize(path) + "/";
+        std::lock_guard<std::mutex> m(steamIndexMutex());
+        foreach(const auto &it, steamIndex())
         {
-            std::lock_guard<std::mutex> m(steamIndexMutex());
-            foreach (const auto &it, steamIndex())
-            {
-                if (str_startswith(it.first, base))
-                    files.push_back(it.first);
-            }
-        }
-        
-        for_ (name, files)
-        {
-            if (SteamFileDelete(name.c_str()))
-            {
-                deleted++;
-                DPRINT(SAVE, ("Deleted steam/%s", name.c_str()));
-            }
+            if (str_startswith(it.first, base))
+                files.push_back(it.first);
         }
     }
-    DPRINT(STEAM, ("Deleted %d cloud files from '%s'", deleted, path));
+
+    for_(name, files)
+    {
+        if (SteamFileDelete(name.c_str()))
+        {
+            deleted++;
+            DPRINT(SAVE, ("Deleted steam/%s", name.c_str()));
+        }
+    }
+    DPRINT(STEAM, ("Deleted %d/%d cloud files from '%s' (%s)",
+        deleted, (int)files.size(), path, (files.size() == 1 ? files[0].c_str() : "")));
     return deleted;
 }
 

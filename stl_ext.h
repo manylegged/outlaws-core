@@ -187,9 +187,9 @@ class copy_ptr final {
     T* m_ptr = NULL;
 
     template <typename U>
-    void assign1(U* v, typename std::enable_if<!std::is_const<U>::value>::type* = 0) { *m_ptr = *v; }
+    void assign1(const T* v, typename std::enable_if<!std::is_const<U>::value>::type* = 0) { *m_ptr = *v; }
     template <typename U>
-    void assign1(U* v, typename std::enable_if<std::is_const<U>::value>::type* = 0) { }
+    void assign1(const T* v, typename std::enable_if<std::is_const<U>::value>::type* = 0) { }
 
 public:
 
@@ -218,14 +218,21 @@ public:
     copy_ptr(const copy_ptr& o) { assign(o.m_ptr); }
     explicit copy_ptr(const T *t) { assign(t); }
     copy_ptr& operator=(const copy_ptr& o) { return assign(o.m_ptr); }
-    copy_ptr& assign(T* v)
+    copy_ptr& assign(typename std::remove_const<T>::type *v)
+    {
+        if (m_ptr == v)
+            return *this;
+        else if (!v || copy_explicit_owner(v) || (std::is_const<T>::value && copy_refcount(v, +1)))
+            return reset(v);
+        else
+            return assign(const_cast<const T *>(v));
+    }
+    copy_ptr& assign(const T* v)
     {
         if (m_ptr == v)
             ;
-        else if (!v || copy_explicit_owner(v) || (std::is_const<T>::value && copy_refcount(v, +1)))
-            reset(v);
         else if (!std::is_const<T>::value && m_ptr && !copy_explicit_owner(m_ptr))
-            assign1(v);        
+            assign1<T>(v);
         else
             reset(new T(*v));
         return *this;
@@ -758,17 +765,20 @@ inline void vec_copy_deep(std::vector<const T*> &v, const std::vector<U*> &o)
 
 // sort entire vector using supplied comparator
 template <typename T, typename F>
-inline void vec_sort(T& col, const F& comp) { std::sort(col.begin(), col.end(), comp); }
+inline void vec_sort(T& col, const F& comp) { std::sort(std::begin(col), std::end(col), comp); }
+
+template <typename T, typename F>
+inline void vec_sort(const T& col, const F& comp) { std::sort(std::begin(col), std::end(col), comp); }
 
 template <typename T>
-inline void vec_sort(T& col) { std::sort(col.begin(), col.end()); }
+inline void vec_sort(T& col) { std::sort(std::begin(col), std::end(col)); }
 
 // sort entire collection, using supplied function to get comparison key
 template <typename T, typename F>
 inline void vec_sort_key(T& col, const F& gkey)
 {
-    std::sort(col.begin(), col.end(), [&](const typename T::value_type &a,
-                                          const typename T::value_type &b) {
+    std::sort(std::begin(col), std::end(col), [&](const typename T::value_type &a,
+                                                  const typename T::value_type &b) {
                   return gkey(a) < gkey(b); });
 }
 
@@ -1468,7 +1478,7 @@ public:
     size_t create(size_t cnt);
 
     size_t getCount() const { return count; }
-    size_t getUsed() const { return used; }
+    size_t getUsed() const { return used + (next ? next->getUsed() : 0); }
     size_t getElementSize() const { return element_size; }
 
     template <typename T>

@@ -554,19 +554,24 @@ static DWORD setupStackWalk(const CONTEXT &context, STACKFRAME64 &frame)
 #endif
 }
 
-static void* getStackTopPC(HANDLE thread, const CONTEXT *ctx)
+static int getStackPCs(HANDLE thread, const CONTEXT *ctx, void** addrs, int addr_count)
 {
     CONTEXT context = *ctx;
     STACKFRAME64 frame;
     const DWORD image = setupStackWalk(context, frame);
     const HANDLE process = GetCurrentProcess();
 
+    int i = 0;
     while (StackWalk64(image, process, thread, &frame, &context, NULL, NULL, NULL, NULL))
     {
-        if (frame.AddrPC.Offset)
-            return (void*) frame.AddrPC.Offset;
+        if (!frame.AddrPC.Offset)
+            continue;
+        addrs[i] = (void*) frame.AddrPC.Offset;
+        i++;
+        if (i >= addr_count)
+            break;
     }
-    return NULL;
+    return i;
 }
 
 static void printStack(HANDLE thread, CONTEXT &context)
@@ -623,50 +628,57 @@ static void printModulesStack(CONTEXT *ctx, string &modname)
     if (EnumProcessModules(process, hmodules, sizeof(hmodules), &moduleBytesNeeded))
     {
         const int modules = min(kMaxModules, (int) (moduleBytesNeeded / sizeof(HMODULE)));
-        const void *fault_offset = getStackTopPC(GetCurrentThread(), ctx);
+        const int max_stack = 100;
+        void *stack_pcs[max_stack] = {};
+        const int stack_count = getStackPCs(GetCurrentThread(), ctx, stack_pcs, max_stack);
+        
         for (int i=0; i<modules; i++)
         {
             MODULEINFO module_info;
             memset(&module_info, 0, sizeof(module_info));
-            if (GetModuleInformation(process, hmodules[i], &module_info, sizeof(module_info)))
+            if (!GetModuleInformation(process, hmodules[i], &module_info, sizeof(module_info)))
+                continue;
+            const DWORD module_size = module_info.SizeOfImage;
+            const BYTE * module_ptr = (BYTE*)module_info.lpBaseOfDll;
+
+            wchar_t basename[MAX_PATH];
+            memset(basename, 0, sizeof(basename));
+            GetModuleBaseName(process, hmodules[i], basename, MAX_PATH);
+
+            const std::string name = ws2s(basename); 
+            const std::string lname = str_tolower(name);
+
+            // faulting address is inside this module
+            if (module_ptr <= stack_pcs[0] && stack_pcs[0] < module_ptr + module_size)
             {
-                const DWORD module_size = module_info.SizeOfImage;
-                const BYTE * module_ptr = (BYTE*)module_info.lpBaseOfDll;
+                modname = name;
+            }
 
-                wchar_t basename[MAX_PATH];
-                memset(basename, 0, sizeof(basename));
-                GetModuleBaseName(process, hmodules[i], basename, MAX_PATH);
+            // only print dlls matching these patterns
+            static const char *substrs[] = {
+                ".exe",
+#if 1
+                "ntdll", "kernel", "shell32", "dbghelp",
+                "msvc",
+                "opengl", "glew", "glu", "ddraw",
+                "sdl2", "openal", "zlib", "freetype", "curl",
+                "ogl", // nvoglv32.dll and atioglxx.dll
+                "igd", "ig4icd", // intel drivers
+                "SS2",           // asus drivers? found in some crashlogs
+                "steam", "game"  // gameoverlayrenderer.dll
+#endif
+            };
+            
+            bool print = false;
+            foreach (const char* str, substrs)
+                print = print || str_contains(lname, str);
+            for (int j=0; j<stack_count; j++)
+                print = print || (module_ptr <= stack_pcs[j] && stack_pcs[j] < module_ptr + module_size);
 
-                const std::string name = ws2s(basename); 
-                const std::string lname = str_tolower(name);
-
-                // faulting address is inside this module
-                if (module_ptr <= fault_offset && fault_offset < module_ptr + module_size)
-                {
-                    modname = name;
-                }
-
-                // only print dlls matching these patterns
-                static const char *substrs[] = {
-                    ".exe",
-                    "ntdll", "kernel", "shell32", "dbghelp",
-                    "msvc",
-                    "opengl", "glew", "glu", "ddraw",
-                    "sdl2", "openal", "zlib", "freetype", "curl",
-                    "ogl", // nvoglv32.dll and atioglxx.dll
-                    "igd", "ig4icd", // intel drivers
-                    "SS2",           // asus drivers? found in some crashlogs
-                    "steam",
-                };
-                foreach (const char* str, substrs)
-                {
-                    if (str_contains(lname, str))
-                    {
-                        ReportWin32("%2d. '%s' base address is 0x%p, size is %#x", 
-                                       i, name.c_str(), module_ptr, module_size);
-                        break;
-                    }
-                }
+            if (print)
+            {
+                ReportWin32("%2d. '%s' base address is 0x%p, size is %#x", 
+                            i, name.c_str(), module_ptr, module_size);
             }
         }
     }

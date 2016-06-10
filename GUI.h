@@ -67,9 +67,10 @@ struct WidgetBase {
 
     float2 getSizePoints() const { return size; }
 
-    void setAdjacent(const WidgetBase &last, float2 rpos)
+    void setAdjacent(const WidgetBase &last, float2 rpos) { setAdjacent(last, rpos, 4.f * kButtonPad); }
+    void setAdjacent(const WidgetBase &last, float2 rpos, float2 pad)
     {
-        position = last.position + (last.size + size + 4.f * kButtonPad) * (rpos / 2.f);
+        position = last.position + (last.size + size + pad) * (rpos / 2.f);
     }
 
     void setAboveBelow(const WidgetBase &last, float2 rpos)

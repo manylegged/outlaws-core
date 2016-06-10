@@ -155,7 +155,7 @@ public:
 
     void BufferData(vector<Type> data, uint mode)
     {
-        BufferData(data.size(), &data[0], mode);
+        BufferData(data.size(), data.size() ? &data[0] : NULL, mode);
     }
 
     void BufferData(uint size, Type* data, uint mode)

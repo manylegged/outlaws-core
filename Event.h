@@ -337,7 +337,7 @@ public:
     // update current button state
     void OnEvent(const Event* event);
 
-    static KeyState &instance();
+    static KeyState &instance(int which=-1);
 
 };
 

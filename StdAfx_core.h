@@ -18,7 +18,7 @@
 #include <mutex>
 
 #ifndef NOEXCEPT
-#if _MSC_VER <= 1800
+#if _MSC_VER && _MSC_VER <= 1800
 // Visual studio 2013 does not support noexcept
 #define NOEXCEPT _NOEXCEPT
 #else

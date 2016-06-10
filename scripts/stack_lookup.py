@@ -46,26 +46,84 @@ REL_SYM_PATH = {"ReassemblyRelease":["steam", "release"],
 READELF = "readelf -lsW -wL %s | c++filt"
 
 # ignore these symbols when triaging stack traces
-TRIAGE_IGNORE_TRACE = set(["posix_signal_handler(int, siginfo_t*, void*)", # clang
-                           "posix_signal_handler(int, __siginfo*, void*)", # gcc
+TRIAGE_IGNORE_TRACE = set(["posix_signal_handler",
                            "_sigtramp", "_init", "_L_unlock_13", "0x0",
-                           "posix_print_stacktrace", "print_backtrace()", "OL_OnTerminate",
-                           "void terminate()", "_Call_func",
+                           "posix_print_stacktrace", "print_backtrace", "OL_OnTerminate",
+                           "void terminate", "_Call_func",
 
                           "_callthreadstartex", "_threadstartex",
                            "kernel32.dll", "ntdll.dll",
 
                            "__vsnprintf_l", "__vsnprintf",
+
+                           # around _free
+                           "LdrGetProcedureAddressForCaller",
+                           "_WER_HEAP_MAIN_HEADER * __ptr64 WerpGetHeapHandle",
                            
-                           # always together with mtx_do_lock
+                           # always together with mtx_do_lock or sleep (msvc120)
                           "__Mtx_lock",
                            "bool Concurrency::critical_section::_Acquire_lock",
-                           "void Concurrency::critical_section::lock()",
-                           "void Concurrency::details::LockQueueNode::UpdateQueuePosition"])
+                           "void Concurrency::critical_section::lock",
+                           "void Concurrency::details::LockQueueNode::UpdateQueuePosition",
+                           "void Concurrency::details::_Timer::_Start",
+                           "void Concurrency::details::ReferenceLoadLibrary",
+                           "_TP_TIMER * Concurrency::details::RegisterAsyncTimerAndLoadLibrary",
+                           "virtual void Concurrency::details::ExternalContextBase::Block",
+                           "RtlAcquireSRWLockExclusive",
+                           "RtlInsertElementGenericTableFullAvl",
+                           "LdrLogNewDataDllLoad",
+
+                           # linux around myTerminateHandler
+                           "std::locale::locale@@GLIBCXX_3.4",
+                           "std::moneypunct<>::moneypunct@@GLIBCXX_3.4",
+                           "posix_spawnattr_setschedparam@@GLIBC_2.2.5",
+
+                           # around error handling in msvc140
+                           "??_C@_0CA@IFNNBHIE@FwGetRpcCallersProcessImageName?$AA@",
+                           "___scrt_fastfail",
+                           #"void Concurrency::details::_ReportUnobservedException",
+                           "__Mtx_clear_owner",
+                           "AslpFileQueryExportName$filt$0",
+                           "RtlpHpLfhOwnerMoveSubsegment",
+                           "int Concurrency::details::_Schedule_chore",
+                           "BasepCreateTokenFromLowboxToken",
+                           "long WerpAddGatherToPEB",
+
+                           # noise at bottom of stack
+                           # "CompatCacheLookupExe",
+                           "RtlGuardCheckImageBase",
+                           "LdrpResGetMappingSize",
+                           "RtlCompressBufferXpressHuffStandard",
+                           "EtwpLogger",
+                           "std::_LaunchPad<>::_Go",
+                           "RtlpGetStackTraceAddressEx",
+                           "_callthreadstartex",
+                           "_threadstartex",
+                           "WinMain",
+])
+
+paren_re = re.compile("[(][^()]*[)] *(const)?")
+angle_re = re.compile("[<][^<>]+[>]")
+bracket_re = re.compile("[[][^][]+[]]")
+def remove_parens1(func, regex, repl):
+    count = 1
+    while count > 0:
+        func, count = regex.subn(repl, func)
+    return func
+
+def remove_parens(func):
+    func = remove_parens1(func, paren_re, "")
+    func = remove_parens1(func, angle_re, "{}").replace("{}", "<>")
+    func = bracket_re.sub("", func)
+    return func.strip()
+        
+
+def ignore_func(func):
+    return func and (remove_parens(func) in TRIAGE_IGNORE_TRACE)
 
 ROOT = "./"
 
-TRIAGE_STACK_SIZE = 5
+TRIAGE_STACK_SIZE = 4
 MAX_STACK_DUMP = 30
 
 def log(*x):
@@ -189,10 +247,12 @@ def glob_files(patterns):
     return paths
 
 
+msvcp_re = re.compile("msvc[pr]1[2-9][0-9].pdb")
+
 def get_dll_symbols(modname):
     pdb = modname.replace(".dll", ".pdb")
     lpdb = pdb.lower()
-    if lpdb in ("msvcp120.pdb", "msvcr120.pdb"):
+    if msvcp_re.match(lpdb):
         lpdb = lpdb.replace(".pdb", ".i386.pdb")
 
     pdb_path = [os.path.join(ROOT, "win32", pdb)]
@@ -200,26 +260,24 @@ def get_dll_symbols(modname):
         pdb_path.extend(os.path.join(w32, pdb) for w32 in OUTLAWS_WIN32)
     pdb_path.extend(os.path.join(sp, lpdb, "*", lpdb) for sp in PDB_SYMBOLS)
     paths = glob_files(pdb_path)
-    if len(paths) == 0:
-        return None, []
-    pdb_path = paths[0]
+    if len(paths):
+        pdb_path = paths[0]
+        ext, flags = ("line", ("-l",)) if "win32" in pdb_path else ("globals", ("-g", "-p"))
 
-    ext, flags = ("line", ("-l",)) if "win32" in pdb_path else ("globals", ("-g", "-p"))
-
-    gpath = "%s.%s.gz" % (pdb_path, ext)
-    if not os.path.exists(gpath) and os.path.exists(DIA2DUMP):
-        fil = gzip.open(gpath, "w")
-        if not fil:
-            log("can't open", gpath)
-            exit(1)
-        for flag in flags:
-            dat = subprocess.check_output([DIA2DUMP, flag, pdb_path])
-            if len(dat) > 100:
-                break;
-        fil.write(dat)
-        fil.close()
-    if os.path.exists(gpath):
-        return ext, gzip.open(gpath)
+        gpath = "%s.%s.gz" % (pdb_path, ext)
+        if not os.path.exists(gpath) and os.path.exists(DIA2DUMP):
+            fil = gzip.open(gpath, "w")
+            if not fil:
+                log("can't open", gpath)
+                exit(1)
+            for flag in flags:
+                dat = subprocess.check_output([DIA2DUMP, flag, pdb_path])
+                if len(dat) > 100:
+                    break;
+            fil.write(dat)
+            fil.close()
+        if os.path.exists(gpath):
+            return ext, gzip.open(gpath)
 
     symbol_path = [os.path.join(ROOT, w32, "%s.line.gz" % pdb) for w32 in OUTLAWS_WIN32]
     symbol_path.extend(os.path.join(ROOT, w32, "symbols", "%s.globals.gz" % lpdb) for w32 in OUTLAWS_WIN32)
@@ -244,7 +302,7 @@ def get_so_symbols(modname, version=""):
             return "elf", gzip.open(gzpath)
     return None, []
 
-
+fuzzy_version = {}
 def get_symbol_type_handle(modname, version):
     if modname.endswith(".dll"):
         return get_dll_symbols(modname)
@@ -290,6 +348,7 @@ def get_symbol_type_handle(modname, version):
                 mnver = ver
         if mnpath:
             warning("using symbols from %s for %s" % (mnver, version))
+            fuzzy_version[version] = mnver;
             return typ, gzip.open(os.path.join(mnpath, symname))
         # warning("no symbols for %s %s" % (modname, version))
     return None, []
@@ -675,6 +734,8 @@ module_re = re.compile("In module: '([^']*)'")
 mac_stack_re = re.compile("0x[a-fA-F0-9]+ (.+) [+] [0-9]+ [(]([^)]+)[)]")
 hexre = re.compile("0x([a-fA-F0-9]{6,})")
 sched_re = re.compile("Log upload scheduled: (.*)$")
+sdl_win_re = re.compile("SDL_CreateWindow failed: (.*)$")
+terminate_re = re.compile("ASSERT[(]Terminate Handler[)]: Exception: (.*)$")
 
 UNKNOWN_FUNC = "<unknown func>"
 
@@ -731,13 +792,19 @@ def extract_callstack(logf, opts):
             lastfew.append(line)
             while (len(lastfew) > 5):
                 lastfew.pop(0)
-        m = sched_re.search(line)
-        if m:
-            reason = "CHECK: " + m.group(1)
-            if (is_triage and reason not in stacktrace):
-                stacktrace.append(reason)
+        for mre, prfx in [(sched_re, "CHECK"), (sdl_win_re, "SDL_CreateWindow"), (terminate_re, "TERMINATE")]:
+            m = mre.search(line)
+            if not m:
+                continue
+            reason = prfx + ": " + m.group(1)
+            if is_triage:
+                stacktrace = [reason]
+                break
             if opts.printall and is_full:
                 print line, '"' +  reason + '"'
+        if is_triage and "Watchdog Thread detected hang! Crashing game" in line:
+            stacktrace = ["Watchdog Thread detected hang!"]
+            break
         if opts.greps and opts.greps.search(line):
             greps_match = True
         if ("Unhandled Top Level Exception" in line or \
@@ -814,10 +881,12 @@ def extract_callstack(logf, opts):
             n = mac_stack_re.search(line)
             if n:
                 func, module = n.groups()
-                has_game = (module == "Reassembly")
+                has_game = ("Reassembly" in module)
                 line = line.replace("[POSIX] ", "").replace("called from", "from")
             else:
                 func, lino, fil = lookup_address(module_map, addr)
+                if ignore_func(func):
+                    continue
                 has_game = lino > 0
                 fmt = format_address(addr, func, lino, fil)
                 line = line[:m.start()] + fmt + line[m.end():]
@@ -826,11 +895,10 @@ def extract_callstack(logf, opts):
                 if func:
                     if func.endswith (".DLL"):
                         func = func.lower()
-                    if "(" in func:
-                        func = func[:func.index("(")]
+                    func = remove_parens(func)
                 else:
                     func = UNKNOWN_FUNC
-                if func not in TRIAGE_IGNORE_TRACE and (len(stacktrace) == 0 or stacktrace[-1] != func):
+                if not ignore_func(func) and (len(stacktrace) == 0 or stacktrace[-1] != func):
                     if has_game:
                         trace_has_game = True
                     stacktrace.append(func)
@@ -857,11 +925,14 @@ def extract_callstack(logf, opts):
 
     if is_triage:
         ver = version or "<unknown>"
+        ver = fuzzy_version.get(ver, ver)
         if module:
             if not stacktrace:
                 stacktrace = [module]
             elif stacktrace[-1] == UNKNOWN_FUNC:
                 stacktrace[-1] = module
+        if len(stacktrace) > 1 and all(x == stacktrace[0] for x in stacktrace):
+            stacktrace = [stacktrace[0]]
         key = tuple(stacktrace)
         opts.triage.setdefault(ver, dict()).setdefault(key, []).append(logf)
     close_inpt(data)
@@ -870,6 +941,16 @@ def extract_callstack(logf, opts):
 TOP_FUNC_COUNT = 10
 TOP_LOGS_PER_STACK_COUNT = 5
 TRIAGE_NOISE_THRESHOLD = 1
+TRIAGE_PRINT_ATLEAST = 80
+
+crash_file_re = re.compile("_(([0-9]{1,3}[.]){4})txt.gz")
+def count_ips(files):
+    ips = set()
+    for fil in files:
+        m = crash_file_re.search(fil)
+        if m:
+            ips.add(m.group(1))
+    return len(ips)
 
 def do_triage(files, ops):
     triage = {}
@@ -886,7 +967,8 @@ def do_triage(files, ops):
     for version, data in sdict(triage, lambda x: x[0]):
         # data is dict(stacktrace -> list of logs)
         total = sum(len(x) for x in data.itervalues())
-        print "============= %s (%d total) ================" % (version, total)
+        total_ips = sum(count_ips(x) for x in data.itervalues())
+        print "============= %s (%d total logs, %d total ips) ================" % (version, total, total_ips)
         func_counts = {}
         max_func_count = 0
         for stack, files in data.iteritems():
@@ -895,7 +977,7 @@ def do_triage(files, ops):
                 max_func_count = max(max_func_count, func_counts[func])
         if (max_func_count > 1 and len(func_counts) > 1):
             for func, count in sdict(func_counts, lambda x: x[1])[:TOP_FUNC_COUNT]:
-                print "%d. %s" % (count, func)
+                print "%d. %s (%.f%%)" % (count, func, 100.0 * count / total)
         print ""
         print_perc = 0
         for stack, files in sdict(data, lambda x: len(x[1])):
@@ -905,16 +987,19 @@ def do_triage(files, ops):
                 if len(pstack) > 100:
                     pstack = pstack.replace(" <- ", "\n   <- ")
             perc = 100.0 * len(files) / total
-            print "%d(%.1f%%). %s" % (len(files), perc, pstack)
-            if (perc < TRIAGE_NOISE_THRESHOLD):
-                print "stopping - below noise threshold (%.1f%%) ignored" % (100.0 - print_perc)
-                break
+            ips = count_ips(files)
+            print "%d(%.1f%%) logs %d(%.1f%%) ips. %s" % (len(files), perc,
+                                                          ips, 100.0 * ips / total_ips,
+                                                          pstack)
             print_perc += perc
             for fl in sorted(files, reverse=True)[:TOP_LOGS_PER_STACK_COUNT]:
                 print "     ", fl.replace(os.path.expanduser("~"), "~")
                 tfiles.append(fl)
             if len(files) > TOP_LOGS_PER_STACK_COUNT:
                 print "    ..."
+            if (perc < TRIAGE_NOISE_THRESHOLD and print_perc > TRIAGE_PRINT_ATLEAST):
+                print "stopping - below noise threshold (%.1f%%) ignored" % (100.0 - print_perc)
+                break
     for h in handlers:
         h.onFinish()
     # exit(0)
@@ -980,6 +1065,12 @@ Options:
 
     if copy:
         print "copying symbols from network"
+
+        sys.path.append(os.path.join(ROOT, "server"))
+        import feed
+        feed.exec_command(["rsync", "-avr", "ani:anisopteragames.com/symbols/", ROOT + "/"],
+                          feed.RSYNC_TIMEOUT)
+        
         paths = glob_files([os.path.join(p, "steam/*/") for p in (OUTLAWS_WIN32 + OUTLAWS_LINUX) if p.startswith("/")])
         # print "checking", paths
         verignore = 0

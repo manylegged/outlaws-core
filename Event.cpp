@@ -300,6 +300,11 @@ static int gamepadAxis2Key(int key, int val)
 
 static void gamepadAxis2Event(const Event *event, float last_val)
 {
+    // update thread processes events and processes synthetic events immediately
+    // creating these synthetic key events from render thread results in duplicate key events
+    if (event->synthetic || globals.isMainThread())
+        return;
+    
     const int last = sign_int(last_val, kGamepadKeyThreshold);
     const int current = sign_int(event->pos.y, kGamepadKeyThreshold);
     
@@ -419,11 +424,11 @@ void KeyState::OnEvent(const Event* event)
     }
 }
 
-KeyState & KeyState::instance()
+KeyState & KeyState::instance(int which)
 {
     static KeyState mn;
     static KeyState up;
-    return globals.isMainThread() ? mn : up;
+    return (which == 0 || (which == -1 && globals.isMainThread())) ? mn : up;
 }
 
 static string keyToUTF8(int key)

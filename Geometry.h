@@ -779,7 +779,7 @@ inline bool isInRange(T p, T mn, T mx)
 template <typename T>
 inline bool isInRange(glm::tvec2<T> p, glm::tvec2<T> mn, glm::tvec2<T> mx)
 {
-    return isInRange(p.x, mn.x, mx.x) && isInRange(p.y, mn.x, mx.x);
+    return isInRange(p.x, mn.x, mx.x) && isInRange(p.y, mn.y, mx.y);
 }
 
 inline float spreadCircleToCircle(float2 c0, float r0, float2 c1, float r1)

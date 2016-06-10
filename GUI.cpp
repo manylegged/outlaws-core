@@ -2002,7 +2002,7 @@ bool HandleEventSelected(int* selected, ButtonBase &current, int count, int cols
         current.pressed = false;
     }
 
-    int2 translation = KeyBindings::instance().getMenuTranslation(event);
+    int2 translation = GET_MENU_TRANSLATION(event);
     if (translation != int2())
     {
         if (cols > 1)

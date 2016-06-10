@@ -162,6 +162,7 @@ public:
 
     void shutdown()
     {
+        m_mgr->shutDownThread();
         {
             cAudioMutexBasicLock l(*mutex);
             releaseAll();

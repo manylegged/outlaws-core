@@ -716,7 +716,7 @@ std::string lang_plural(const string &noun)
 
 std::string str_bytes_format(int bytes)
 {
-    static const double kilo = 1000.0; // 1024.0;
+    static const double kilo = 1024.0; // 1000.0
     if (bytes < kilo)
         return str_format("%d B", bytes);
     else if (bytes < kilo * kilo)

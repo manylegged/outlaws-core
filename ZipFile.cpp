@@ -6,6 +6,7 @@
 #include "../minizip/unzip.h"
 
 static DEFINE_CVAR(bool, kReadZipFiles, false);
+static DEFINE_CVAR(int, kFileSizeMax, 1024 * 1024 * 100);
 
 static void ZF_Report(const char* format, ...)
 {
@@ -138,55 +139,63 @@ static gzFile openGzip(const char* path, const char* mode)
 {
     string gzp = str_endswith(path, ".gz") ? string(path) : str_concat(path, ".gz");
     const char* abspath = OL_PathForFile(gzp.c_str(), mode);
-    if (str_contains(mode, 'w'))
+    if (str_contains(mode, 'w')) {
         OL_CreateParentDirs(abspath);
+    }
     gzFile gzf = GZ_OPEN(abspath, mode);
 
-    // try opening uncompressed
-    if (!gzf && str_contains(mode, 'r'))
+    if (gzf)
     {
-        gzp.resize(gzp.size() - 3); // remove .gz
-        abspath = OL_PathForFile(gzp.c_str(), mode);
-        gzf = GZ_OPEN(abspath, mode);
-    }
-
-    if (gzf) {
+        gzbuffer(gzf, 64 * 1024);
         DPRINT(SAVE, ("%s %s", (mode[0] == 'r') ? "load" : "save", abspath));
     }
     
     return gzf;
 }
 
+static bool checkOversize(int size, const char* path)
+{
+    const bool oversized = (size > kFileSizeMax);
+    if (oversized)
+        ZF_Report("aborted reading '%s': size %s is greater than kFileSizeMax (%s)",
+                  path, str_bytes_format(size).c_str(), str_bytes_format(kFileSizeMax).c_str());
+    return oversized;
+}
+
 string ZF_LoadFile(const char* path)
 {
     // 1. read gziped file
+    gzFile gzf = openGzip(path, "r");
+    if (gzf)
     {
-        gzFile gzf = openGzip(path, "r");
-        if (gzf)
+        string buf;
+        buf.resize(4 * 1024);
+        int offset = 0;
+        int read = 0;
+        while ((read = gzread(gzf, (void*)(offset + &buf[0]), buf.size() - offset)) == (buf.size() - offset))
         {
-            string buf;
-            buf.resize(4 * 1024);
-            int offset = 0;
-            int read = 0;
-            while ((read = gzread(gzf, (void*)(offset + &buf[0]), buf.size() - offset)) == (buf.size() - offset))
-            {
-                offset = buf.size();
-                buf.resize(offset * 2);
-            }
-            if (read == -1) {
-                ZF_Report("Error reading '%s': %s", path, gzerror(gzf, NULL));
-                read = 0;
-            }
-            buf.resize(offset + read);
-            gzclose(gzf);
-            return buf;
+            offset = buf.size();
+            if (checkOversize(offset * 2, path))
+                return string();
+            buf.resize(offset * 2);
         }
+        if (read == -1) {
+            ZF_Report("Error reading '%s': %s", path, gzerror(gzf, NULL));
+            read = 0;
+        }
+        buf.resize(offset + read);
+        gzclose(gzf);
+        return buf;
+    }
+    else if (str_endswith(path, ".gz"))
+    {
+        return string();
     }
 
     // 2. read uncompressed file
-    // const char* fl = OL_LoadFile(path);
-    // if (fl)
-        // return fl;
+    string buf = ZF_LoadFileRaw(path);
+    if (buf.size())
+        return buf;
 
     if (!kReadZipFiles)
         return string();
@@ -211,15 +220,18 @@ string ZF_LoadFileRaw(const char *path)
         return string();
     if (fseek(fil, 0, SEEK_END))
     {
-        ZF_Report("fseek(0, SEEK_END) failed: %s", strerror(errno));
+        ZF_Report("fseek(0, SEEK_END) on '%s' failed: %s", path, strerror(errno));
         return string();
     }
     const long size = ftell(fil);
     if (fseek(fil, 0, SEEK_SET))
     {
-        ZF_Report("fseek(0, SEEK_SET) failed: %s", strerror(errno));
+        ZF_Report("fseek(0, SEEK_SET) on '%s' failed: %s", path, strerror(errno));
         return string();
     }
+
+    if (checkOversize(size, path))
+        return string();
     
     string buf;
     buf.resize(size);
