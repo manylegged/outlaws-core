@@ -22,5 +22,6 @@ cp -v $outlaws/scripts/filter_*.py scripts/
 cp -v $outlaws/scripts/langtool.py scripts/
 cp -v $outlaws/scripts/stack_lookup.py scripts/
 cp -v $outlaws/scripts/nmsize.py scripts/
+cp -v $outlaws/server/sync/slpp.py scripts/
 
 /opt/local/bin/hg status
