@@ -24,4 +24,7 @@ cp -v $outlaws/scripts/stack_lookup.py scripts/
 cp -v $outlaws/scripts/nmsize.py scripts/
 cp -v $outlaws/server/sync/slpp.py scripts/
 
+helios=~/Documents/helios
+cp $helios/core/Save.* .
+
 /opt/local/bin/hg status
