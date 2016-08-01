@@ -72,6 +72,9 @@ TRIAGE_IGNORE_TRACE = set(["posix_signal_handler",
                            "RtlAcquireSRWLockExclusive",
                            "RtlInsertElementGenericTableFullAvl",
                            "LdrLogNewDataDllLoad",
+                           "EtwpCreateFile", # windows 7
+                           "BaseCheckVDMp$fin$0" # windows 7
+                           "LdrResGetRCConfig",
 
                            # linux around myTerminateHandler
                            "std::locale::locale@@GLIBCXX_3.4",
@@ -88,6 +91,10 @@ TRIAGE_IGNORE_TRACE = set(["posix_signal_handler",
                            "int Concurrency::details::_Schedule_chore",
                            "BasepCreateTokenFromLowboxToken",
                            "long WerpAddGatherToPEB",
+                           "LdrpReportError",
+                           "RtlpReAllocateHeap",
+                           "RtlpHpLargeAlloc",
+                           "EtwpWriteToPrivateBuffers",
 
                            # noise at bottom of stack
                            # "CompatCacheLookupExe",
@@ -100,6 +107,10 @@ TRIAGE_IGNORE_TRACE = set(["posix_signal_handler",
                            "_callthreadstartex",
                            "_threadstartex",
                            "WinMain",
+                           "vDbgPrintExWithPrefixInternal",
+                           "RtlIpv6AddressToStringA",
+                           "A_SHAUpdate",
+                           "CompatCacheLookupExe",
 ])
 
 paren_re = re.compile("[(][^()]*[)] *(const)?")
@@ -250,6 +261,9 @@ def glob_files(patterns):
 msvcp_re = re.compile("msvc[pr]1[2-9][0-9].pdb")
 
 def get_dll_symbols(modname):
+    # different for every version of windows...
+    if modname.lower() in ("ntdll.dll", "kernelbase.dll"):
+        return None, []
     pdb = modname.replace(".dll", ".pdb")
     lpdb = pdb.lower()
     if msvcp_re.match(lpdb):
@@ -736,6 +750,8 @@ hexre = re.compile("0x([a-fA-F0-9]{6,})")
 sched_re = re.compile("Log upload scheduled: (.*)$")
 sdl_win_re = re.compile("SDL_CreateWindow failed: (.*)$")
 terminate_re = re.compile("ASSERT[(]Terminate Handler[)]: Exception: (.*)$")
+memory_re = re.compile("Memory is ([0-9]+)% in use.")
+vmemory_re = re.compile("([0-9. ]+)/([0-9. ]+) MB virtual memory free")
 
 UNKNOWN_FUNC = "<unknown func>"
 
@@ -777,8 +793,8 @@ def extract_callstack(logf, opts):
             close_inpt(data)
             return
         if is_full:
-            print line,
-            print data.next(), # platform info
+            print line.strip()
+            print data.next().strip() # platform info
         break
 
     # analytic log handlers
@@ -836,7 +852,26 @@ def extract_callstack(logf, opts):
     module = None
     for line in data:
         line = line.replace("\r", "")
-        # print "LINE=", line
+        m = memory_re.search(line)
+        if m:
+            perc = int(m.group(1))
+            # if memory load is above 95%, that probably caused the crash
+            if perc > 95:
+                if is_triage:
+                    stacktrace = ["out of memory"]
+                    break
+                else:
+                    log("out of memory (%d%% in use)" % perc)
+        m = vmemory_re.search(line)
+        if m:
+            perc = 100.0 * (1.0 - float(m.group(1)) / float(m.group(2)))
+            # if virtual memory load is above 95%, that probably caused the crash
+            if perc > 95:
+                if is_triage:
+                    stacktrace = ["out of memory"]
+                    break
+                else:
+                    log("out of virtual memory (%d%% in use)" % perc)
         m = basere.search(line)
         # log("module line", m, line)
         if m:
@@ -963,7 +998,7 @@ def do_triage(files, ops):
         fil = os.path.normpath(fil)
         extract_callstack(fil, ops1)
     tfiles = []
-    print "Triage found %d matches" % ops1.matches
+    log("Triage found %d matches" % ops1.matches)
     for version, data in sdict(triage, lambda x: x[0]):
         # data is dict(stacktrace -> list of logs)
         total = sum(len(x) for x in data.itervalues())
@@ -987,10 +1022,11 @@ def do_triage(files, ops):
                 if len(pstack) > 100:
                     pstack = pstack.replace(" <- ", "\n   <- ")
             perc = 100.0 * len(files) / total
-            ips = count_ips(files)
-            print "%d(%.1f%%) logs %d(%.1f%%) ips. %s" % (len(files), perc,
-                                                          ips, 100.0 * ips / total_ips,
-                                                          pstack)
+            ips_txt = ""
+            if total_ips:
+                ips = count_ips(files)
+                ips_txt = " logs %d(%.1f%%) ips" % (ips, 100.0 * ips / total_ips)
+            print "%d(%.1f%%)%s. %s" % (len(files), perc, ips_txt, pstack)
             print_perc += perc
             for fl in sorted(files, reverse=True)[:TOP_LOGS_PER_STACK_COUNT]:
                 print "     ", fl.replace(os.path.expanduser("~"), "~")
@@ -1100,20 +1136,24 @@ Options:
             for fl in glob.glob(p + "/*"):
                 shutil.copyfile(fl, os.path.join(lpath, os.path.basename(fl)))
             print "done"
-        print "%d total builds, %d ignored based on date, %d already local, %d updated" % (len(paths), verignore, exists, updated)
+        log("%d total builds, %d ignored based on date, %d already local, %d updated" % (len(paths), verignore, exists, updated))
     elif triage:
         files = []
         if len(args):
             files = args
-            print "Triaging over %d crashlogs" % len(files)
+            log("Triaging over %d crashlogs", len(files))
         else:
             base = os.path.join(ROOT, "server/sync/crash")
             all_files = safe_listdir(base)
             for fil in all_files:
-                date = datetime.strptime(fil.split("_")[0], "%Y%m%d")
+                try:
+                    date = datetime.strptime(fil.split("_")[0], "%Y%m%d")
+                except ValueError:
+                    warning("skipping '%s'", fil)
+                    continue
                 if date >= ops.version:
                     files.append(os.path.join(base, fil))
-            print "Triaging over %d/%d server crashlogs" % (len(files), len(all_files))
+            log("Triaging over %d/%d server crashlogs" % (len(files), len(all_files)))
         do_triage(files, ops)
     elif len(args) == 0:
         logs = glob_files([os.path.join(os.path.expanduser("~/Downloads"), "Reassembly_*.txt"),

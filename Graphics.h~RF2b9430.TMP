@@ -249,7 +249,7 @@ public:
 
     GLTexture(const GLTexture& tex) = delete; // not copyable
 
-    GLTexture(GLuint texn, float2 sz, GLint fmt) : m_size(sz), m_texname(texn), m_format(fmt) {}
+    GLTexture(GLuint texn, float2 sz, GLint fmt) : m_texname(texn), m_size(sz), m_format(fmt) {}
     GLTexture() {}
     GLTexture(GLTexture&& o)
     {

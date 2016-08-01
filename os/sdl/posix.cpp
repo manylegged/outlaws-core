@@ -23,7 +23,7 @@
 
 #include "posix.h"
 
-int g_signaldepth = 0;
+static int g_signaldepth = 0;
 
 // don't go through ReportMessagef/ReportMessage!
 static void ReportPOSIX(const char *format, ...)
@@ -191,9 +191,11 @@ static void posix_signal_handler(int sig, siginfo_t *siginfo, void *context)
         print_backtrace();
         return;
     }
-    
+
     puts("\nsignal handler called");
     fflush(NULL);
+
+    OLG_OnTerminate();
 
     string message = str_format("%s (signal %d)", signal_to_string(sig, siginfo), sig);
     ReportPOSIX(message);
@@ -236,7 +238,7 @@ static void posix_signal_handler(int sig, siginfo_t *siginfo, void *context)
     
     if (sig == SIGTERM || sig == SIGINT)
     {
-        if (OLG_OnClose()) {
+        if (OLG_DoClose()) {
             ReportPOSIX("Caught Control-C and already closing - Calling exit()\n");
             std::_Exit(1);
         }
@@ -253,6 +255,8 @@ static void posix_signal_handler(int sig, siginfo_t *siginfo, void *context)
 
 void posix_set_signal_handler()
 {
+    if (!OLG_EnableCrashHandler())
+        return;
 #if 0
     /* setup alternate stack */
     {
@@ -294,8 +298,12 @@ void posix_set_signal_handler()
     }
 }
 
-void OL_OnTerminate(const char* message)
+void OL_Terminate(const char* message)
 {
+    OLG_OnTerminate();
+    if (!OLG_EnableCrashHandler())
+        return;
+
     posix_print_stacktrace();
     posix_oncrash(str_format("Terminated: %s\n", message).c_str());
     std::_Exit(1);

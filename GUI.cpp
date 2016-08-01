@@ -1547,7 +1547,15 @@ static const float2 kBoxPad = 3.f * kButtonPad;
 
 void MessageBoxBase::render(const ShaderState &s1, const View& view)
 {
-    if (alpha < epsilon)
+    const GLText *msg = GLText::get(messageFont, textSize, message);
+        
+    size = max(0.5f * view.sizePoints,
+               msg->getSize() + 6.f * kBoxPad +
+               justY(GLText::getScaledSize(titleSize) + okbutton.size.y));
+
+    position = 0.5f * view.sizePoints;
+
+    if (alpha < epsilon || !active)
         return;
 
     ShaderState ss = s1;
@@ -1559,13 +1567,6 @@ void MessageBoxBase::render(const ShaderState &s1, const View& view)
         fadeFullScreen(fview, COLOR_BLACK);
     }
 
-    const GLText *msg = GLText::get(messageFont, textSize, message);
-
-    size = max(0.5f * view.sizePoints,
-               msg->getSize() + 6.f * kBoxPad +
-               justY(GLText::getScaledSize(titleSize) + okbutton.size.y));
-
-    position = 0.5f * view.sizePoints;
 
     const float2 boxRad = size / 2.f;
 
@@ -1600,13 +1601,12 @@ static void renderOneButton(const ShaderState &ss, Button &bu)
 
 void MessageBoxWidget::render(const ShaderState &ss, const View& view)
 {
-    if (!active)
-        return;
     MessageBoxBase::render(ss, view);
 
     okbutton.position = position - justY(size / 2.f) + justY(kBoxPad + 0.5f * okbutton.size.y);
     okbutton.alpha = alpha2;
-    renderOneButton(ss, okbutton);
+    if (active)
+        renderOneButton(ss, okbutton);
 }
 
 bool MessageBoxWidget::HandleEvent(const Event* event)
@@ -1633,21 +1633,22 @@ ConfirmWidget::ConfirmWidget()
 
 void ConfirmWidget::render(const ShaderState &ss, const View& view)
 {
-    if (!active)
-        return;
     MessageBoxBase::render(ss, view);
 
     const float2 bcr = position - justY(size / 2.f) + justY(kBoxPad) + 0.5f * okbutton.size.y;
-
-    DMesh::Handle h(theDMesh());
-    h.mp.translateZ(1.f);
-
     okbutton.position = bcr + justX(okbutton.size + kBoxPad);
     okbutton.alpha = alpha2;
-    okbutton.renderButton(h.mp, false);
 
     cancelbutton.position = bcr - justX(cancelbutton.size + kBoxPad);
     cancelbutton.alpha = alpha2;
+
+    if (!active)
+        return;
+ 
+    DMesh::Handle h(theDMesh());
+    h.mp.translateZ(1.f);
+
+    okbutton.renderButton(h.mp, false);
     cancelbutton.renderButton(h.mp, false);
 
     h.Draw(ss);
@@ -1692,6 +1693,17 @@ ScrollMessageBox::ScrollMessageBox()
 
 void ScrollMessageBox::render(const ShaderState &s1, const View& view)
 {
+    const float titleSize = 36;
+    message.size.x = 0.8f * view.sizePoints.x;
+    size = max(0.9f * view.sizePoints,
+               message.size + 6.f * kBoxPad +
+               justY(GLText::getScaledSize(titleSize) + okbutton.size.y));
+
+    position = 0.5f * view.sizePoints;
+
+    okbutton.position = position - justY(size / 2.f) + justY(kBoxPad + 0.5f * okbutton.size.y);
+    okbutton.alpha = alpha;
+
     if (alpha < epsilon || !active)
         return;
 
@@ -1703,14 +1715,6 @@ void ScrollMessageBox::render(const ShaderState &s1, const View& view)
         fview.alpha = 0.5f * alpha;
         fadeFullScreen(fview, COLOR_BLACK);
     }
-
-    const float titleSize = 36;
-    message.size.x = 0.8f * view.sizePoints.x;
-    size = max(0.9f * view.sizePoints,
-               message.size + 6.f * kBoxPad +
-               justY(GLText::getScaledSize(titleSize) + okbutton.size.y));
-
-    position = 0.5f * view.sizePoints;
 
     const float2 boxRad = size / 2.f;
 
@@ -1724,8 +1728,6 @@ void ScrollMessageBox::render(const ShaderState &s1, const View& view)
     message.position = pos - justY(message.size/2.f + kButtonPad.y);
     message.render(ss);
 
-    okbutton.position = position - justY(size / 2.f) + justY(kBoxPad + 0.5f * okbutton.size.y);
-    okbutton.alpha = alpha;
     renderOneButton(ss, okbutton);
 }
 

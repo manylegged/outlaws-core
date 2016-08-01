@@ -496,7 +496,7 @@ static string getSteamLanguageCode1(const string &lang)
     else if (lang == "polish")     { return "pl"; }
     else if (lang == "spanish")    { return "es"; }
     else if (lang == "swedish")    { return "sv"; }
-    else if (lang == "chinese")    { return "zh"; }
+    else if (lang == "schinese")   { return "zh"; }
     else if (lang == "portuguese") { return "pt"; }
     else if (lang == "brazilian")  { return "pt"; }
     else if (lang == "turkish")    { return "tr"; }

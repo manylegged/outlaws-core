@@ -33,6 +33,8 @@ struct VertexPos {
 struct VertexPosTex {
     float3 pos;
     float2 tex;
+    VertexPosTex() {}
+    VertexPosTex(f3 p, f2 t) : pos(p), tex(t) {}
 };
 
 struct VertexPosColorTex {

@@ -104,7 +104,7 @@ void GLText::render(const ShaderState* s, float2 pos) const
 
     GLScope s0(GL_DEPTH_TEST, false);
     GLScope s1(GL_DEPTH_WRITEMASK, false);
-    ShaderTexture::instance().DrawRectCorners(*s, texture, pos, pos + textSizePoints);
+    ShaderText::instance().DrawRectCorners(*s, texture, pos, pos + textSizePoints);
 }
 
 

@@ -39,6 +39,9 @@
 // UNLEN
 #include "Lmcons.h"
 
+// Graphics.cpp
+extern uint gpuMemoryUsed;
+
 string ws2s(const std::wstring& wstr)
 {
     int len = WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), wstr.length(), 0, 0, NULL, NULL);
@@ -55,13 +58,19 @@ std::wstring s2ws(const std::string& s)
     return r;
 }
 
+inline const char* sdl_os_autorelease(const std::wstring &val)
+{
+    std::string s = ws2s(val);
+    return sdl_os_autorelease(s);
+}
+
 static std::wstring getDirname(const wchar_t *inpt)
 {
     wchar_t driv[_MAX_DRIVE];
     wchar_t dir[_MAX_DIR];
     wchar_t fname[_MAX_FNAME];
     wchar_t ext[_MAX_EXT];
-    _wsplitpath(inpt, driv, dir, fname, ext);
+    _wsplitpath_s(inpt, driv, dir, fname, ext);
 
     return std::wstring(driv) + dir;
 }
@@ -120,7 +129,7 @@ const char* OL_GetUserName(void)
     }
 
     buf.resize(size-1);
-    return sdl_os_autorelease(ws2s(buf));
+    return sdl_os_autorelease(buf);
 }
 
 static FARPROC GetModuleAddr(LPCTSTR modName, LPCSTR procName)
@@ -264,8 +273,7 @@ std::wstring pathForFile(const char *fname, const char* flags)
 
 const char *OL_PathForFile(const char *fname, const char* flags)
 {
-    std::wstring path = pathForFile(fname, flags);
-    return path.size() ? sdl_os_autorelease(ws2s(path)) : NULL;
+    return sdl_os_autorelease(pathForFile(fname, flags));
 }
 
 int OL_FileDirectoryPathExists(const char* fname)
@@ -442,6 +450,12 @@ extern "C" {
     _declspec(dllexport) DWORD NvOptimusEnablement = 0x00000001;
 }
 
+#if __clang__
+std::string exceptionToString(const EXCEPTION_RECORD *rec)
+{
+    return "Unknown Cxx Exception";
+}
+#else
 struct UntypedException {
   UntypedException(const EXCEPTION_RECORD & er)
     : exception_object(reinterpret_cast<void *>(er.ExceptionInformation[1])),
@@ -470,7 +484,18 @@ T * exception_cast(const UntypedException & e) {
   return reinterpret_cast<T *>(exception_cast_worker(e, ti));
 }
 
-#define PRINT_STATUS(PREFIX, X) case PREFIX ## _ ## X: return #X;
+std::string exceptionToString(const EXCEPTION_RECORD *rec)
+{
+    UntypedException ue(*rec);
+    if (std::exception * e = exception_cast<std::exception>(ue)) {
+        const std::type_info & ti = typeid(*e);
+        return str_format("%s(\"%s\")", ti.name(), e->what());
+    }
+    else {
+        return "Unknown Cxx Exception";
+    }
+}
+#endif
 
 static const char* getExceptionCodeName(const EXCEPTION_RECORD *rec)
 {
@@ -503,20 +528,12 @@ static const char* getExceptionCodeName(const EXCEPTION_RECORD *rec)
         CASE_STR(EXCEPTION_INVALID_HANDLE);
         CASE_STR(DBG_CONTROL_C);
         CASE_STR(STATUS_INVALID_PARAMETER);
-    case 0xE06D7363: {
-        UntypedException ue(*rec);
-        if (std::exception * e = exception_cast<std::exception>(ue)) {
-            const std::type_info & ti = typeid(*e);
-            str = str_format("%s(\"%s\")", ti.name(), e->what());
-            return str.c_str();
-        } else {
-            return "Unknown Cxx Exception";
-        }
-    }
-    default: {
+    case 0xE06D7363:
+        str = exceptionToString(rec);
+        return str.c_str();
+    default:
         str = str_format("UNKNOWN(%#x)", code);
         return str.c_str();
-    }
     }
 }
 
@@ -590,9 +607,10 @@ static void printStack(HANDLE thread, CONTEXT &context)
 
 static void printModulesStack(CONTEXT *ctx, string &modname)
 {
-    std::chrono::time_point<std::chrono::system_clock> start = std::chrono::system_clock::now();
-    std::time_t cstart = std::chrono::system_clock::to_time_t(start);
-    ReportWin32("Time is %s", std::ctime(&cstart));
+    time_t cstart = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    char buf[26] = {};
+    ctime_s(buf, sizeof(buf), &cstart);
+    ReportWin32("Time is %s", buf);
 
     MEMORYSTATUSEX statex = {};
     statex.dwLength = sizeof(MEMORYSTATUSEX);
@@ -605,6 +623,7 @@ static void printModulesStack(CONTEXT *ctx, string &modname)
         ReportWin32("%7.1f/%7.1f MB virtual memory free", statex.ullAvailVirtual/kDiv, statex.ullTotalVirtual/kDiv);
         // ReportWin32("%7.1f MB extended memory free", statex.ullAvailExtendedVirtual/kDiv);
     }
+    ReportWin32("GPU Memory Used: %.1f MB", gpuMemoryUsed / kDiv);
 
     PROCESS_MEMORY_COUNTERS pmc;
     memset(&pmc, 0, sizeof(pmc));
@@ -696,7 +715,7 @@ static void printModulesStack(CONTEXT *ctx, string &modname)
     {
         if (!x.first || x.first == current_tid)
             continue;
-        ReportWin32("Dumping stack for thread %#x, '%s'", x.first, x.second);
+        ReportWin32("Dumping stack for thread %#llx, '%s'", x.first, x.second);
         HANDLE hthread = OpenThread(THREAD_GET_CONTEXT|THREAD_SUSPEND_RESUME|THREAD_QUERY_INFORMATION,
                                     FALSE, x.first);
         if (!hthread) {
@@ -723,8 +742,13 @@ static void printModulesStack(CONTEXT *ctx, string &modname)
     }
 }
 
-void OL_OnTerminate(const char* message)
+void OL_Terminate(const char* message)
 {
+    OLG_OnTerminate();
+
+    if (!OLG_EnableCrashHandler())
+        return;
+    
     CONTEXT context;
     memset(&context, 0, sizeof(context));
     RtlCaptureContext(&context);
@@ -741,6 +765,9 @@ static LONG WINAPI myExceptionHandler(EXCEPTION_POINTERS *info)
 {
     fflush(NULL);
     ReportWin32("Unhandled Top Level Exception");
+
+    OLG_OnTerminate();
+
     const EXCEPTION_RECORD *rec = info->ExceptionRecord;
 
     string msg = str_format("Code: %s, Flags: %#x, PC: 0x%p",
@@ -863,7 +890,7 @@ const char** OL_GetOSLanguages(void)
 #endif
 
     const std::string lc = ws2s(buf);
-    strncpy(locale, lc.c_str(), 2);
+    strncpy_s(locale, lc.c_str(), 2);
     ptr[0] = locale;
 
     ReportWin32("User Locale: %s (%s)", lc.c_str(), locale);
@@ -880,11 +907,15 @@ static UINT s_wTimerRes;
 
 int os_init()
 {
+    // setup crash handler
+    if (OLG_EnableCrashHandler())
+        SetUnhandledExceptionFilter(myExceptionHandler);
+
     // get scaling factor for retina
     {
         HDC screen = GetDC(0);
         int dpiX = GetDeviceCaps(screen, LOGPIXELSX);
-        int dpiY = GetDeviceCaps(screen, LOGPIXELSY);
+        //int dpiY = GetDeviceCaps(screen, LOGPIXELSY);
         ReleaseDC(0, screen);
 
         const float factor = dpiX / 96.f;
@@ -910,6 +941,7 @@ int os_init()
         }
     }
 
+#if 0
     if (OLG_UseDevSavePath())
     {
         AllocConsole();
@@ -917,6 +949,7 @@ int os_init()
         freopen("conout$","w",stdout);
         freopen("conout$","w",stderr);
     }
+#endif
 
     return 1;
 }
@@ -933,8 +966,6 @@ void os_cleanup()
 
 int main(int argc, char* argv[])
 {
-    // setup crash handler
-    SetUnhandledExceptionFilter(myExceptionHandler);
 
     // allow highdpi on retina-esque displays
     {

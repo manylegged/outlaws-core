@@ -64,6 +64,16 @@ inline int randrange(int end)
     return randrange(0, end);
 }
 
+inline int2 randrange(int2 start, int2 end)
+{
+    return int2(randrange(start.x, end.x), randrange(start.y, end.y));
+}
+
+inline int3 randrange(int3 start, int3 end)
+{
+    return int3(randrange(start.x, end.x), randrange(start.y, end.y), randrange(start.z, end.z));
+}
+
 inline bool randbool() { return randrange(0, 2); }
 
 inline float randsign() { return randbool() ? 1.f : -1.f; }

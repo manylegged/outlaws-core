@@ -18,8 +18,7 @@ int main(int argc, char *argv[])
     
     const int mode = OLG_Init(argc, (const char**)argv);
 
-    if (OLG_EnableCrashHandler())
-        posix_set_signal_handler();
+    posix_set_signal_handler();
 
     if (mode == 0)
     {

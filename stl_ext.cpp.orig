@@ -2,8 +2,6 @@
 #include "StdAfx.h"
 #include "stl_ext.h"
 
-dummy_ref_t the_dummy_ref = dummy_ref_t();
-
 int findLeadingOne(uint v, int i)
 {
     if (v&0xffff0000) { i += 16; v >>= 16; }
@@ -111,7 +109,6 @@ static void myTerminateHandler()
 {
     Report("terminate handler called");
     string message = "<no info>";
-#if !(defined(__c2__) && defined(__clang__))
     std::exception_ptr eptr = std::current_exception();
     try {
         if (eptr) {
@@ -120,23 +117,9 @@ static void myTerminateHandler()
     } catch(const std::exception& e) {
         message = e.what();
     }
-#endif
 
     ASSERT_FAILED("Terminate Handler", "Exception: %s", message.c_str());
-    OL_Terminate(message.c_str());
-}
-
-static uint64 thread_getid()
-{
-    uint64 tid = 0;
-#if _WIN32
-    tid = GetCurrentThreadId();
-#elif __APPLE__
-    pthread_threadid_np(pthread_self(), &tid);
-#else // linux
-    tid = pthread_self();
-#endif
-    return tid;
+    OL_OnTerminate(message.c_str());
 }
 
 void thread_setup(const char* name)
@@ -147,13 +130,16 @@ void thread_setup(const char* name)
     my_random_device() = new std::mt19937(random_seed());
     DEBUG_RAND(("create seed %d", random_seed()));
     
-    const uint64 tid = thread_getid();
+    uint64 tid = 0;
 #if _WIN32
+    tid = GetCurrentThreadId();
     SetThreadName(tid, name);
 #elif __APPLE__
+    pthread_threadid_np(pthread_self(), &tid);
     pthread_setname_np(name);
 #else // linux
     static_assert(sizeof(pthread_t) <= sizeof(tid), "");
+    tid = pthread_self();
     int status = 0;
     // 16 character maximum!
     if ((status = pthread_setname_np(pthread_self(), name)))
@@ -171,15 +157,19 @@ void thread_setup(const char* name)
 void thread_cleanup()
 {
     deleteNull(my_random_device());
-
-    std::lock_guard<std::mutex> l(_thread_name_mutex());
-    _thread_name_map().erase(thread_getid());
 }
 
 
 const char* thread_current_name()
 {
-    const uint64 tid = thread_getid();
+    uint64 tid = 0;
+#if _WIN32
+    tid = GetCurrentThreadId();
+#elif __APPLE__
+    pthread_threadid_np(pthread_self(), &tid);
+#else // linux
+    tid = pthread_self();
+#endif
     std::lock_guard<std::mutex> l(_thread_name_mutex());
     return _thread_name_map()[tid];
 }
@@ -251,10 +241,10 @@ size_t MemoryPool::create(size_t cnt)
         if (!pool)
             Reportf("malloc(%#x) failed: %s", (int) (count * element_size), strerror(errno));
 #endif
-        Reportf("Allocating MemoryPool[%d](%db, %d) %.1fMB: %s", 
-                index, (int)element_size, (int)count,
-                (element_size * count) / (1024.0 * 1024.0),
-                pool ? "OK" : "FAILED");
+        Reportf("Allocating MemoryPool(%db, %d) %.1fMB: %s", 
+                       (int)element_size, (int)count, 
+                       (element_size * count) / (1024.0 * 1024.0),
+                       pool ? "OK" : "FAILED");
         if (!pool)
             count /= 2;
     } while (count && !pool);
@@ -351,14 +341,14 @@ EnumType::EnumType(std::initializer_list<Pair> el) : elems(el)
         s2v[it.first.str()] = it.second;
         v2s[it.second] = it.first;
     }
-
-    // its a bitset if the first 4 values don't overlap
     uint64 bit = 0;
     for (int i=0; i<min((int)elems.size(), 4); i++)
     {
-        if (elems[i].second&bit)
+        if (elems[i].second&bit) {
             m_isBitset = false;
-        bit |= elems[i].second;
+            break;
+        }
+        bit = elems[i].second;
     }
 }
 

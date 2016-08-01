@@ -76,9 +76,14 @@ void OLG_OnEvent(const struct OLEvent* event);
 // called before program terminates
 void OLG_OnQuit(void);
 
-// called when the application window is closed - like OnQuit but more gracefull
+// called when an unhandled exception is caught and game is about to crash
+// also called by OL_Terminate. May be called several times
+void OLG_OnTerminate();
+
+// called when the application window is closed
+// game should clean up and call OLG_DoQuit()
 // return 1 if already closing, 0 if just started
-int OLG_OnClose(void);
+int OLG_DoClose(void);
 
 // init, process args. Return 1 if create window and interactive, 0 if headless mode
 int OLG_Init(int argc, const char** argv);
@@ -152,6 +157,7 @@ int OL_OpenWebBrowser(const char* url);
 
 // quit gracefully, return 1 if already trying to quit
 int OL_DoQuit(void);
+int OL_IsQuitting(void);
 
 // request that log be uploaded when game is shutdown
 void OL_ScheduleUploadLog(const char* reason);
@@ -235,7 +241,7 @@ void OL_FontAdvancements(int font, float size, struct OLSize* advancements); // 
 float OL_FontHeight(int fontName, float size);
 
 // print stacktrace to log, upload log, quit program, etc
-void OL_OnTerminate(const char* message);
+void OL_Terminate(const char* message);
 
 /////////// File IO
 // All functions take paths relative to main game directory
@@ -250,8 +256,6 @@ int OL_CopyFile(const char* source, const char *dest);
 // Return list of files in a directory (base name only - no path)
 const char** OL_ListDirectory(const char* path);
 
-int OL_DirectoryExists(const char* path);
-
 // get complete path for data file in utf8, searching through save directory and application resource directory
 // mode should be "w" (local), "r" (read), "p" (package)
 const char *OL_PathForFile(const char *fname, const char *mode);
@@ -264,6 +268,8 @@ int OL_RemoveFile(const char* fname);
 
 // return true if path is a file or directory
 int OL_FileDirectoryPathExists(const char* fname);
+int OL_DirectoryExists(const char* path);
+
 
 #if __APPLE__
 const int OL_IsSandboxed(void);
@@ -273,6 +279,11 @@ const char* OL_SandboxOpenFile(void); /* always .lua or .lua.gz! */
 
 #ifdef __cplusplus
 }
+
+// convenience for c++ strings
+inline const char** OL_ListDirectory(const std::string &path) { return OL_ListDirectory(path.c_str()); }
+inline int OL_RemoveFileOrDirectory(const std::string &dirname) { return OL_RemoveFileOrDirectory(dirname.c_str()); }
+inline const char *OL_PathForFile(const std::string &fname, const char *mode) { return OL_PathForFile(fname.c_str(), mode); }
 #endif
 
 

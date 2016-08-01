@@ -176,7 +176,9 @@ int OL_IsLogOpen(void)
 void OL_ReportMessage(const char *str_)
 {
 #if OL_WINDOWS
-    OutputDebugStringA(str_);
+#if IS_DEVEL
+    OutputDebugString(s2ws(str_).c_str());
+#endif
 #endif
     printf("%s", str_);
 
@@ -351,6 +353,11 @@ int OL_DoQuit()
     int was = g_quitting;
     g_quitting = true;
     return was;
+}
+
+int OL_IsQuitting()
+{
+    return g_quitting;
 }
 
 void sdl_set_scaling_factor(float factor)
@@ -970,7 +977,7 @@ static void HandleEvents()
             }
             case SDL_WINDOWEVENT_CLOSE:
                 ReportSDL("Window %d closed", evt.window.windowID);
-                g_quitting = true;
+                OLG_DoClose();
                 break;
             default:
                 ReportSDL("Window %d got unknown event %d",
@@ -1043,8 +1050,7 @@ static void HandleEvents()
         }
         case SDL_QUIT:
             ReportSDL("SDL_QUIT received");
-            OLG_OnClose();
-            g_quitting = true;
+            OLG_DoClose();
             break;
         }
     }
@@ -1090,6 +1096,8 @@ struct AutoreleasePool {
 
 const char* sdl_os_autorelease(std::string &val)
 {
+    if (val.empty())
+        return NULL;
     return AutoreleasePool::instance().autorelease(val);
 }
 
@@ -1179,15 +1187,18 @@ int sdl_os_main(int argc, const char **argv)
 {
     int mode = OLG_Init(argc, argv);
 
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_GAMECONTROLLER ) < 0)
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER ) < 0)
     {
         ReportSDL("SDL_Init Failed (retrying without gamepad): %s", SDL_GetError());
-        if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) < 0)
+        if (SDL_Init(SDL_INIT_VIDEO) < 0)
         {
             sdl_os_oncrash(str_format("SDL_Init() failed: %s", SDL_GetError()));
             return 1;
         }
     }
+
+    if (!os_init())
+        return 1;
 
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     SDL_GL_SetAttribute(SDL_GL_RED_SIZE, 8);
@@ -1197,9 +1208,6 @@ int sdl_os_main(int argc, const char **argv)
 
     if (kOpenGLDebug)
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_DEBUG_FLAG);
-
-    if (!os_init())
-        return 1;
 
     if (mode == 0)
     {

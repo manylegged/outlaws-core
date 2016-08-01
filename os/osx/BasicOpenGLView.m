@@ -144,6 +144,11 @@ int OL_DoQuit(void)
     return wasClosing;
 }
 
+int OL_IsQuitting(void)
+{
+    return gView->closing;
+}
+
 #pragma mark ---- OpenGL Utils ----
 
 // ===================================
@@ -554,7 +559,7 @@ static void setupPresentationOptions(BOOL fullscreen)
 - (BOOL)windowShouldClose:(id)sender
 {
     LogMessage(@"window should close");
-    OLG_OnClose();
+    OLG_DoClose();
     return YES;
 }
 

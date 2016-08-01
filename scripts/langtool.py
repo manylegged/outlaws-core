@@ -1,5 +1,5 @@
 #!/usr/bin/python
-#!/opt/local/bin/python2.7
+# -*- coding: utf-8 -*-
 
 # source -> .po
 # po -> .lua
@@ -21,7 +21,7 @@ import polib
 
 all_languages = [ "ru", "fr", "de", "es", "pt", "pl", "ja", "tr", "zh" ]
 steam_languages = {"ru":"russian", "en":"english", "de":"german", "fr":"french", "pl":"polish", "sv":"swedish",
-                   "ko":"korean", "ja":"japanese", "zh":"chinese", "es":"spanish", "pt":"portugese", "tr":"turkish"}
+                   "ko":"korean", "ja":"japanese", "zh":"schinese", "es":"spanish", "pt":"portugese", "tr":"turkish"}
 languages = all_languages
 set_languages = False
 luafiles = ["tips", "popups", "messages", "tutorial"] # text.lua is special
@@ -32,6 +32,7 @@ export = False
 dozip = False
 dryrun = False
 validate = False
+lua2po_dir = None
 
 def count_occur(v):
     y = {}
@@ -63,7 +64,9 @@ def check_format_strings(fil, linenum, orig, repl):
     orig_ws = ws_re.match(orig).groups()
     repl_ws = ws_re.match(repl).groups()
     # print orig_ws, "->", repl_ws
-    if orig_ws != repl_ws:
+    if (orig_ws != repl_ws and \
+        not (orig_ws == ("", " ") and repl_ws == ("", "") and \
+             ((orig.endswith(": ") and repl.endswith(u"：")) or (orig.endswith(", ") and repl.endswith(u"，"))))):
         print "%s:%d: error: whitespace mismatch %r -> %r" % (fil, linenum, orig, repl)
     orig_cap_m = capital_re.match(orig)
     repl_cap_m = capital_re.match(repl)
@@ -149,12 +152,13 @@ def open_po(pof):
         fil.close()
     return polib.pofile(pof)
         
-def header(luaf):
-    return ("\nReassembly data/%s localization file\n" % os.path.basename(luaf)) + """
+def header(luaf, comment=""):
+    if comment:
+        comment = " (%s)" % comment
+    return ("\nReassembly %s localization%s\n" % (os.path.basename(luaf), comment)) + """
 Copyright (C) 2015-2016 Arthur Danskin
 Content-Type: text/plain; charset=utf-8
 """
-
 
 def list2po(name, words, pof, comment=""):
     entries = {}
@@ -172,31 +176,52 @@ def list2po(name, words, pof, comment=""):
         if word in entries:
             args["msgstr"] = entries[word]
         pofil.append(polib.POEntry(**args))
-    pofil.header = header(name)
+    pofil.header = header("data/" + name)
     pofil.save(pof)
     print "wrote " + os.path.relpath(pof) + " (%d entries updated)" % len(entries)
 
-    
-def lua2po(luaf, pof):
-    with open(luaf) as fil:
+def read_lua_strings(luaf):
+    with io.open(luaf, encoding="utf-8") as fil:
         luadata = fil.read()
-    newpo = polib.POFile()
     if "web_header" in luadata:
         luadata = luadata[:luadata.index("web_header")]
     luadata = re.sub("--.*\n", "", luadata)
+    strs = []
     for st in re.findall('"[^"]+"', luadata):
         st = st[1:-1].replace("\\\n", "")
         if len(st) > 2:
-            newpo.append(polib.POEntry(msgid=st))
-
+            strs.append(st)
+    return strs
+    
+def lua2po(luaf, pof):
+    newpo = polib.POFile()
+    for st in read_lua_strings(luaf):
+        newpo.append(polib.POEntry(msgid=st))
     if os.path.exists(pof):
         pofil = open_po(pof)
         pofil.merge(newpo)
     else:
         pofil = newpo
-    pofil.header = header(luaf)
+    pofil.header = header("data/" + luaf)
     pofil.save(pof)
 
+    
+def lua2po_merge(baselua, translua, pof):
+    pofil = polib.POFile()
+    for base, trans in zip(read_lua_strings(baselua), read_lua_strings(translua)):
+        pofil.append(polib.POEntry(msgid=base, msgstr=trans))
+    pofil.header = header(translua, "fan")
+    pofil.save(pof)
+
+    
+def lua2po_simple(luaf, pof):
+    dat = read_lua(luaf)
+    pofil = polib.POFile()
+    for key in sorted(dat.keys()):
+        pofil.append(polib.POEntry(msgid=unicode(key), msgstr=unicode(dat[key])))
+    pofil.header = header(luaf, "fan")
+    pofil.save(pof)
+    
 
 def load_achievements():
     return vdf.load(open(os.path.join(ROOT, "lang", "329130_loc_all.vdf")))["lang"]["english"]["Tokens"]
@@ -228,7 +253,7 @@ def achievements_po2vdf(vdff, langs):
     
     
 def po2lua_replace(outlua, baselua, pof):
-    with open(baselua) as fil:
+    with io.open(baselua, encoding="utf-8") as fil:
         dat = fil.read()
     count = 0
     for pe in open_po(pof):
@@ -263,7 +288,7 @@ def po2lua_simple(outlua, pofs):
         return
     mkdir_p(os.path.dirname(outlua))
     fil = codecs.open(outlua, "w", "utf-8")
-    fil.write("{" + ",\n".join('"%s" = "%s"' % (escape(k), escape(v)) for k, v in sorted(dct.items()) if k != v) + "}")
+    fil.write("{\n" + ",\n".join('"%s" = "%s"' % (escape(k), escape(v)) for k, v in sorted(dct.items()) if k != v) + "\n}")
     fil.close()
 
 
@@ -287,7 +312,7 @@ def printhelp():
 -h : print this message""" % sys.argv[0]
     exit(0)
 
-opts, cargs = getopt.getopt(sys.argv[1:], "iehznt")
+opts, cargs = getopt.getopt(sys.argv[1:], "iehzntp:")
 for (opt, val) in opts:
     if opt == "-h":
         printhelp()
@@ -301,6 +326,8 @@ for (opt, val) in opts:
         dryrun = True
     elif opt == "-t":
         validate = True
+    elif opt == "-p":
+        lua2po_dir = val
 
 if cargs:
     if cargs[0][0] == '-':
@@ -379,9 +406,7 @@ elif validate:
         check_dict("text.lua", lang)
         check_values("messages.lua", lang)
         check_list("tips.lua", lang)
-        
-
-elif not dozip:
+elif not dozip and not lua2po_dir:
     printhelp()
 
 if dozip:
@@ -393,3 +418,20 @@ if dozip:
         pos.extend(glob.glob(os.path.relpath(os.path.join(ROOT, "lang", lang, "*.po"))))
     subprocess.call(["zip", zipfile] + pos)
     print "wrote %s" % (zipfile)
+
+if lua2po_dir:
+    print "importing po files from %s" % lua2po_dir
+    lang = os.path.basename(lua2po_dir)
+    outd = os.path.join(ROOT, "lang", lang)
+    based  = os.path.join(ROOT, "data")
+    mkdir_p(outd)
+    fils = glob.glob(os.path.join(lua2po_dir, "*.lua"))
+    for fil in fils:
+        pof = os.path.join(outd, os.path.basename(fil)).replace(".lua", ".po")
+        baselua = os.path.join(based, os.path.basename(fil))
+        if "text.lua" in fil:
+            lua2po_simple(fil, pof)
+        else:
+            lua2po_merge(baselua, fil, pof)
+        print "writing %s -> %s" % (os.path.relpath(fil), os.path.relpath(pof))
+    print "translated %d lua files from %s" % (len(fils), lua2po_dir)

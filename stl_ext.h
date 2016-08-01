@@ -177,6 +177,15 @@ inline void deleteNull(T*& v)
     v = NULL;
 }
 
+template <typename T> struct watch_ptr;
+
+template <typename T>
+inline void deleteNull(watch_ptr<T>& v)
+{
+    copy_delete(v.get());
+    v = NULL;
+}
+
 // smart pointer supporting distributed and centralized ownership
 // overload copy_explicit_owner for explicit/centralized ownership
 // overload copy_refcount for reference counting
@@ -1452,6 +1461,47 @@ private:
     Lock& m;
     mutex_type* mtx;
 };
+
+// http://stackoverflow.com/questions/21892934/how-to-assert-if-a-stdmutex-is-locked
+#if DEBUG
+
+struct rmutex : public std::recursive_mutex
+{
+    void lock()
+    {
+        std::recursive_mutex::lock();
+        if (m_count++ == 0)
+            m_holder = std::this_thread::get_id();
+    }
+
+    void unlock()
+    {
+        if (--m_count == 0)
+            m_holder = std::thread::id();
+        std::recursive_mutex::unlock();
+    }
+
+    bool is_locked() const
+    {
+        return m_holder != std::thread::id();
+    }
+
+    bool is_mine() const
+    {
+        return m_holder == std::this_thread::get_id();
+    }
+
+private:
+    std::thread::id m_holder;
+    int             m_count = 0;
+};
+
+#else
+typedef std::recursive_mutex rmutex;
+#endif
+
+#define ASSERT_LOCKED(M) DASSERT((M).is_mine())
+
 
 // pooled memory allocator
 class MemoryPool final {

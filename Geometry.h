@@ -253,6 +253,7 @@ inline float dotAngles(float a, float b)
 #define M_PIf float(M_PI)
 #define M_PI_2f float(M_PI_2)
 #define M_PI_4f float(M_PI_4)
+#define M_TAO (2.0 * M_PI)
 #define M_TAOf float(2.0 * M_PI)
 #define M_SQRT2f float(M_SQRT2)
 

@@ -146,7 +146,9 @@ static gzFile openGzip(const char* path, const char* mode)
 
     if (gzf)
     {
+#if ZLIB_VERNUM >= 0x1240
         gzbuffer(gzf, 64 * 1024);
+#endif
         DPRINT(SAVE, ("%s %s", (mode[0] == 'r') ? "load" : "save", abspath));
     }
     

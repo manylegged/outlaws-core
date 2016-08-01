@@ -287,15 +287,40 @@ size_t utf8_len(const string &str, size_t pos, size_t len)
     return chars;
 }
 
-static int utf8_charwidth(const char* utf8)
+static int utf32_charwidth(uint chr)
 {
-    size_t size = 4;
-    const uint chr = utf8_getch(&utf8, &size);
     return ((0x1100 <= chr && chr <= 0x11FF) || // hangul
             (0xAC00 <= chr && chr <= 0xD7FF) || // hangul extended
             (0x2E00 <= chr && chr <= 0x9FFF) || // hirigana, katakana, kanji, etc.
             (0xFF00 < chr && chr <= 0xFF60))    // fullwidth latin
-            ? 2 : 1;
+            ? 2 : 1;    
+}
+
+template <typename C>
+static bool isQ3Esc(const std::basic_string<C> &str, int i, int end)
+{
+    return ((i+1 < end && str[i] == '^' && str_isdigit(str[i+1])) ||
+            (i > 0 && str[i-1] == '^' && str_isdigit(str[i])));
+}
+
+// return length of substring in _character width_
+// (中文/한국어/日本語 characters are double width)
+static size_t utf32_width(const ustring &str, size_t pos, size_t len)
+{
+    const size_t end = pos + min(str.size() - pos, len);
+    size_t chars = 0;
+    for (int i = pos; i < end; i++)
+    {
+        if (!isQ3Esc(str, i, end))
+            chars += utf32_charwidth(str[i]);
+    }
+    return chars;
+}
+
+static int utf8_charwidth(const char* utf8)
+{
+    size_t size = 4;
+    return utf32_charwidth(utf8_getch(&utf8, &size));
 }
 
 // return length of substring in _character width_
@@ -309,13 +334,8 @@ size_t utf8_width(const string &str, size_t pos, size_t len)
     size_t chars = 0;
     for (int i = pos; i < end; i++)
     {
-        if (utf8_iscont(str[i]))
-            continue;
-        // quake3 style color escapes
-        if ((i+1 < end && str[i] == '^' && isdigit(str[i+1])) ||
-            (i > 0 && str[i-1] == '^' && isdigit(str[i])))
-            continue;
-        chars += utf8_charwidth(&str[i]);
+        if (!utf8_iscont(str[i]) && !isQ3Esc(str, i, end))
+            chars += utf8_charwidth(&str[i]);
     }
     return chars;
 }
@@ -435,7 +455,8 @@ static bool is_wrap(uint32_t it, const str_wrap_options_t &ops)
     {
     case '|': case '_': case '.': case '?': case '!':
     case ',': case '-': case '/': case ':': case ';': case '`':
-    case 0x3001: case 0x3002: case 0xff1f: // 、。？
+    case 0x3001: case 0x3002: case 0xff1f: case 0xff0c: // 、。？，
+    case 0xff01: case 0xff1b: case 0xff1a: //！；：
     case '\0':
         return true;
     }
@@ -493,8 +514,13 @@ std::string str_word_wrap(const std::string &utf8, const str_wrap_options_t &ops
     return ret;
 }
 
-std::string str_align(const std::string& input, char token)
+std::string str_align(const std::string& utf8, char token)
 {
+    uint tokens[] = { (uint)token, 0 };
+    if (token == ':')
+        tokens[1] = 0xff1a; // '：'
+    const ustring input = utf8_decode(utf8);
+    
     int alignColumn = 0;
     int lineStart = 0;
     int tokensInLine = 0;
@@ -502,28 +528,31 @@ std::string str_align(const std::string& input, char token)
         if (input[i] == '\n') {
             lineStart = i+1;
             tokensInLine = 0;
-        } else if (input[i] == token &&
+        } else if (vec_contains(tokens, input[i]) &&
                    input.size() != i+1 && input[i+1] != '\n' &&
                    tokensInLine == 0) {
-            alignColumn = max(alignColumn, (int)utf8_width(input, lineStart, i - lineStart + 1));
+            int column = (int)utf32_width(input, lineStart, i - lineStart) + 1;
+            if (input[i] == 0xff1a) // '：'
+                column--;
+            alignColumn = max(alignColumn, column);
             tokensInLine++;
         }
     }
 
     if (alignColumn == 0)
-        return input;
+        return utf8;
 
     std::string str;
     lineStart = 0;
     tokensInLine = 0;
     
     for (int i=0; i<input.size(); i++) {
-        str += input[i];
+        utf8_encode_append(str, input[i]);
         if (input[i] == '\n') {
             lineStart = i+1;
             tokensInLine = 0;
-        } else if (input[i] == token && tokensInLine == 0) {
-            const int spaces = alignColumn - utf8_width(input, lineStart, (i - lineStart));
+        } else if (vec_contains(tokens, input[i]) && tokensInLine == 0) {
+            const int spaces = alignColumn - utf32_width(input, lineStart, (i - lineStart));
             for (; (i+1)<input.size() && input[i+1] == ' '; i++);
             if (input[i+1] != '\n')
                 str.append(spaces, ' ');
@@ -654,9 +683,8 @@ std::string str_strftime(const char* fmt, const std::tm *time)
 
 std::string str_strftime(const char* fmt)
 {
-    std::chrono::time_point<std::chrono::system_clock> start = std::chrono::system_clock::now();
-    const std::time_t cstart = std::chrono::system_clock::to_time_t(start);
-    return str_strftime(fmt, std::localtime(&cstart));
+    const std::time_t now = std::time(NULL);
+    return str_strftime(fmt, std::localtime(&now));
 }
 
 std::string str_numeral_format(int num)
@@ -947,6 +975,11 @@ bool str_runtests()
                    "これか: 6"),
          "NS-윤지: 5\n"
          "これか:  6");
+    TEST(str_align("溅射半径：%.f\n"
+                   "射速：%g 发/秒\n"),
+         "溅射半径：%.f\n"
+         "射速：    %g 发/秒\n");
+    
     TEST(str_word_wrap("чтобы применить дополнительное оружие", 16),
          "чтобы применить\n"
          "дополнительное\n"
@@ -994,9 +1027,14 @@ bool str_runtests()
 
 #if _MSC_VER
 
+#if __clang__
+#define cpuid(OUT, LEVEL) memset(OUT, 0, sizeof(OUT))
+typedef unsigned int regtype_t;
+#else
 #include <intrin.h>
 #define cpuid(OUT, LEVEL) __cpuid(OUT, LEVEL)
 typedef int regtype_t;
+#endif
 
 std::string str_demangle(string name)
 {

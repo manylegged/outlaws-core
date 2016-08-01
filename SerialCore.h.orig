@@ -55,14 +55,14 @@ struct EnumType {
 private:
     std::unordered_map<string, uint64>  s2v;
     std::unordered_map<uint64, lstring> v2s;
-    bool                                m_isBitset = true;
+    bool m_isBitset = true;
 public:
 
     EnumType(std::initializer_list<Pair> el);
 
     lstring getName(uint64 val) const { return map_get(v2s, val); }
     uint64 getVal(const string &str) const { return map_get(s2v, str, ~0); }
-    bool isBitset() const { return m_isBitset; }
+    const bool isBitset() const { return m_isBitset; }
 };
 
 
@@ -78,10 +78,9 @@ struct SerialEnum : public T {
 
     typedef typename T::value_type value_type;
 
-    value_type value = 0;
     SerialEnum() {}
-    SerialEnum(const value_type &init) : value(init) {}
-    SerialEnum(const SerialEnum &o) : value(o.value) {}
+    SerialEnum(const value_type &init) : T(init) {}
+    SerialEnum(const SerialEnum &o) : T(o) {}
 
     DEFINE_ENUM_OP(&)
     DEFINE_ENUM_OP(|)
@@ -160,8 +159,11 @@ namespace std {
         static EnumType val({ FIELDS(SERIAL_TO_SAVEENUM) });            \
         return val;                                                     \
     }                                                                   \
-    typedef TYPE value_type
-
+    typedef TYPE value_type;                                            \
+    value_type value = 0;                                               \
+    NAME() {}                                                           \
+    NAME(const value_type &init) : value(init) {}                       \
+    NAME(const NAME &o) : value(o.value) {}
 
 
 #define DEFINE_ENUM(TYPE, NAME, FIELDS)                                 \
@@ -208,7 +210,6 @@ namespace std {
 
 #define SERIAL_TO_STRUCT_FIELD2(TYPE, NAME) TYPE NAME = TYPE();
 #define SERIAL_VISIT_FIELD_AND2(TYPE, NAME) vis.visit(#NAME, (NAME)) &&
-#define SERIAL_SKIP_FIELD_AND2(TYPE, NAME) vis.VISIT_SKIP(TYPE, #NAME) &&
 
 #define SERIAL_PLACEHOLDER(_F)
 

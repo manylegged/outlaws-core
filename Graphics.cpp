@@ -35,6 +35,9 @@
 #define ASSERT_MAIN_THREAD()
 #endif
 
+// #define DEBUG_RENDER (kDebugFlags&EDebug::GLERROR)
+#define DEBUG_RENDER (globals.debugRender&DBG_GLERROR)
+
 template struct TriMesh<VertexPosColor>;
 template struct LineMesh<VertexPosColor>;
 template struct MeshPair<VertexPosColor, VertexPosColor>;
@@ -50,6 +53,7 @@ template struct MeshPair<VertexPosColor, VertexPosColor>;
 bool supports_ARB_Framebuffer_object = false;
 
 static const uint kDebugFrames = 10;
+extern bool kHeadlessMode;
 
 bool isGLExtensionSupported(const char *name)
 {
@@ -83,7 +87,7 @@ GLenum glReportError1(const char *file, uint line, const char *function)
     ASSERT_MAIN_THREAD();
 
 #if !IS_DEVEL
-    if (!(globals.debugRender&DBG_GLERROR) && globals.frameStep > kDebugFrames)
+    if (!DEBUG_RENDER && globals.frameStep > kDebugFrames)
         return GL_NO_ERROR;
 #endif
 
@@ -124,7 +128,7 @@ static GLenum glReportFramebufferError1(const char *file, uint line, const char 
 {
     ASSERT_MAIN_THREAD();
 
-    if (!(globals.debugRender&DBG_GLERROR) && globals.frameStep > kDebugFrames)
+    if (!DEBUG_RENDER && globals.frameStep > kDebugFrames)
         return GL_NO_ERROR;
 
 	GLenum err = glCheckFramebufferStatus(GL_FRAMEBUFFER);
@@ -241,7 +245,7 @@ void glReportValidateShaderError1(const char *file, uint line, const char *funct
 {
     ASSERT_MAIN_THREAD();
 
-    if (!(globals.debugRender&DBG_GLERROR) && globals.frameStep > kDebugFrames)
+    if (!DEBUG_RENDER && globals.frameStep > kDebugFrames)
         return;
 
     glValidateProgram(program);
@@ -325,7 +329,7 @@ void GLRenderTexture::Generate(ZFlags zflags)
     height = roundUpPower2(height);
 #endif
     
-    if (s_defaultFramebuffer < 0)
+    if (s_defaultFramebuffer < 0 && !kHeadlessMode)
     {
         glGetIntegerv(GL_FRAMEBUFFER_BINDING, &s_defaultFramebuffer);
     }
@@ -1090,6 +1094,8 @@ void renderLoadingSpinner(const ShaderState &ss_, float2 pos, float2 size, float
     const float ang = kSpinnerRate * globals.renderTime + M_TAOf * progress;
     const float2 rad = float2(min_dim(size) * 0.4f, 0.f);
     ss.color(0xffffff, 0.5f * alpha);
+    
+    GLScope s(GL_DEPTH_TEST, false);
     ShaderUColor::instance().DrawLineTri(ss,
                                          pos + rotate(rad, ang),
                                          pos + rotate(rad, ang+M_TAOf/3.f),

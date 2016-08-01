@@ -277,15 +277,14 @@ struct ShaderTextureBase : public ShaderProgramBase {
     void DrawButton(const ShaderState &ss, const GLTexture& texture, float2 pos, float2 r) const;
 };
 
-struct ShaderTexture final : public ShaderTextureBase, public ShaderBase<ShaderTexture> {
+struct ShaderTexture1 : public ShaderTextureBase {
 
     uint m_uTexture;
     uint m_uColorSlot;
     uint m_aTexCoords;
 
-    void LoadTheProgram() override
+    void onLoad()
     {
-        LoadProgram("ShaderTexture");
         m_uTexture = getUniformLocation("texture1");
         m_uColorSlot = getUniformLocation("SourceColor");
         m_aTexCoords = getAttribLocation("SourceTexCoord");
@@ -306,6 +305,40 @@ struct ShaderTexture final : public ShaderTextureBase, public ShaderBase<ShaderT
 
         float4 c = abgr2rgbaf(ss.uColor);
         glUniform4fv(m_uColorSlot, 1, &c[0]); 
+    }
+};
+
+struct ShaderTexture final : public ShaderTexture1, public ShaderBase<ShaderTexture>
+{
+    void LoadTheProgram() override
+    {
+        LoadProgram("ShaderTexture");
+        onLoad();
+    }
+};
+
+struct ShaderText final : public ShaderTexture1, public ShaderBase<ShaderText>
+{
+    void LoadTheProgram() override
+    {
+        LoadProgram("ShaderText",
+                    "varying vec2 DestTexCoord;\n"
+                    "varying vec4 DestColor;\n"
+                    ,
+                    "attribute vec2 SourceTexCoord;\n"
+                    "uniform vec4 SourceColor;\n"
+                    "void main(void) {\n"
+                    "    DestTexCoord = SourceTexCoord;\n"
+                    "    DestColor    = SourceColor;\n"
+                    "    gl_Position  = Transform * Position;\n"
+                    "}"
+                    ,
+                    "uniform sampler2D texture1;\n"
+                    "void main(void) {\n"
+                    "    vec2 texCoord = DestTexCoord;\n"
+                    "    gl_FragColor = DestColor * texture2D(texture1, texCoord);\n"
+                    "}");
+        onLoad();
     }
 };
 

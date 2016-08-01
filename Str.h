@@ -267,10 +267,36 @@ inline std::string str_chomp(std::string &&s)
     return s;
 }
 
+std::string str_vformat(const char *format, va_list vl) __printflike(1, 0);
+std::string str_format(const char *format, ...)  __printflike(1, 2);
 
-inline const char* str_tocstr(const char *v) { return v; }
-inline const char* str_tocstr(const std::string &v) { return v.c_str(); }
-inline const char* str_tocstr(const lstring &v) { return v.c_str(); }
+void str_append_vformat(std::string &str, const char *format, va_list vl) __printflike(2, 0);
+void str_append_format(std::string &str, const char *format, ...)  __printflike(2, 3);
+
+inline std::string str_tostr(float a) { return str_format("%f", a); }
+inline std::string str_tostr(int a)   { return str_format("%d", a); }
+inline std::string str_tostr(uint a)  { return a < 0xfffff ? str_format("%d", a) : str_format("%#x", a); }
+inline std::string str_tostr(uint64 a) { return a < 0xfffff ? str_format("%lld", a) : str_format("%#llx", a); }
+inline std::string str_tostr(unsigned long a) { return str_tostr((uint)a); }
+inline std::string str_tostr(char a)  { return str_format((a >= 0 && std::isprint(a)) ? "%c" : "\\%x", a); }
+inline std::string str_tostr(const char *a) { return a ? a : ""; }
+inline std::string str_tostr(lstring a) { return a.str(); }
+inline const std::string &str_tostr(const std::string &a) { return a; }
+inline std::string str_tostr(std::string &&a) { return std::move(a); }
+inline const std::wstring &str_tostr(const std::wstring &a) { return a; }
+inline std::wstring str_tostr(std::wstring &&a) { return std::move(a); }
+
+struct cstring_wrap_t {
+    const char* m_ptr; 
+    cstring_wrap_t(const char *ptr) : m_ptr(ptr) {}
+    const char* c_str() const { return m_ptr; }
+};
+
+template <typename T> const std::string str_tocstr1(const T &v) { return str_tostr(v); }
+inline lstring str_tocstr1(lstring v) { return v; }
+inline std::string str_tocstr1(const std::string &v) { return v; }
+inline cstring_wrap_t str_tocstr1(const char* v) { return cstring_wrap_t(v); }
+#define str_tocstr(X) (str_tocstr1(X).c_str())
 
 inline bool str_equals(const char* a, const char* b)
 {
@@ -341,12 +367,6 @@ inline bool str_endswith(const S1& s1, const S2& s2)
     return str_endswith(str_tocstr(s1), str_tocstr(s2));
 }
 
-std::string str_vformat(const char *format, va_list vl) __printflike(1, 0);
-std::string str_format(const char *format, ...)  __printflike(1, 2);
-
-void str_append_vformat(std::string &str, const char *format, va_list vl) __printflike(2, 0);
-void str_append_format(std::string &str, const char *format, ...)  __printflike(2, 3);
-
 std::string str_add_line_numbers(const char* s, int start=1);
 
 template <typename T, typename U>
@@ -370,28 +390,6 @@ inline std::vector<std::string> str_split(const U &delim, const T &s)
 }
 
 std::vector<std::string> str_split_quoted(char token, const std::string& line);
-
-inline std::string str_tostr(float a) { return str_format("%f", a); }
-inline std::string str_tostr(int a)   { return str_format("%d", a); }
-inline std::string str_tostr(uint a)  { return a < 0xfffff ? str_format("%d", a) : str_format("%#x", a); }
-inline std::string str_tostr(uint64 a) { return a < 0xfffff ? str_format("%lld", a) : str_format("%#llx", a); }
-inline std::string str_tostr(unsigned long a) { return str_tostr((uint)a); }
-inline std::string str_tostr(char a)  { return str_format((a >= 0 && std::isprint(a)) ? "%c" : "\\%x", a); }
-inline std::string str_tostr(const char *a) { return a ? a : ""; }
-inline std::string str_tostr(lstring a) { return a.str(); }
-inline const std::string &str_tostr(const std::string &a) { return a; }
-inline std::string str_tostr(std::string &&a) { return std::move(a); }
-inline const std::wstring &str_tostr(const std::wstring &a) { return a; }
-inline std::wstring str_tostr(std::wstring &&a) { return std::move(a); }
-
-
-template <typename T>
-const char* str_tocstr(const T &v) 
-{
-    static std::string s;
-    s = str_tostr(v);
-    return s.c_str(); 
-}
 
 template <class S, class S1, class A>
 std::string str_join(const S &sep, const S1 &lsep, const A &cont)
@@ -484,10 +482,10 @@ std::string str_tolower(const T &str)
     return s;
 }
 
-template <typename T>
-bool str_contains(const std::string& str, const T &substr)
+template <typename C, typename T>
+bool str_contains(const std::basic_string<C>& str, const T &substr)
 {
-    return str.find(substr) != std::string::npos;
+    return str.find(substr) != std::basic_string<C>::npos;
 }
 
 template <typename T>
@@ -632,6 +630,7 @@ std::string lang_plural(const std::string &noun);
 
 // return data byte size in MB, KB, etc
 std::string str_bytes_format(int bytes);
+#define FMT_BYTES(X) (str_bytes_format(X).c_str())
 
 std::string str_tohex(const char* digest, int size);
 
