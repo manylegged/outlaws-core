@@ -107,6 +107,7 @@ class AudioAllocator final : public cAudio::ILogReceiver {
     std::map<lstring, cAudio::IAudioBuffer*>  m_buffers;
     float3                                    m_lsnrPos;
     cAudioMutex                               m_dummy;
+    bool                                      m_sound_fucked = false;
 
     bool OnLogMessage(const char* sender, const char* message, cAudio::LogLevel level, float time)
     {
@@ -145,9 +146,19 @@ public:
     {
         if (m_mgr)
             return true;
-        m_mgr = cAudio::createAudioManager(true);
+        if (m_sound_fucked)
+            return false;
+        m_mgr = cAudio::createAudioManager(false);
         if (!m_mgr)
             return false;
+        if (!m_mgr->initialize())
+        {
+            DPRINT(SOUND, ("Audio Manager failed to initialize. Sound disabled."));
+            cAudio::destroyAudioManager(m_mgr);
+            m_mgr = NULL;
+            m_sound_fucked = true;
+            return false;
+        }
 
         m_mgr->setSpeedOfSound(kSpeedOfSound);
         m_mgr->setDopplerFactor(kDopplerFactor);
@@ -160,8 +171,15 @@ public:
         return true;
     }
 
+    bool isInit() const
+    {
+        return m_mgr && !m_sound_fucked;
+    }
+
     void shutdown()
     {
+        if (!m_mgr)
+            return;
         m_mgr->shutDownThread();
         {
             cAudioMutexBasicLock l(*mutex);
@@ -172,7 +190,7 @@ public:
         m_mgr = NULL;
     }
     
-    AudioAllocator()
+    AudioAllocator() : mutex(&m_dummy)
     {
         cAudio::getLogger()->registerLogReceiver(this, "outlaws");
         cAudio::getLogger()->setLogLevel((globals.debugRender&DBG_CAUDIO) ? cAudio::ELL_DEBUG : cAudio::ELL_INFO);
@@ -212,6 +230,9 @@ public:
 
     void releaseAll()
     {
+        if (!m_mgr)
+            return;
+        
         foreach (auto &sd, m_sources) {
             sd.source->stop();
             sd.source->drop();

@@ -60,7 +60,6 @@ struct ReallyBool {
     explicit ReallyBool(bool v) : val(v) {}
 };
 
-
 // type traits
 
 // the first # of elements are serialized as indexed, the rest as name=val
@@ -76,13 +75,90 @@ struct ParseValidate {
     bool validate(const SaveParser &sp, T &obj) { return true; }
 };
 
+template <typename B>
+class TypeRegistry {
+    TypeRegistry() {}
+    std::map<std::string, B*> types;
+public:
+
+    B* create(const string &name) const
+    {
+        auto it = types.find(name);
+        return (it == types.end()) ? NULL : (B*)it->second->clone();
+    }
+
+    template <typename T>
+    void registerType()
+    {
+        B* it = new T();
+        const char* name = it->type_name();
+        DASSERT(name && types.count(name) == 0);
+        types[name] = it;
+    }
+    
+    static TypeRegistry &instance()
+    {
+        static TypeRegistry t;
+        return t;
+    }
+};
+
+// virtual interface to visitors
+struct IVisitor;
+struct IAcceptor {
+    virtual bool accept(IVisitor &v) { return true; }
+    
+    virtual const char* type_name() const = 0;
+    virtual string value_name() const = 0;
+    virtual IAcceptor* clone() const = 0;
+    
+    virtual ~IAcceptor() {}
+
+    friend IAcceptor *copy_clone(const IAcceptor &o) { return o.clone(); }
+    friend IAcceptor *copy_clone(IAcceptor &&o) { return o.clone(); }
+    friend bool copy_assignable(const IAcceptor *o) { return false; }
+};
+
+#define REGISTER_TYPE(B, T) TypeRegistry<B>::instance().registerType<T>(); TypeRegistry<IAcceptor>::instance().registerType<T>()
+
+typedef std::vector<IAcceptor*> AcceptorVec;
+
+#define DECL_VISIT(T) virtual bool visit(const char* name, T &v, const T& def=T()) { return true; }
+
+struct IVisitor {
+    DECL_VISIT(float);
+    DECL_VISIT(int);
+    DECL_VISIT(string);
+    virtual bool visit(const char* name, IAcceptor* &v, const IAcceptor* def=(IAcceptor*)NULL) { return true; }
+    virtual bool visit(const char* name, AcceptorVec &v) { return true; }
+
+    template <typename T>
+    bool visit(const char* name, copy_ptr<T> &v) { return visit(name, (IAcceptor*&)*v.getPtr()); }
+};
+#undef DECL_VISIT
+
+#define DEF_VIRT_VISIT(T) bool visit(const char* name, T &v, const T& def=T()) override { return visit<T>(name, v, def); }
+#define DEF_VIRT_VISITS()                       \
+    DEF_VIRT_VISIT(float)                       \
+    DEF_VIRT_VISIT(int)                         \
+    DEF_VIRT_VISIT(string)                      \
+    bool visit(const char* name, IAcceptor* &v, const IAcceptor* def=NULL) override { return visit<IAcceptor*>(name, v); } \
+    bool visit(const char* name, AcceptorVec &v) override { return visit<AcceptorVec>(name, v); }
+
+
+#define DECL_ACCEPT(N)                                                  \
+    const char* type_name() const override { return #N; }           \
+    IAcceptor* clone() const override { return new N(*this); }
+
+typedef std::map<std::string, IAcceptor*> SNamespace;
+
 enum LoadStatus {
     LS_ERROR = -1,
     LS_MISSING = 0,
     LS_OK = 1,
 };
 
-struct SaveSerializer {
+struct SaveSerializer : public IVisitor {
 
     string         o;
 
@@ -100,6 +176,7 @@ protected:
     int    lastnewlineindentend = -1;
     ushort flags                = 0;
     int    columnWidth          = 80;
+    std::unordered_set<const IAcceptor *> globals; 
 
 public:
 
@@ -124,22 +201,9 @@ public:
     static SaveSerializer& instance();
     
     // options
-    SaveSerializer& setFlag(Flags flag, bool val=true)
-    {
-        setBits(flags, (ushort)flag, val);
-        if (flags&FORMAT_DISPLAY)
-            indent = -1;
-        return *this;
-    }
-    
-    SaveSerializer& setColumnWidth(int v)
-    {
-        if (v < 0)
-            setFlag(FORMAT_NONE, true);
-        else
-            columnWidth = v;
-        return *this;
-    }    
+    SaveSerializer& setFlag(Flags flag, bool val=true);
+    SaveSerializer& setColumnWidth(int v);
+    SaveSerializer& serializeGlobal(const IAcceptor *val);
 
     template <typename T>
     static string toString(const T& v)
@@ -245,6 +309,7 @@ protected:
 public:
 
     template <typename T> void serialize(const vector<T> &v)   { serializeList(v); }
+    template <typename T> void serialize(const copy_vec<T> &v) { serializeList(v); }
     template <typename T> void serialize(const deque<T> &v)    { serializeList(v); }
     template <typename T> void serialize(const std::set<T> &v) { serializeList(v); }
     template <typename T, size_t S> void serialize(const std::array<T, S> &v) { serializeList(v); }
@@ -334,6 +399,8 @@ public:
         return true;            // keep going
     }
 
+    DEF_VIRT_VISITS();
+
     template <typename T>
     void serializeVisitable(const T *val)
     {
@@ -364,6 +431,8 @@ public:
     {
         return serialize(&val);
     }
+
+    void serialize(const IAcceptor *ia);
 
     inline friend  bool SaveFile(const string &fname, const SaveSerializer &ss) {
         return SaveFile(fname, ss.o);
@@ -466,7 +535,7 @@ public:
 };
 
 
-struct SaveParser {
+struct SaveParser : public IVisitor {
 
 private:
     string       fname;
@@ -483,7 +552,8 @@ private:
     bool         cliMode      = false;
     bool         mergeMode    = false;
     LogRecorder *logger       = NULL;
-
+    std::unordered_map<std::string, IAcceptor *> globals;
+    
     bool parseBinaryIntegral(uint64 *v);
     bool parseIntegral(uint64* v);
 
@@ -542,7 +612,7 @@ private:
             return true;
         PARSE_FAIL("expected opening '{' for %s", PRETTY_TYPE(T));
     }
-    
+
     template <typename T>
     bool parseField(glm::tvec2<T>* v, const string& s)
     {
@@ -703,6 +773,7 @@ public:
         return parse(&v);
     }
 
+    bool parseGlobals();
     bool parseToTokens(string *s, const char *token);
     bool parseToken(char token);
     bool parseToken(const char* token);
@@ -759,11 +830,31 @@ public:
     bool parse(T** psb)
     {
         DASSERT(*psb == NULL);
-        *psb = new T();
-        return parse(*psb);
+        return parseVar(psb, *psb);
+    }
+
+    template <typename T>
+    bool parseVar(T **ia, IAcceptor *_)
+    {
+        string ident;
+        PARSE_FAIL_UNLESS(parseIdent(&ident), "expected ident when parsing '%s'", PRETTY_TYPE(T));
+        *ia = (T*) map_get(globals, ident);
+        if (*ia)
+            return true;
+        const auto &tr = TypeRegistry<T>::instance();
+        *ia = tr.create(ident);
+        PARSE_FAIL_UNLESS(*ia != NULL, "Unknown type '%s' while parsing '%s'", ident.c_str(), PRETTY_TYPE(T));
+        return parse(*ia);
+    }
+
+    template <typename T>
+    bool parseVar(T **ia, T *_, typename T::VisitEnabled=0)
+    {
+        return parse(*ia = new T());
     }
 
     template <typename T> bool parse(vector<T>* v) { return parseList<T>(v, back_inserter(*v)); }
+    template <typename T> bool parse(copy_vec<T>* v) { return parseList<T*>(v, back_inserter(v->vec)); }
     template <typename T> bool parse(deque<T>* v) { return parseList<T>(v, back_inserter(*v)); }
     template <typename T> bool parse(std::set<T>* v) { return parseList<T>(v, inserter(*v, v->end())); }
     template <typename K, typename V> bool parse(std::map<K, V>* mp) { return parseMap(mp); }
@@ -912,7 +1003,6 @@ public:
         return true;            // keep going
     }
 
-
     template <typename T>
     bool visitSkip(const char *name)
     {
@@ -924,6 +1014,8 @@ public:
         return true;            // keep going
     }
 
+    DEF_VIRT_VISITS();
+    
 private:
 
     template <typename T>
@@ -999,39 +1091,17 @@ struct Serializable {
     bool isLoaded() const { return m_filename; }
 };
 
+
 template <typename T>
-LoadStatus loadFileAndParse1(const string& fname, T* data, SaveParser &p)
+LoadStatus loadFileAndParse(const string& fname, T* data, SaveParser p=SaveParser())
 {
     if (!p.loadFile(fname)) {
         Reportf("%s does not exist", fname.c_str());
         return LS_MISSING;
     }
-    if (!p.parse(data)) {
-        Reportf("Error parsing %s : %s", fname.c_str(), PRETTY_TYPE(T));
-        return LS_ERROR;
-    }
-    return LS_OK;
-}
-
-template <typename T>
-LoadStatus loadFileAndParse(const string& fname, T* data, float* progress=NULL)
-{
-    SaveParser p;
-    p.setProgress(progress);
-    LoadStatus status = loadFileAndParse1(fname, data, p);
-    if (status != LS_OK)
-        return status;
-    p.checkEof(PRETTY_TYPE(T));
-    return status;
-}
-
-template <typename T>
-LoadStatus loadFileAndParseMaybe(const string& fname, T* data)
-{
-    SaveParser p;
-    if (!p.loadFile(fname))
-        return LS_MISSING;
-    if (!p.parse(data)) {
+    if (!p.parseGlobals() ||
+        !p.parse(data))
+    {
         Reportf("Error parsing %s : %s", fname.c_str(), PRETTY_TYPE(T));
         return LS_ERROR;
     }
@@ -1080,8 +1150,7 @@ template <typename T>
 bool serializeToFile(const string &fname, const T& val)
 {
     SaveSerializer ss;
-    ss.serialize(val);
-    return ZF_SaveFileRaw(fname.c_str(), ss.str());
+    return serializeToFile(fname, val, ss);
 }
 
 template <typename T>
@@ -1245,6 +1314,15 @@ struct CVar final : public CVarBase {
         
     bool checkMinMax() { return true; }
 };
+
+template <typename T>
+bool parsePtr(SaveParser &sp, T** psb)
+{
+    *psb = new T();
+    return true;
+}
+
+bool parsePtr(SaveParser &sp, IAcceptor **psb);
 
 template <typename T>
 bool checkMinMax1(CVar<T> *cv)

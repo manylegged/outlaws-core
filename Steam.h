@@ -34,12 +34,16 @@ private:
     mutable std::mutex                   m_mutex;
     volatile int                         m_pending = 0;
     std::unordered_set< std::string >    m_updates;
+    const char**                         m_steamStats = NULL; // null terminated array of stat names for this game
 public:
-    const char**                         steamStats = NULL; // null terminated array of stat names for this game
+    std::mutex                           deleteMutex;
+    std::mutex                           indexMutex;
     
     STEAM_CALLBACK_NAMED(SteamStats, UserStatsReceived);
 
     SteamStats();
+
+    void Init(const char** stats);
 
     int GetStat(const char* name);
 

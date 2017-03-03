@@ -94,7 +94,7 @@ void SaveParser::resetFile()
 SaveSerializer& SaveSerializer::instance()
 {
     SaveSerializer *it = NULL;
-    if (globals.isUpdateThread()) {
+    if (::globals.isUpdateThread()) {
         static SaveSerializer ss;
         it = &ss;
     } else {
@@ -105,6 +105,36 @@ SaveSerializer& SaveSerializer::instance()
     return *it;
 }
 
+SaveSerializer& SaveSerializer::setFlag(Flags flag, bool val)
+{
+    setBits(flags, (ushort)flag, val);
+    if (flags&FORMAT_DISPLAY)
+        indent = -1;
+    return *this;
+}
+
+SaveSerializer& SaveSerializer::setColumnWidth(int v)
+{
+    if (v < 0)
+        setFlag(FORMAT_NONE, true);
+    else
+        columnWidth = v;
+    return *this;
+}
+
+SaveSerializer& SaveSerializer::serializeGlobal(const IAcceptor *val)
+{
+    if (globals.count(val))     // already written
+        return *this;
+    const string& name = val->value_name();
+    insertName(name.c_str());
+    insertTokens(" = ");
+    serialize(val);
+    insertToken('\n');
+    globals.insert(val);
+    return *this;
+}
+
 float SaveSerializer::prepare(float f) const
 {
     ASSERT(!fpu_error(f));
@@ -112,6 +142,41 @@ float SaveSerializer::prepare(float f) const
         return 0.f;
     return f;
 }
+
+void SaveSerializer::serialize(const IAcceptor *ia)
+{
+    visitIndex = -1;
+    if (globals.count(ia)) {
+        insertName(ia->value_name().c_str());
+    } else {
+        const char* type = ia->type_name();
+        o += type;
+        serializeVisitable(ia);
+    }
+}
+
+bool SaveParser::parseGlobals()
+{
+    string ident;
+    while (1)
+    {
+        const char* save = data;
+        if (!parseIdent(&ident))
+            return true;
+        if (!parseToken('=')) {
+            data = save;        // back up
+            return true;
+        }
+        
+        IAcceptor *val = NULL;
+        PARSE_FAIL_UNLESS(parse(&val), "while parsing global '%s'", ident.c_str());
+        //const string name = val->value_name();
+        //PARSE_FAIL_UNLESS(ident == name, "name mismatch '%s' = '%s'", ident.c_str(), name.c_str());
+        globals[ident] = val;
+    }
+    return true;
+}
+
 
 #define BINARY_UINT_MARKER '%'
 #define BINARY_UINT64_MARKER '$'
@@ -551,7 +616,6 @@ bool SaveParser::skipSpace()
     }
     return true;
 }
-
 
 bool SaveParser::parseIntegral(uint64* v)
 {

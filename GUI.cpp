@@ -875,6 +875,10 @@ bool TextInputCommandLine::HandleEvent(const Event* event, bool *textChanged)
                             vec_pop_increment(
                                 options, i, str_tolower(options[i].substr(0, largs.size())) != largs);
                         }
+                        for_ (op, options) {
+                            if (op.find(' ') != string::npos)
+                                op = '"' + op + '"';
+                        }
                         line = cmd->name + " " + argstr;
                         start = argstr.size();
                     }
@@ -1154,7 +1158,7 @@ void BContextBase::setSelection(int index)
     selection = clamp(index, 0, menu.lines.size()-1);
     if (showSelection) {
         // FIXME bug, text is read in render thread!
-        text = title + ": " + menu.lines[selection];
+        text = lang_colon(title, menu.lines[selection]);
     }
 }
 
@@ -1309,13 +1313,13 @@ void OptionEditor::setValueFloat(float v)
         *(float*) value = v;
     else
         *(int*) value = round_int(v);
-    txt = str_format("%s: %s", label, getTxt().c_str());
+    txt = lang_colon(label, getTxt());
 }
 
 void OptionEditor::updateSlider()
 {
     slider.setValueFloat((getValueFloat() - start) / mult);
-    txt = str_format("%s: %s", label, getTxt().c_str());
+    txt = lang_colon(label, getTxt());
 }
 
 

@@ -78,7 +78,8 @@ void OLG_OnQuit(void);
 
 // called when an unhandled exception is caught and game is about to crash
 // also called by OL_Terminate. May be called several times
-void OLG_OnTerminate();
+// return 1 if we should continue handling, or 0 to abort (i.e. a crash is already in progress)
+int OLG_OnTerminate();
 
 // called when the application window is closed
 // game should clean up and call OLG_DoQuit()

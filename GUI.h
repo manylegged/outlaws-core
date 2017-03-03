@@ -512,7 +512,7 @@ struct OptionEditor {
 
     string getTxt() const;
     float2 render(const ShaderState &ss, float alpha);
-    bool HandleEvent(const Event* event, bool* valueChanged);
+    bool HandleEvent(const Event* event, bool* valueChanged=NULL);
 };
 
 

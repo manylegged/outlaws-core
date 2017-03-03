@@ -742,6 +742,7 @@ class extract_opts:
         self.matches = 0
 
 version_re = re.compile("Build Version: ([a-zA-Z]+).*(Release|Debug|Develop|Builder|Steam)(32|64) ([^,]*),")
+gl_re = re.compile("^OpenGL (Renderer|Version):")
 basere = re.compile("'([^']+)' base address is 0x([a-fA-F0-9]+), size is 0x([a-fA-F0-9]+)")
 addrre = re.compile("[cC]alled from 0x([a-fA-F0-9]+)")
 module_re = re.compile("In module: '([^']*)'")
@@ -818,6 +819,8 @@ def extract_callstack(logf, opts):
                 break
             if opts.printall and is_full:
                 print line, '"' +  reason + '"'
+        if is_full and gl_re.match(line):
+            print line
         if is_triage and "Watchdog Thread detected hang! Crashing game" in line:
             stacktrace = ["Watchdog Thread detected hang!"]
             break
@@ -1097,7 +1100,8 @@ Options:
 
     print "-*- mode: compilation -*-"
     log("ROOT=%s" % ROOT)
-    log("version=%s" % str(ops.version))
+    if ops.version != datetime.min:
+        log("version=%s" % str(ops.version))
 
     if copy:
         print "copying symbols from network"

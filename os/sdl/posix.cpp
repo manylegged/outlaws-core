@@ -179,6 +179,9 @@ void posix_print_stacktrace()
 
 static void posix_signal_handler(int sig, siginfo_t *siginfo, void *context)
 {
+    if (g_signaldepth == 0)
+        OLG_OnTerminate();
+
     g_signaldepth++;
     if (g_signaldepth > 2)
     {
@@ -193,9 +196,6 @@ static void posix_signal_handler(int sig, siginfo_t *siginfo, void *context)
     }
 
     puts("\nsignal handler called");
-    fflush(NULL);
-
-    OLG_OnTerminate();
 
     string message = str_format("%s (signal %d)", signal_to_string(sig, siginfo), sig);
     ReportPOSIX(message);
@@ -300,8 +300,9 @@ void posix_set_signal_handler()
 
 void OL_Terminate(const char* message)
 {
-    OLG_OnTerminate();
     if (!OLG_EnableCrashHandler())
+        return;
+    if (!OLG_OnTerminate())
         return;
 
     posix_print_stacktrace();

@@ -67,10 +67,10 @@ inline void Reportf(const char *format, ...)
 // there is no way to change it using std::thread
 #define OL_USE_PTHREADS defined(__APPLE__)
 
-#if TARGET_OS_IPHONE
-#define IS_TABLET 1
-#else
+#if !TARGET_OS_IPHONE
 #define IS_TABLET 0
+#else
+#define IS_TABLET 1
 #endif
 
 #define arraySize(X) (sizeof(X) / sizeof(X[0]))

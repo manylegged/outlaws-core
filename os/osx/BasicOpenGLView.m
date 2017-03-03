@@ -223,14 +223,16 @@ static void doKeyEvent(enum EventType type, NSEvent *theEvent)
 -(BOOL)performKeyEquivalent:(NSEvent *)theEvent
 {
     // get events for command-S, etc.
+#if 0
     NSString *characters = [theEvent charactersIgnoringModifiers];
     unichar character = [characters length] ? [characters characterAtIndex:0] : 0;
-    if (0 && character == 's')
+    if (character == 's')
     {
         doKeyEvent(OL_KEY_UP, theEvent);
         return YES;
     }
     else
+#endif
     {
         return NO;
     }

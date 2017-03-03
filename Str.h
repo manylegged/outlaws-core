@@ -556,13 +556,11 @@ inline std::basic_string<T> str_path_join_(std::basic_string<T> r, const S &b, T
     const size_t bsz = str_len(b);
     if (!bsz)
         return r;
-    if (bsz) {
-        if (b[0] == sep || (bsz > 1 && b[1] == ':'))
-            return b;
-        if (r.empty() || !strchr("/\\", r.back()))
-            r += sep;
-        r += b;
-    }
+    if (r.empty() || b[0] == sep || (bsz > 1 && b[1] == ':'))
+        return b;
+    if (!strchr("/\\", r.back()))
+        r += sep;
+    r += b;
     return r;
 }
 
@@ -627,6 +625,12 @@ std::string lang_concat_adj(const std::string &adj, const std::string &noun);
 
 // language sensitive plural
 std::string lang_plural(const std::string &noun);
+
+// join two strings with a colon
+std::string lang_colon(const std::string &a, const std::string &b);
+std::string lang_colon(const char *a, const std::string &b);
+std::string lang_colon(const std::string &a, const char* b);
+std::string lang_colon(const char *a, const char* b);
 
 // return data byte size in MB, KB, etc
 std::string str_bytes_format(int bytes);

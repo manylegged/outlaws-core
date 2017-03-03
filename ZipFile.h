@@ -9,6 +9,7 @@
 
 // read file, gzip compressed file, or file in zip file
 string ZF_LoadFile(const char* path);
+inline string ZF_LoadFile(const string &path) { return ZF_LoadFile(path.c_str()); }
 
 // read file with no decompression
 string ZF_LoadFileRaw(const char *path);

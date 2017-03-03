@@ -741,6 +741,10 @@ std::string lang_plural(const string &noun)
     return noun;
 }
 
+std::string lang_colon(const std::string &a, const std::string &b) { return a + _(": ") + b; }
+std::string lang_colon(const char *a, const std::string &b) { return a + (_(": ") + b); }
+std::string lang_colon(const std::string &a, const char* b) { return a + _(": ") + b; }
+std::string lang_colon(const char *a, const char* b) { return std::string(a) + _(": ") + b; }
 
 std::string str_bytes_format(int bytes)
 {
@@ -937,6 +941,7 @@ bool str_runtests()
     TEST(str_path_join("foo/", "/bar"), "/bar");
     TEST(str_path_join("foo/", (const char*)NULL), "foo/");
     TEST(str_path_join("foo/", ""), "foo/");
+    TEST(str_path_join("", "foo/"), "foo/");
     TEST(str_path_join("/home/foo", "bar"), "/home/foo/bar");
     TEST(str_path_join("/home/foo", "bar", "/baz"), "/baz");
     TEST(str_path_join("/foo/bar", "c:/thing"), "c:/thing");

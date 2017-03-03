@@ -382,7 +382,7 @@ void dump_loaded_shared_objects()
 
 void posix_oncrash(const char* msg)
 {
-    sdl_os_oncrash(msg);
+    sdl_os_report_crash(msg);
 }
 
 static void* getSymbol(const char* module, const char* symbol)
@@ -421,7 +421,7 @@ static int X_error_handler(Display *d, XErrorEvent *e)
 
 static int X_IO_error_handler(Display *d)
 {
-    sdl_os_oncrash("X11 IO Error");
+    sdl_os_report_crash("X11 IO Error");
     exit(1);
 }
 

@@ -110,7 +110,7 @@ static bool closeLogCleanup(const char* reason, bool upload)
     return OLG_UploadLog(data.c_str(), data.size());
 }
 
-void sdl_os_oncrash(const string &message)
+void sdl_os_report_crash(const string &message)
 {
     ReportSDL("%s\n", message.c_str());
     fflush(NULL);
@@ -138,6 +138,7 @@ void sdl_os_oncrash(const string &message)
                         message.c_str(), dest.c_str());
     SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Reassembly Error", errorm.c_str(), NULL);
     ReportSDL("Crash reporting complete\n");
+    fflush(NULL);
 }
 
 void OL_ScheduleUploadLog(const char* reason)
@@ -1067,31 +1068,27 @@ void OL_ThreadBeginIteration()
 }
 
 struct AutoreleasePool {
-    std::mutex                                 mutex;
-    std::map<std::thread::id, vector<string> > pool;
+    
+    std::list<std::string> pool;
 
     static AutoreleasePool &instance() 
     {
-        static AutoreleasePool p;
-        return p;
+        static THREAD_LOCAL AutoreleasePool *p = NULL;
+        if (!p)
+            p = new AutoreleasePool();
+        return *p;
     }
 
     const char* autorelease(std::string &val)
     {
-        std::lock_guard<std::mutex> l(mutex);
-        std::thread::id tid = std::this_thread::get_id();
-        vector<string> &ref= pool[tid];
-        ref.push_back(std::move(val));
-        return ref.back().c_str();
+        pool.push_back(std::move(val));
+        return pool.back().c_str();
     }
 
     void drain()
     {
-        std::lock_guard<std::mutex> l(mutex);
-        std::thread::id tid = std::this_thread::get_id();
-        pool[tid].clear();
+        pool.clear();
     }
-    
 };
 
 const char* sdl_os_autorelease(std::string &val)
@@ -1192,7 +1189,7 @@ int sdl_os_main(int argc, const char **argv)
         ReportSDL("SDL_Init Failed (retrying without gamepad): %s", SDL_GetError());
         if (SDL_Init(SDL_INIT_VIDEO) < 0)
         {
-            sdl_os_oncrash(str_format("SDL_Init() failed: %s", SDL_GetError()));
+            sdl_os_report_crash(str_format("SDL_Init() failed: %s", SDL_GetError()));
             return 1;
         }
     }
@@ -1259,7 +1256,7 @@ int sdl_os_main(int argc, const char **argv)
                                        g_windowSize.x, g_windowSize.y,
                                        SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
     if (!g_displayWindow) {
-        sdl_os_oncrash(str_format("SDL_CreateWindow failed: %s\nIs your desktop set to 32 bit color?", SDL_GetError()).c_str());
+        sdl_os_report_crash(str_format("SDL_CreateWindow failed: %s\nIs your desktop set to 32 bit color?", SDL_GetError()).c_str());
     }
 
     if (kMaximizeWindow)
@@ -1296,7 +1293,7 @@ int sdl_os_main(int argc, const char **argv)
     SDL_ShowCursor(0);
     if (TTF_Init() != 0)
     {
-        sdl_os_oncrash(str_format("TTF_Init() failed: %s", TTF_GetError()));
+        sdl_os_report_crash(str_format("TTF_Init() failed: %s", TTF_GetError()));
         return 1;
     }
 

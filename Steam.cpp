@@ -1,11 +1,17 @@
 
 #include "StdAfx.h"
+#include "Steam.h"
 
 DEFINE_CVAR(bool, kSteamEnable, true);
 static DEFINE_CVAR(bool, kSteamBenchmark, false);
 
 SteamStats::SteamStats() : STEAM_CALLBACK_CONS(SteamStats, UserStatsReceived)
 {
+}
+
+void SteamStats::Init(const char** stats)
+{
+    m_steamStats = stats;
     if (SteamUserStats())
         SteamUserStats()->RequestCurrentStats();
 }
@@ -44,9 +50,11 @@ void SteamStats::processCallbacks()
 {
     ISteamUserStats *ss = SteamUserStats();
 
+    std::lock_guard<std::mutex> l(SteamStats::instance().deleteMutex);
+    
     if (ss && m_stats.size())
     {
-        std::lock_guard<std::mutex> l(m_mutex);
+        std::lock_guard<std::mutex> l0(m_mutex);
         foreach (const string &name, m_updates)
         {
             const int value = m_stats[name];
@@ -58,11 +66,11 @@ void SteamStats::processCallbacks()
     }
 
     const int pending = m_pending;
-    if (pending && SteamUserStats())
+    if (ss && pending)
     {
-        const bool sok = SteamUserStats()->StoreStats();
+        const bool sok = ss->StoreStats();
         DPRINT(STEAM, ("Stored %d Stats: %s", pending, sok ? "OK" : "FAILED"));
-        std::lock_guard<std::mutex> l(m_mutex);
+        std::lock_guard<std::mutex> l0(m_mutex);
         m_pending -= pending;
     }
 
@@ -74,7 +82,7 @@ void SteamStats::OnUserStatsReceived(UserStatsReceived_t *callback)
 {
     ISteamUserStats *ss = SteamUserStats();
     std::lock_guard<std::mutex> l(m_mutex);
-    for (const char** ptr=steamStats; *ptr; ++ptr)
+    for (const char** ptr=m_steamStats; *ptr; ++ptr)
     {
         const char *name = *ptr;
         int &val = m_stats[name];
@@ -214,12 +222,6 @@ const char* EPublishedFileVisibility2String(ERemoteStoragePublishedFileVisibilit
     }
 }
 
-static std::mutex &steamIndexMutex()
-{
-    static std::mutex m;
-    return m;
-}
-
 static unordered_map<string, int> &steamIndex()
 {
     static unordered_map<string, int> *files = NULL;
@@ -229,7 +231,7 @@ static unordered_map<string, int> &steamIndex()
         ISteamRemoteStorage *ss = SteamRemoteStorage();
         if (ss)
         {
-            std::lock_guard<std::mutex> m(steamIndexMutex());
+            std::lock_guard<std::mutex> m(SteamStats::instance().indexMutex);
             const int32 count = ss->GetFileCount();
             int totalBytes = 0;
             for (int i=0; i<count; i++)
@@ -261,7 +263,7 @@ bool SteamFileDelete(const char* fname)
         return false;
     
     {
-        std::lock_guard<std::mutex> m(steamIndexMutex());
+        std::lock_guard<std::mutex> m(SteamStats::instance().indexMutex);
         steamIndex().erase(fname);
     }
     const bool success = ss->FileDelete(fname);
@@ -277,7 +279,7 @@ bool SteamFileForget(const char* fname)
 
 int SteamFileCount()
 {
-    std::lock_guard<std::mutex> m(steamIndexMutex());
+    std::lock_guard<std::mutex> m(SteamStats::instance().indexMutex);
     return steamIndex().size();
 }
 
@@ -285,7 +287,7 @@ void SteamForEachFile(std::function<void(const string&, int)> fun)
 {
     if (!SteamRemoteStorage())
         return;
-    std::lock_guard<std::mutex> m(steamIndexMutex());
+    std::lock_guard<std::mutex> m(SteamStats::instance().indexMutex);
     foreach (const auto &it, steamIndex())
     {
         fun(it.first, it.second);
@@ -299,7 +301,7 @@ bool steamFileWrite(const char* fname, const char* data, int size, int ucsize)
     {
         int32 totalBytes=0, availableBytes=0;
         ss->GetQuota(&totalBytes, &availableBytes);
-        const int32 count = SteamRemoteStorage()->GetFileCount();
+        const int32 count = ss->GetFileCount();
         ASSERT_FAILED("FileWrite", "Failed to save '%s' (size=%s, uncompressed=%s) (%d/%d files used) (%s/%s available) (EnabledForAccount=%s, ForApp=%s)",
                       fname,
                       str_bytes_format(size).c_str(),
@@ -316,7 +318,7 @@ bool steamFileWrite(const char* fname, const char* data, int size, int ucsize)
     }
 
     {
-        std::lock_guard<std::mutex> m(steamIndexMutex());
+        std::lock_guard<std::mutex> m(SteamStats::instance().indexMutex);
         steamIndex()[fname] = size;
     }
     DPRINT(SAVE, ("save steam/%s", fname));
@@ -352,6 +354,7 @@ int steamDeleteRecursive(const char *path)
     ISteamRemoteStorage *ss = SteamRemoteStorage();
     if (!ss)
         return 0;
+    std::lock_guard<std::mutex> l(SteamStats::instance().deleteMutex);
     if (SteamFileDelete(path))
     {
         DPRINT(STEAM, ("Deleted cloud file '%s'", path));
@@ -361,7 +364,7 @@ int steamDeleteRecursive(const char *path)
     vector<string> files;
     const string base = str_path_standardize(path) + "/";
     {
-        std::lock_guard<std::mutex> m(steamIndexMutex());
+        std::lock_guard<std::mutex> m(SteamStats::instance().indexMutex);
         foreach(const auto &it, steamIndex())
         {
             if (str_startswith(it.first, base))
@@ -516,7 +519,7 @@ string getSteamLanguageCode()
 static void __cdecl SteamAPIDebugTextHook( int nSeverity, const char *pchDebugText )
 {
     // nSeverity >= 1 is a warning
-    DPRINT(STEAM, ("%s", pchDebugText));
+    DPRINT(STEAM, ("[%d] %s", nSeverity, pchDebugText));
 }
 
 
@@ -530,6 +533,11 @@ bool steamInitialize()
     if (SteamClient())
     {
         SteamClient()->SetWarningMessageHook( &SteamAPIDebugTextHook );
+    }
+    
+    if (SteamUtils())
+    {
+        SteamUtils()->SetWarningMessageHook( &SteamAPIDebugTextHook );
     }
         
     if (SteamUser())

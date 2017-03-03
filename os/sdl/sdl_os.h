@@ -15,7 +15,7 @@ int sdl_os_main(int argc, const char **argv);
 const char* sdl_os_autorelease(std::string &val);
 
 // call from crash handler. flush log, etc.
-void sdl_os_oncrash(const std::string &message);
+void sdl_os_report_crash(const std::string &message);
 
 void sdl_set_scaling_factor(float factor);
 

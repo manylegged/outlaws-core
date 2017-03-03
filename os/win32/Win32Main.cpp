@@ -605,7 +605,7 @@ static void printStack(HANDLE thread, CONTEXT &context)
     }
 }
 
-static void printModulesStack(CONTEXT *ctx, string &modname)
+static void printModulesStackCrash(const char* flavor, const char* message, CONTEXT *ctx)
 {
     time_t cstart = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
     char buf[26] = {};
@@ -639,6 +639,10 @@ static void printModulesStack(CONTEXT *ctx, string &modname)
 
     ReportWin32("Dumping loaded modules");
 
+    string top_stack[4];
+    int top_stack_count = arraySize(top_stack);
+    const char* heuristic_msg = NULL;
+    
     const HANDLE process = GetCurrentProcess();
 
     static const int kMaxModules = 500;
@@ -650,6 +654,7 @@ static void printModulesStack(CONTEXT *ctx, string &modname)
         const int max_stack = 100;
         void *stack_pcs[max_stack] = {};
         const int stack_count = getStackPCs(GetCurrentThread(), ctx, stack_pcs, max_stack);
+        top_stack_count = min(top_stack_count, stack_count);
         
         for (int i=0; i<modules; i++)
         {
@@ -668,9 +673,10 @@ static void printModulesStack(CONTEXT *ctx, string &modname)
             const std::string lname = str_tolower(name);
 
             // faulting address is inside this module
-            if (module_ptr <= stack_pcs[0] && stack_pcs[0] < module_ptr + module_size)
+            for (int j=0; j<top_stack_count; j++)
             {
-                modname = name;
+                if (module_ptr <= stack_pcs[j] && stack_pcs[j] < module_ptr + module_size)
+                    top_stack[j] = name;
             }
 
             // only print dlls matching these patterns
@@ -683,21 +689,37 @@ static void printModulesStack(CONTEXT *ctx, string &modname)
                 "sdl2", "openal", "zlib", "freetype", "curl",
                 "ogl", // nvoglv32.dll and atioglxx.dll
                 "igd", "ig4icd", // intel drivers
-                "SS2",           // asus drivers? found in some crashlogs
                 "steam", "game"  // gameoverlayrenderer.dll
 #endif
             };
-            
-            bool print = false;
-            foreach (const char* str, substrs)
-                print = print || str_contains(lname, str);
-            for (int j=0; j<stack_count; j++)
-                print = print || (module_ptr <= stack_pcs[j] && stack_pcs[j] < module_ptr + module_size);
 
-            if (print)
+            static const char* known_bad_sw[][2] = {
+                { "nahimic", "MSI's Nahimic audio software" },
+                { "kraken", "Razer's Kraken headset software" },
+                { "manowar", "Razer's ManOWar headset software" },
+                // { "atiogl", "AMD graphics driver" }
+            };
+            
+            bool in_list = false;
+            bool in_stack = true;
+            foreach (const char* str, substrs)
+                in_list = in_list || str_contains(lname, str);
+            for (int j=0; j<stack_count; j++)
+                in_stack |= (module_ptr <= stack_pcs[j] && stack_pcs[j] < module_ptr + module_size);
+
+            if (in_list | in_stack)
             {
                 ReportWin32("%2d. '%s' base address is 0x%p, size is %#x", 
                             i, name.c_str(), module_ptr, module_size);
+            }
+
+            if (in_stack)
+            {
+                for_ (it, known_bad_sw)
+                {
+                    if (str_contains(lname, it[0]))
+                        heuristic_msg = it[1];
+                }
             }
         }
     }
@@ -740,33 +762,40 @@ static void printModulesStack(CONTEXT *ctx, string &modname)
             ReportWin32Err("ResumeThread", GetLastError());
         }
     }
-}
+    
+    string msg = str_format("Spacetime %s:\n%s\n\n", flavor, message);
+    for (int i=0; i<top_stack_count; i++)
+        msg += str_format("%d. %s\n", top_stack[i].c_str());
+    if (heuristic_msg) {
+        msg += "########### This looks like a problem with ";
+        msg += heuristic_msg;
+        msg += ". Make sure it is fully up to date, or consider uninstalling it. ###########";
+    }
 
+    sdl_os_report_crash(msg);
+    _exit(1);
+}
+    
 void OL_Terminate(const char* message)
 {
-    OLG_OnTerminate();
-
     if (!OLG_EnableCrashHandler())
         return;
-    
+    if (!OLG_OnTerminate())
+        return;
+
     CONTEXT context;
     memset(&context, 0, sizeof(context));
     RtlCaptureContext(&context);
 
-    string modname;
-    printModulesStack(&context, modname);
-
-    sdl_os_oncrash(str_format("Spacetime Terminated: %s\nIn module: '%s'\n(Reassembly crashed)", message, modname.c_str()));
-    fflush(NULL);
-    _exit(1);
+    printModulesStackCrash("Terminated", message, &context);
 }
 
 static LONG WINAPI myExceptionHandler(EXCEPTION_POINTERS *info)
 {
-    fflush(NULL);
+    if (!OLG_OnTerminate())
+        return EXCEPTION_EXECUTE_HANDLER;
+    
     ReportWin32("Unhandled Top Level Exception");
-
-    OLG_OnTerminate();
 
     const EXCEPTION_RECORD *rec = info->ExceptionRecord;
 
@@ -789,13 +818,7 @@ static LONG WINAPI myExceptionHandler(EXCEPTION_POINTERS *info)
         msg += "\n" + msg2;
     }
 
-    string modname;
-    printModulesStack(info->ContextRecord, modname);
-    if (modname.size())
-        msg += "\nIn module: '" + modname + "'";
-
-    sdl_os_oncrash(str_format("Spacetime Segfault:\n%s", msg.c_str()));
-    _exit(1);
+    printModulesStackCrash("Segfault", msg.c_str(), info->ContextRecord);
     return EXCEPTION_EXECUTE_HANDLER;
 }
 
