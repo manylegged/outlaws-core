@@ -53,7 +53,7 @@ template struct MeshPair<VertexPosColor, VertexPosColor>;
 bool supports_ARB_Framebuffer_object = false;
 
 static const uint kDebugFrames = 10;
-extern bool kHeadlessMode;
+extern int kHeadlessMode;
 
 bool isGLExtensionSupported(const char *name)
 {
@@ -227,7 +227,7 @@ static bool ignoreShaderLog(const char* buf)
             str_contains(buf, "shader(s) linked."));
 }
 
-static void checkProgramInfoLog(GLuint prog, const char* name, LogRecorder *logger)
+static void checkProgramInfoLog(GLuint prog, const char* name, LogRecorder *logger, const string &vtxt, const string &ftxt)
 {
     const uint bufsize = 2048;
     char buf[bufsize];
@@ -237,7 +237,8 @@ static void checkProgramInfoLog(GLuint prog, const char* name, LogRecorder *logg
     {
         if (logger)
             logger->Report(buf);
-        OLG_OnAssertFailed(name, -1, "", "", "GL Program Info log for '%s': %s", name, buf);
+        OLG_OnAssertFailed(name, -1, "", "", "GL Program Info log for '%s'\n%s%s\n: %s",
+                           name, vtxt.c_str(), ftxt.c_str(), buf);
     }
 }
 
@@ -251,7 +252,7 @@ void glReportValidateShaderError1(const char *file, uint line, const char *funct
     glValidateProgram(program);
     GLint status = 0;
     glGetProgramiv(program, GL_VALIDATE_STATUS, &status);
-    checkProgramInfoLog(program, "validate", NULL);
+    checkProgramInfoLog(program, "validate", NULL, string(), string());
     glReportError1(file, line, function);
     ASSERT_(status == GL_TRUE, file, line, function, "%s", name);
 }
@@ -615,6 +616,22 @@ bool GLTexture::loadFile(const char* fname)
     return true;
 }
 
+bool GLTexture::loadImage(OutlawImage *img)
+{
+    DPRINT(SHADER, ("Loading %dx%d image: %s", img->width, img->height,
+                    img->data ? "OK" : "FAILED"));
+    clear();
+    if (!img->data)
+        return false;
+
+    TexImage2D(*img);
+
+    m_flipped = false;
+    GenerateMipmap();
+
+    return true;
+}
+
 static void invert_image(uint *pix, int width, int height)
 {
     for (int y=0; y<height/2; y++)
@@ -809,7 +826,7 @@ bool ShaderProgramBase::LoadProgram(const char* name, const char* shared, const 
     glDeleteShader(frag);
     glReportError();
 
-    checkProgramInfoLog(m_programHandle, name, logger);
+	checkProgramInfoLog(m_programHandle, name, logger, vertful, fragful);
     
     GLint linkSuccess = 0;
     glGetProgramiv(m_programHandle, GL_LINK_STATUS, &linkSuccess);
@@ -823,6 +840,10 @@ bool ShaderProgramBase::LoadProgram(const char* name, const char* shared, const 
     a_position = glGetAttribLocation(m_programHandle, "Position");
     u_transform = glGetUniformLocation(m_programHandle, "Transform");
     u_time = glGetUniformLocation(m_programHandle, "Time");
+    u_toPixels = glGetUniformLocation(m_programHandle, "ToPixels");
+    u_resolution = glGetUniformLocation(m_programHandle, "Resolution");
+    u_tex = glGetUniformLocation(m_programHandle, "ShaderTex");
+    u_tex_res = glGetUniformLocation(m_programHandle, "ShaderTexRes");
     
     return true;
 }
@@ -847,6 +868,9 @@ void ShaderProgramBase::UseProgramBase(const ShaderState& ss, uint size, const f
     }
 }
 
+// Mods.cpp
+const GLTexture *load_index_texture(const string &str);
+
 void ShaderProgramBase::UseProgramBase(const ShaderState& ss) const
 {
     ASSERT_MAIN_THREAD();
@@ -856,6 +880,20 @@ void ShaderProgramBase::UseProgramBase(const ShaderState& ss) const
     glUniformMatrix4fv(u_transform, 1, GL_FALSE, &ss.uTransform[0][0]);
     if (u_time >= 0)
         glUniform1f(u_time, globals.renderTime);
+    if (u_toPixels >= 0)
+        glUniform1f(u_toPixels, ss.toPixels);
+    if (u_resolution >= 0)
+        glUniform2f(u_resolution, ss.resolution.x, ss.resolution.y);
+    if (u_tex >= 0 && m_texname.size()) {
+        const GLTexture *tex = load_index_texture(m_texname);
+        if (tex)
+        {
+            glUniform1i(u_tex, 3);
+            tex->BindTexture(3);
+            if (u_tex_res >= 0)
+                glUniform2f(u_tex_res, tex->size().x, tex->size().y);
+        }
+    }
     glReportError();
 }
 
@@ -882,10 +920,17 @@ void ShaderState::DrawElements(GLenum dt, size_t ic, const ushort* i) const
 
 void ShaderState::DrawElements(uint dt, size_t ic, const uint* i) const
 {
+    GLint program = 0;
+    glGetIntegerv(GL_CURRENT_PROGRAM, &program);
+    
+    glReportValidateShaderError(program, "x");
+    
     ASSERT_MAIN_THREAD();
     glDrawElements(dt, (GLsizei) ic, GL_UNSIGNED_INT, i);
     glReportError();
     graphicsDrawCount++;
+    
+    glReportValidateShaderError(program, "x");
 }
 
 void ShaderState::DrawArrays(uint dt, size_t count) const
@@ -1009,6 +1054,9 @@ void DrawFilledRect(const ShaderState &s_, float2 pos, float2 rad, uint bgColor,
 
 float2 DrawBar(const ShaderState &s1, uint fill, uint line, float alpha, float2 p, float2 s, float a)
 {
+    p = floor(p) + f2(0.5f);
+    s = round(s);
+    
     ShaderState ss = s1;
     a = clamp(a, 0.f, 1.f);
     ss.color(fill, alpha);
@@ -1031,6 +1079,21 @@ void PushRect(TriMesh<VertexPosColor>* triP, LineMesh<VertexPosColor>* lineP, fl
     if (triP) {
         triP->color32(bgColor, alpha);
         triP->PushRect(pos, r);
+    }
+}
+
+void PushHex(TriMesh<VertexPosColor>* triP, LineMesh<VertexPosColor>* lineP, float2 pos, float2 r,
+             uint bgColor, uint fgColor, float alpha)
+{
+    r /= regpoly_apothem(6);
+    
+    if (lineP) {
+        lineP->color32(fgColor, alpha);
+        lineP->PushEllipse(pos, r, 6, M_PI_2f);
+    }
+    if (triP) {
+        triP->color32(bgColor, alpha);
+        triP->PushEllipse(pos, r, 6, M_PI_2f);
     }
 }
 
@@ -1080,26 +1143,26 @@ static DEFINE_CVAR(float, kSpinnerRate, M_PI/2.f);
 
 void renderLoadingSpinner(LineMesh<VertexPosColor> &mesh, float2 pos, float2 size, float alpha, float progress)
 {
-    const float ang = kSpinnerRate * globals.renderTime + M_TAOf * progress;
+    const float ang = kSpinnerRate * globals.renderTime + M_TAUf * progress;
     const float2 rad = float2(min_dim(size) * 0.4f, 0.f);
     mesh.color(0xffffff, 0.5f * alpha);
     mesh.PushTri(pos + rotate(rad, ang),
-                 pos + rotate(rad, ang+M_TAOf/3.f),
-                 pos + rotate(rad, ang+2.f*M_TAOf/3.f));
+                 pos + rotate(rad, ang+M_TAUf/3.f),
+                 pos + rotate(rad, ang+2.f*M_TAUf/3.f));
 }
 
 void renderLoadingSpinner(const ShaderState &ss_, float2 pos, float2 size, float alpha, float progress)
 {
 	ShaderState ss = ss_;
-    const float ang = kSpinnerRate * globals.renderTime + M_TAOf * progress;
+    const float ang = kSpinnerRate * globals.renderTime + M_TAUf * progress;
     const float2 rad = float2(min_dim(size) * 0.4f, 0.f);
     ss.color(0xffffff, 0.5f * alpha);
     
     GLScope s(GL_DEPTH_TEST, false);
     ShaderUColor::instance().DrawLineTri(ss,
                                          pos + rotate(rad, ang),
-                                         pos + rotate(rad, ang+M_TAOf/3.f),
-                                         pos + rotate(rad, ang+2.f*M_TAOf/3.f));
+                                         pos + rotate(rad, ang+M_TAUf/3.f),
+                                         pos + rotate(rad, ang+2.f*M_TAUf/3.f));
 }
 
 
@@ -1254,6 +1317,9 @@ ShaderState View::getWorldShaderState(float2 zminmax) const
 
     ws.translateZ(z);
 
+    ws.toPixels = getWorldPointSizeInPixels();
+	ws.resolution = sizePixels;
+
     return ws;
 }
 
@@ -1279,6 +1345,9 @@ ShaderState View::getScreenShaderState() const
     //ss.translate(float3(offset.x, offset.y, toScreenSize(offset.z)));
     //ss.translate(offset);
 
+    ss.toPixels = getScreenPointSizeInPixels();
+    ss.resolution = sizePixels;
+    
     return ss;
 }
 
@@ -1314,3 +1383,119 @@ const GLTexture &getDitherTex()
     
     return *tex;
 }
+
+
+uint rgbaf2argb(const float4 &rgba_)
+{
+	float4 rgba = rgba_;
+    rgba.x = clamp(rgba.x, 0.f, 1.f);
+    rgba.y = clamp(rgba.y, 0.f, 1.f);
+    rgba.z = clamp(rgba.z, 0.f, 1.f);
+    rgba.w = clamp(rgba.w, 0.f, 1.f);
+    return (round_int(rgba.w * 255.f)<<24) | (round_int(rgba.x * 255.f)<<16) |
+        (round_int(rgba.y * 255.f)<<8) | round_int(rgba.z * 255.f);
+}
+
+uint rgbf2rgb(const float3 &rgb_)
+{
+	float3 rgb = rgb_;
+    rgb.x = clamp(rgb.x, 0.f, 1.f);
+    rgb.y = clamp(rgb.y, 0.f, 1.f);
+    rgb.z = clamp(rgb.z, 0.f, 1.f);
+    return round_int(rgb.x * 255.f)<<16 | round_int(rgb.y * 255.f)<<8 | round_int(rgb.z * 255.f);
+}
+
+uint PremultiplyAlphaAXXX(uint color)
+{
+    float4 c = argb2rgbaf(color);
+    c.x *= c.w;
+    c.y *= c.w;
+    c.z *= c.w;
+    return rgbaf2argb(c);
+}
+
+uint PremultiplyAlphaAXXX(uint color, float alpha)
+{
+    float4 c = argb2rgbaf(color);
+    c.x *= c.w;
+    c.y *= c.w;
+    c.z *= c.w;
+    c.w = alpha;
+    return rgbaf2argb(c);
+}
+
+uint PremultiplyAlphaXXX(uint color, float preAlpha, float alpha)
+{
+    float3 c = rgb2rgbf(color);
+    c.x *= preAlpha;
+    c.y *= preAlpha;
+    c.z *= preAlpha;
+    return ALPHAF(alpha)|rgbf2rgb(c);
+}
+
+uint32 argb2abgr(uint32 argb, float alpha)
+{
+    uint  a  = clamp(round_int(float(argb>>24) * alpha), 0, 0xff);
+    uint  r0b = (argb&0xff00ff);
+    return (a << 24) | (r0b << 16)| (argb&0x00ff00)  | (r0b >> 16);
+}
+
+uint32 argb2abgr_zero_alpha(uint32 argb, float alpha)
+{
+    if ((argb&ALPHA_OPAQUE) == 0)
+        argb = argb|ALPHA_OPAQUE;
+    uint  a  = clamp(round_int(float(argb>>24) * alpha), 0, 0xff);
+    uint  r0b = (argb&0xff00ff);
+    return (a << 24) | (r0b << 16)| (argb&0x00ff00)  | (r0b >> 16);
+}    
+
+uint rgbaf2abgr(const float4 &rgba_)
+{
+	float4 rgba = rgba_;
+    rgba.x = clamp(rgba.x, 0.f, 1.f);
+    rgba.y = clamp(rgba.y, 0.f, 1.f);
+    rgba.z = clamp(rgba.z, 0.f, 1.f);
+    rgba.w = clamp(rgba.w, 0.f, 1.f);
+    rgba = round(rgba * 255.f);
+    return (uint(rgba.w)<<24) | (uint(rgba.z)<<16) | (uint(rgba.y)<<8) | uint(rgba.x);
+}
+
+uint randlerpXXX(const std::initializer_list<uint>& lst)
+{
+    float3 color;
+    float total = 0.f;
+    foreach (uint cl, lst)
+    {
+        const float val = randrange(epsilon, 1.f);
+        color += val * rgb2rgbf(cl);
+        total += val;
+    }
+    return rgbf2rgb(color / total);
+}
+
+float3 rgb2hsv_(float3 c)
+{
+    float4 K = float4(0.f, -1.f / 3.f, 2.f / 3.f, -1.f);
+    float4 p = glm::mix(float4(c.z, c.y, K.w, K.z), float4(c.y, c.z, K.x, K.y), glm::step(c.z, c.y));
+    float4 q = glm::mix(float4(p.x, p.y, p.w, c.x), float4(c.x, p.y, p.z, p.x), glm::step(p.x, c.x));
+
+    float d = q.x - min(q.w, q.y);
+    float e = 1.0e-10;
+    return float3(abs(q.z + (q.w - q.y) / (6.f * d + e)), d / (q.x + e), q.x);
+}
+
+float3 hsv2rgb_(float3 c)
+{
+    float4 K = float4(1.f, 2.f / 3.f, 1.f / 3.f, 3.f);
+    float3 p = abs(glm::fract(float3(c.x) + float3(K.x, K.y, K.z)) * 6.f - float3(K.w));
+    return c.z * glm::mix(float3(K.x), clamp(p - float3(K.x), 0.f, 1.f), c.y);
+}
+
+float3 hsvf2rgbf(float3 hsv)
+{
+    hsv.x = modulo(hsv.x/360.f, 1.f);
+    hsv.y = clamp(hsv.y, 0.f, 1.f);
+    hsv.z = clamp(hsv.z, 0.f, 1.f);
+    return hsv2rgb_(hsv);
+}
+

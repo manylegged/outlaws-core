@@ -27,9 +27,11 @@ inline bool ZF_SaveFileRaw(const char* path, const string &data) { return ZF_Sav
 
 // compress data/size into gzip format
 string ZF_Compress(const char* data, size_t size);
+inline string ZF_Compress(const string &s) { return ZF_Compress(&s[0], s.size()); }
 
 // decompress data/size in gzip format
 string ZF_Decompress(const char* data, size_t size);
+inline string ZF_Decompress(const string &s) { return ZF_Decompress(&s[0], s.size()); }
 
 // load an entire directory or zip file into memory
 typedef std::pair<std::string, std::string> ZFFileData;

@@ -72,13 +72,8 @@ struct VertexPos2ColorTime {
 
     void setColor(uint c, uint c1, float a=1)
     {
-        color = argb2abgr(c|0xff000000, a);
-        color1 = argb2abgr(c1|0xff000000, a);
-    }
-    void setColor32(uint c, float a, uint c1, float a1)
-    {
-        color = argb2abgr(c, a); 
-        color1 = argb2abgr(c1|0xff000000, a1);
+        color = argb2abgr_zero_alpha(c, a);
+        color1 = argb2abgr_zero_alpha(c1, a);
     }
 };
 

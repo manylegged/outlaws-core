@@ -1,8 +1,6 @@
 // -*- mode: Objc -*-
 
-#import <OpenGL/gl.h>
-#import <OpenGL/glext.h>
-#import <OpenGL/glu.h>
+#include "PlatformIncludes.h"
 
 void LogMessage(NSString *str);
 GLenum glReportError(void);
@@ -20,8 +18,6 @@ int doDeferredPanel(void);
     int  closing;
     BOOL fullscreen;
 }
-
-+ (NSOpenGLPixelFormat*) basicPixelFormat;
 
 - (void) animationTimer:(NSTimer *)timer;
 
@@ -47,7 +43,6 @@ int doDeferredPanel(void);
 - (BOOL) becomeFirstResponder;
 - (BOOL) resignFirstResponder;
 
-- (id) initWithFrame: (NSRect) frameRect;
 - (void) awakeFromNib;
 
 @end

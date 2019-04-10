@@ -25,7 +25,7 @@ struct ParticleSystem : public IDeletable {
         float3 position;
         float3 velocity;
 
-        float2 offset;
+        float3 offset;
         
         uint color = 0;             // premultiplied alpha abgr
 
@@ -33,6 +33,11 @@ struct ParticleSystem : public IDeletable {
         {
             color = ALPHAF(alpha)|rgb2bgr(PremultiplyAlphaAXXX(c));
             //DASSERT(color != 0);
+        }
+
+        void setGradient(bool gradient)
+        {
+            offset.y = gradient ? 0.f : 1.f;
         }
     };
     
@@ -54,19 +59,23 @@ private:
 
     friend struct ShaderParticles;
 
+    vector<Particle>        m_queued_particles;
     vector<Particle>        m_vertices;
     IndexBuffer             m_ibo;
     VertexBuffer<Particle>  m_vbo;
     int                     m_addFirst = 0;
     int                     m_addPos = 0;
     uint                    m_lastMaxedStep = -1;
+    int                     m_particle_verts = 1;
     float                   m_planeZ = 0.f;
     std::mutex              m_mutex;
+    std::mutex              m_add_mutex;
     View                    m_view;
     vector<ParticleTrail>   m_trails;
     const IParticleShader  *m_program = NULL;
     
     void updateRange(uint first, uint size);
+    bool alloc(const Particle &p);
 
 protected:
 
@@ -85,9 +94,9 @@ protected:
     }
 
     void setTime(Particle &p, float t);
-    void add(const Particle &p, float angle, bool gradient);
+    void add(const Particle &p);
     void setParticles(vector<Particle>& particles);
-    void addTrail(const ParticleTrail& p) { m_trails.push_back(p); }
+    void addTrail(const ParticleTrail& p);
 
 public:
 
@@ -103,7 +112,8 @@ public:
     void render(const ShaderState &ss, const View& view, float time);
     void update(uint step, float time);
     void clear();
-    
+
+    void shrink_to_fit();
 };
 
 

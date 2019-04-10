@@ -160,16 +160,14 @@ struct ShaderUColor final : public ShaderPosBase, public ShaderBase<ShaderUColor
     void UseProgram(const ShaderState& ss, const float2* ptr) const
     {
         UseProgramBase(ss, ptr, (float2*)NULL);
-        float4 c = abgr2rgbaf(ss.uColor);
-        glUniform4fv(m_colorSlot, 1, &c[0]);
+        uniformColor(m_colorSlot, ss.uColor);
         glReportError();
     }
 
     void UseProgram(const ShaderState& ss, const VertexPos* ptr, const VertexPos* base) const
     {
         UseProgramBase(ss, &ptr->pos, base);
-        float4 c = abgr2rgbaf(ss.uColor);
-        glUniform4fv(m_colorSlot, 1, &c[0]);
+        uniformColor(m_colorSlot, ss.uColor);
         glReportError();
     }
 };
@@ -200,7 +198,6 @@ struct ShaderIridescent final : public ShaderProgramBase, public ShaderBase<Shad
 struct ShaderResource : public ShaderProgramBase, public ShaderBase<ShaderResource> {
 
     int SourceColor0, SourceColor1, Radius;
-    int ToPixels;
     
     void LoadTheProgram()
     {
@@ -208,10 +205,7 @@ struct ShaderResource : public ShaderProgramBase, public ShaderBase<ShaderResour
         GET_ATTR_LOC(SourceColor0);
         GET_ATTR_LOC(SourceColor1);
         GET_ATTR_LOC(Radius);
-        GET_UNIF_LOC(ToPixels);
     }
-
-    mutable float pointsToPixels = 1.f;
 
     void UseProgram(const ShaderState& input, const VertexPos2ColorTime* ptr, const VertexPos2ColorTime* base) const
     {
@@ -219,13 +213,12 @@ struct ShaderResource : public ShaderProgramBase, public ShaderBase<ShaderResour
         vertexAttribPointer(SourceColor0, &ptr->color, base);
         vertexAttribPointer(SourceColor1, &ptr->color1, base);
         vertexAttribPointer(Radius, &ptr->time, base);
-        glUniform1f(ToPixels, pointsToPixels);
     }
 };
 
 struct ShaderWormhole : public ShaderProgramBase, public ShaderBase<ShaderWormhole> {
 
-    int SourceColor0, SourceColor1, TexCoord;
+    int TexCoord;
     
     void LoadTheProgram()
     {
@@ -248,10 +241,14 @@ struct ShaderTextureBase : public ShaderProgramBase {
     
     virtual void UseProgram(const ShaderState &ss, const VertexPosTex *ptr, const GLTexture& ot) const = 0;
 
+    virtual void UseProgram(const ShaderState &ss, const VertexPosTex *ptr) const { }
+
     // a b
     // d c
     void DrawQuad(const ShaderState& ss, const GLTexture& texture,
                   float2 a, float2 b, float2 c, float2 d) const;
+
+    void DrawQuad(const ShaderState& ss, float2 a, float2 b, float2 c, float2 d) const;
 
     void DrawRectCorners(const ShaderState &ss, const GLTexture& texture, float2 a, float2 b) const
     {
@@ -263,6 +260,11 @@ struct ShaderTextureBase : public ShaderProgramBase {
     void DrawRect(const ShaderState &ss, const GLTexture& texture, float2 pos, float2 rad) const
     {
         DrawRectCorners(ss, texture, pos - rad, pos + rad);
+    }
+
+    void DrawRect(const ShaderState &ss, float2 pos, float2 rad) const
+    {
+        DrawQuad(ss, pos + f2(-rad.x, rad.y), pos + rad, pos + f2(rad.x, -rad.y), pos - rad);
     }
 
     void DrawRectScale(const ShaderState &ss, const GLTexture& texture,
@@ -303,8 +305,7 @@ struct ShaderTexture1 : public ShaderTextureBase {
         vertexAttribPointer(m_aTexCoords, &ptr->tex, base);
         glUniform1i(m_uTexture, 0);
 
-        float4 c = abgr2rgbaf(ss.uColor);
-        glUniform4fv(m_uColorSlot, 1, &c[0]); 
+        uniformColor(m_uColorSlot, ss.uColor);
     }
 };
 
@@ -376,8 +377,7 @@ struct ShaderTextureWarp final : public ShaderTextureBase, public ShaderBase<Sha
         glUniform2fv(camWorldPos, 1, &camPos[0]);
         glUniform2fv(camWorldSize, 1, &camSize[0]);
 
-        float4 c = abgr2rgbaf(ss.uColor);
-        glUniform4fv(SourceColor, 1, &c[0]); 
+        uniformColor(SourceColor, ss.uColor);
     }
 };
 
@@ -408,8 +408,7 @@ struct ShaderTextureHSV final : public ShaderTextureBase, public ShaderBase<Shad
         vertexAttribPointer(m_aTexCoords, &ptr->tex, base);
         glUniform1i(m_uTexture, 0);
 
-        float4 c = abgr2rgbaf(ss.uColor);
-        glUniform4fv(m_uColorSlot, 1, &c[0]); 
+        uniformColor(m_uColorSlot, ss.uColor);
     }
 };
 

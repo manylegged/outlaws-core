@@ -77,6 +77,9 @@ size_t utf8_len(const std::string &str, size_t pos=0, size_t len=~0);
 // POS and LEN are byte indexes
 size_t utf8_width(const std::string &str, size_t pos=0, size_t len=~0);
 
+size_t str_hash(const char* str);
+inline bool str_equals(const char* a, const char* b);
+
 // lexicon-ized string - basically a symbol
 // very fast to copy around, compare
 // can convert to const char* or std::string
@@ -84,42 +87,42 @@ struct lstring {
 private:
     struct Lexicon
     {
-        std::mutex                      mutex;
-        std::unordered_set<std::string> strings;
-
-        const char* intern(const std::string& str)
+        struct cstring_hash
         {
-            std::lock_guard<std::mutex> l(mutex);
-            return strings.insert(str).first->c_str();
-        }
+            size_t operator()(const char *p) const
+            {
+                return str_hash(p);
+            }
+        };
 
-        const char* intern(std::string&& str)
-        {
-            std::lock_guard<std::mutex> l(mutex);
-            return strings.insert(std::move(str)).first->c_str();
-        }
+        struct cstring_eq {
+            bool operator()(const char* a, const char *b) const
+            {
+                return str_equals(a, b);
+            }
+        };
+        
+        std::mutex                                                mutex;
+        std::unordered_set<const char*, cstring_hash, cstring_eq> strings;
 
-        static Lexicon& instance()
-        {
-            static Lexicon *l = new Lexicon;
-            return *l;
-        }
+        static const char* intern(const char* ptr);
+        static Lexicon &instance();
     };
 
     const char* m_ptr = NULL;
 
 public:
     lstring() NOEXCEPT {}
-    lstring(const std::string& str) : m_ptr(Lexicon::instance().intern(str)) { }
-    lstring(std::string &&str) NOEXCEPT : m_ptr(Lexicon::instance().intern(str)) {}
-    lstring(const char* str)        : m_ptr(str ? Lexicon::instance().intern(str) : NULL) { }
-    lstring(const lstring& o) NOEXCEPT : m_ptr(o.m_ptr) {}
+    lstring(const std::string& str) NOEXCEPT : m_ptr(Lexicon::intern(str.c_str())) { }
+    lstring(const char* str) NOEXCEPT : m_ptr(str ? Lexicon::intern(str) : NULL) { }
+    lstring(const lstring &o) NOEXCEPT : m_ptr(o.m_ptr) {}
 
     // trick ctags into continue to read this file from here (why does it do that!?!?!?)    
 #if 1 && 0
 #else
-    std::string str()   const { return m_ptr ? std::string(m_ptr) : ""; }
+    std::string str()   const { return m_ptr ? std::string(m_ptr) : std::string(); }
     const char* c_str() const { return m_ptr; }
+    const char* c_str_nonnull() const { return m_ptr ? m_ptr : ""; }
     bool empty()        const { return !m_ptr || m_ptr[0] == '\0'; }
     
     void clear() { m_ptr = NULL; }
@@ -138,23 +141,10 @@ public:
     bool operator==(const lstring &o) const { return m_ptr == o.m_ptr; }
     bool operator!=(const lstring &o) const { return m_ptr != o.m_ptr; }
 
+    static void lexicon_destroy();
+    static size_t lexicon_bytes();
     static size_t lexicon_size() { return Lexicon::instance().strings.size(); }
-
-    template <typename F>
-    static void lexicon_each(F fun)
-    {
-        Lexicon &lex = Lexicon::instance();
-        std::lock_guard<std::mutex> l(lex.mutex);
-        for (const std::string &str : lex.strings)
-            fun(str);
-    }
     
-    static size_t lexicon_bytes()
-    {
-        size_t sz = sizeof(Lexicon) + Lexicon::instance().strings.bucket_count() * Lexicon::instance().strings.load_factor() * sizeof(std::string);
-        lexicon_each([&](const std::string &str) { sz += str.size(); });
-        return sz;
-    }
 #endif
 };
 
@@ -177,6 +167,8 @@ inline size_t str_len(const std::string& str) { return str.size(); }
 inline size_t str_len(const std::wstring& str) { return str.size(); }
 inline size_t str_len(char chr)               { return 1; }
 inline size_t str_len(lstring str)            { return str_len(str.c_str()); }
+template <size_t N>
+size_t str_len(const char (&buf)[N])          { return strnlen(buf, N); }
 
 template <typename T>
 inline size_t str_find(const std::string &s, const T& v, size_t pos=0) { return s.find(v, pos); }
@@ -264,7 +256,7 @@ inline std::string str_chomp(std::string &&s)
         ed--;
     }
     s.resize(ed+1);
-    return s;
+    return std::move(s);
 }
 
 std::string str_vformat(const char *format, va_list vl) __printflike(1, 0);
@@ -286,17 +278,10 @@ inline std::string str_tostr(std::string &&a) { return std::move(a); }
 inline const std::wstring &str_tostr(const std::wstring &a) { return a; }
 inline std::wstring str_tostr(std::wstring &&a) { return std::move(a); }
 
-struct cstring_wrap_t {
-    const char* m_ptr; 
-    cstring_wrap_t(const char *ptr) : m_ptr(ptr) {}
-    const char* c_str() const { return m_ptr; }
-};
-
-template <typename T> const std::string str_tocstr1(const T &v) { return str_tostr(v); }
-inline lstring str_tocstr1(lstring v) { return v; }
-inline std::string str_tocstr1(const std::string &v) { return v; }
-inline cstring_wrap_t str_tocstr1(const char* v) { return cstring_wrap_t(v); }
-#define str_tocstr(X) (str_tocstr1(X).c_str())
+template <typename K, typename V>
+inline std::string str_tostr(std::pair<K, V> &p) {
+    return str_tostr(p.first) + "=" + str_tostr(p.second);
+}
 
 inline bool str_equals(const char* a, const char* b)
 {
@@ -322,11 +307,20 @@ inline bool str_startswith(const char* str, const char* prefix)
     return true;
 }
 
-template <typename S1, typename S2>
-inline bool str_startswith(const S1& s1, const S2& s2)
+inline bool str_startswith(const char* str, char prefix)
 {
-    return str_startswith(str_tocstr(s1), str_tocstr(s2));
+    return str && *str == prefix;
 }
+
+#define DEF_CSTR2(N)                                                    \
+    template <typename S1, typename S2>                                 \
+    inline bool N(const S1& s1, const S2& s2) { return N(s1.c_str(), s2.c_str()); } \
+    template <typename S2>                                              \
+    inline bool N(const char *s1, const S2& s2) { return N(s1, s2.c_str()); } \
+    template <typename S1>                                              \
+    inline bool N(const S1& s1, const char *s2) { return N(s1.c_str(), s2); }
+
+DEF_CSTR2(str_startswith);
 
 template <typename T, typename S1, typename S2>
 inline std::string str_replace(const T &s, const S1 &a, const S2 &b)
@@ -334,9 +328,10 @@ inline std::string str_replace(const T &s, const S1 &a, const S2 &b)
     std::string r;
     const std::string::size_type sn = str_len(s);
     const std::string::size_type n = str_len(a);
-    for (std::string::size_type i = 0; i != sn; )
+    r.reserve(sn);
+    for (std::string::size_type i = 0; i < sn; )
     {
-        if (str_startswith(&s[i], a)) {
+        if (str_startswith((const char*) (&s[i]), a)) {
             r += b;
             i += n;
         } else {
@@ -361,11 +356,7 @@ inline bool str_endswith(const char* str, const char* pfx)
     return strlen >= pfxlen && str_equals(str+(strlen-pfxlen), pfx);
 }
 
-template <typename S1, typename S2>
-inline bool str_endswith(const S1& s1, const S2& s2)
-{
-    return str_endswith(str_tocstr(s1), str_tocstr(s2));
-}
+DEF_CSTR2(str_endswith);
 
 std::string str_add_line_numbers(const char* s, int start=1);
 
@@ -488,10 +479,20 @@ bool str_contains(const std::basic_string<C>& str, const T &substr)
     return str.find(substr) != std::basic_string<C>::npos;
 }
 
-template <typename T>
-inline bool str_contains(const char* str, const T &substr)
+inline bool str_contains(const char* str, lstring b)
 {
-    return str && strstr(str, str_tocstr(substr)) != NULL;
+    return str && strstr(str, b.c_str()) != NULL;
+}
+
+inline bool str_contains(const char* str, const char *b)
+{
+    return str && strstr(str, b) != NULL;
+}
+
+template <typename T>
+inline bool str_contains(const char* str, const std::basic_string<T> &b)
+{
+    return str && strstr(str, b.c_str()) != NULL;
 }
 
 inline bool str_contains(const char* str, char chr)
@@ -604,6 +605,20 @@ inline std::string str_interpolate_variables(std::string str, const Fun& fun)
     return str;
 }
 
+inline std::string str_untabify_fixnewlines(const std::string &str)
+{
+    std::string r;
+    r.reserve(str.size());
+    for (char x : str)
+    {
+        switch (x) {
+        case '\r': break;
+        case '\t': r += "    "; break;
+        default:   r += x; break;
+        }
+    }
+    return r;
+}
 
 std::string str_urlencode(const std::string &value);
 std::string str_urldecode(const std::string &value);
@@ -621,10 +636,13 @@ bool str_strptime(const char* str, const char* fmt, std::tm *tm);
 std::string str_numeral_format(int num);
 
 // apply adjective, using word order based on language
-std::string lang_concat_adj(const std::string &adj, const std::string &noun);
+std::string lang_concat_adj(const std::string &adj, const char* noun);
 
 // language sensitive plural
 std::string lang_plural(const std::string &noun);
+
+const char* lang_space();
+void lang_append_space(std::string &str);
 
 // join two strings with a colon
 std::string lang_colon(const std::string &a, const std::string &b);
@@ -637,6 +655,12 @@ std::string str_bytes_format(int bytes);
 #define FMT_BYTES(X) (str_bytes_format(X).c_str())
 
 std::string str_tohex(const char* digest, int size);
+
+std::string str_b64encode(const char* digest, int size);
+std::string str_b64decode(const char* digest, int size);
+
+inline std::string str_b64encode(const std::string &str) { return str_b64encode(str.c_str(), str.size()); }
+inline std::string str_b64decode(const std::string &str) { return str_b64decode(str.c_str(), str.size()); }
 
 // cpuid cpu brand string
 std::string str_cpuid();

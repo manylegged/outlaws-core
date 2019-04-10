@@ -146,6 +146,13 @@ int KeyState::getDownKey(const Event *evt) const
 
 int KeyState::getModKey(int key) const
 {
+    switch (key)
+    {
+    case OShiftKey:
+    case OControlKey:
+    case OAltKey:
+        return key;
+    }
     const int mkey = key|keyMods();
     if (chr_unshift(key) != key)
     {
@@ -437,6 +444,8 @@ static string keyToUTF8(int key)
         return std::isprint(key) ? str_format("%c", key) : string();
     } else if ((NSUpArrowFunctionKey <= key && key < SpecialKeyMax) ||
                (LeftMouseButton <= key && key < EventKeyMax)) {
+        if (Keypad0 <= key && key <= Keypad9)
+            return str_format("%c", '0' + (key - Keypad0));
         return string();
     } else { 
         return utf8_encode(key);

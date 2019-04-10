@@ -125,6 +125,8 @@ class AudioAllocator final : public cAudio::ILogReceiver {
 public:
 
     cAudioMutex *mutex = NULL;
+
+    bool isSoundFucked() { return m_sound_fucked; }
     
     float calculateGain(float2 pos, float refDist, float maxDist, float rolloff) const
     {
@@ -404,9 +406,11 @@ private:
     AudioAllocator*         m_allocator = NULL;
 
     const vector<lstring> &getSamples() const { return m_se->samples; }
-    lstring getSample() const { return getSamples()[m_se->m_index]; }
     
 public:
+
+    lstring getSample() const { return getSamples()[m_se->m_index]; }
+
 
     cAudio::IAudioSource *prepare(AudioAllocator *alloc, float gain3d=1.f)
     {
@@ -499,6 +503,8 @@ public:
 
     const EventDescription &getDesc() const { return *m_se; }
 
+    string summary() const { return str_format("%s:%d", m_se->name.c_str(), m_se->m_index); }
+
     void setVolume(float v)
     {
         ASSERT(!fpu_error(v));
@@ -549,7 +555,17 @@ public:
     bool  isLoop()    const { return m_loop; }
     bool  isPlaying() const { return m_source && m_source->isPlaying(); }
     bool  isRelative() const { return m_relative; }
-
+    
+    int getChannels() const
+    {
+        if (!m_source)
+            return 0;
+        cAudio::IAudioBuffer *buf = m_source->getBuffer();
+        if (!buf)
+            return 0;
+        return buf->getChannels();
+    }
+    
     void play2d(AudioAllocator *alloc)
     {
         if (prepare(alloc, 1.f)) 
@@ -568,7 +584,7 @@ public:
     {
         const float gain3d = alloc->calculateGain(m_pos, m_se->minDist, m_se->maxDist, m_se->rolloff);
 
-        if (prepare(alloc, gain3d)) 
+        if (prepare(alloc, gain3d))
         {
             m_relative = false;
             m_source->setVelocity(c3(m_vel));
@@ -576,10 +592,6 @@ public:
             m_source->setMaxAttenuationDistance(m_se->maxDist);
             m_source->setRolloffFactor(m_se->rolloff);
             m_source->play3d(c3(m_pos), 1.f, (m_se->flags&EventDescription::LOOP) || m_loop);
-            if (m_source->getBuffer() && m_source->getBuffer()->getChannels() == 2) {
-                DPRINT(SOUND, ("Warning! Stereo sample %s:%d:%s does not support spatialization",
-                               m_se->name.c_str(), m_se->m_index, getSample().c_str()));
-            }
             DPRINT(SOUND_EVENTS, ("Play3D %s:%d:\n%s", m_se->name.c_str(), m_se->m_index,
                                   sourceToString(m_source).c_str()));
         }

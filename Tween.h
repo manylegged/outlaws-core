@@ -106,7 +106,8 @@ inline float easeInOutCubic(float t, float b=0.f, float c=1.f, float d=1.f)
 
 inline float easeInElastic(float t, float b=0.f, float c=1.f, float d=1.f)
 {
-    if (t==0) return b;  if ((t/=d)==1) return b+c;
+    if (t==0) return b;
+    if ((t/=d)==1) return b+c;
     float p=d*.3f;
     float a=c;
     float s=p/4;
@@ -116,7 +117,8 @@ inline float easeInElastic(float t, float b=0.f, float c=1.f, float d=1.f)
 
 inline float easeOutElastic(float t, float b=0.f, float c=1.f, float d=1.f)
 {
-    if (t==0) return b;  if ((t/=d)==1) return b+c;
+    if (t==0) return b;
+    if ((t/=d)==1) return b+c;
     float p=d*.3f;
     float a=c;
     float s=p/4;
@@ -125,7 +127,8 @@ inline float easeOutElastic(float t, float b=0.f, float c=1.f, float d=1.f)
 
 inline float easeInOutElastic(float t, float b=0.f, float c=1.f, float d=1.f)
 {
-    if (t==0) return b;  if ((t/=d/2)==2) return b+c;
+    if (t==0) return b;
+    if ((t/=d/2)==2) return b+c;
     float p=d*(.3f*1.5f);
     float a=c;
     float s=p/4;

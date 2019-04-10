@@ -1,11 +1,15 @@
 -- glsl shaders
 -- #version 120
 
--- format is { COMMON_HEADER, VERTEX_SHADER, FRAGMENT_SHADER }
+-- format is { COMMON_HEADER, VERTEX_SHADER, FRAGMENT_SHADER, TEXTURE_NAME }
 
 -- implicit parameters:
--- attribute vec4 Position;
--- uniform mat4 Transform;
+-- attribute vec4 Position; (vertex position)
+-- uniform mat4 Transform; (transformation matrix)
+-- uniform sampler2D ShaderTex; (texture sampler for specified texture_name);
+-- uniform vec2 ShaderTexRes; (widthxheight of texture_name)
+-- uniform vec2 Resolution; (widthxheight of window in pixels)
+-- uniform float ToPixels; (pixel_size / world_size, converts world sizes into (zoom invariant) pixels sizes)
 
 {
    -- spaceship hulls
@@ -48,11 +52,11 @@
       ,
       "attribute vec4 SourceColor;
        attribute float Size;
-       uniform float ToPixels;
+       uniform   float ToPixels;
        uniform float EyeZ;
        void main(void) {
            DestinationColor = SourceColor;
-           gl_PointSize = ToPixels * Size / (EyeZ - Position.z);
+           gl_PointSize = Size * ToPixels * 0.5;
            gl_Position = Transform * Position;
        }"
       ,
@@ -101,6 +105,23 @@
           vec4 color = mix(DestColor0, DestColor1, 0.8 + 0.5 * val);
           gl_FragColor = vec4(alpha * color.a * color.xyz, 0.0);
       }"
+   }
+
+   ShaderBlackhole = {
+      "varying vec2 uv;"
+      ,
+      "attribute vec2 TexCoord;
+      void main(void) {
+          uv = TexCoord;
+          gl_Position = Transform * Position;
+      }",
+      "#include 'blackhole.glsl'
+
+      void main(void) {
+          gl_FragColor = frag(uv);
+      }",
+      "textures/Starsinthesky.jpg"
+      -- "C4s3q7KVUAAvVgu.jpg"
    }
 
    -- draws resource packets (R)
@@ -239,7 +260,9 @@
               color += vec4(ditherv);
       #endif
           }
-          gl_FragColor = color;
+          // apparently Intel (R) HD Graphics 3000 does not clamp automatically
+          gl_FragColor = clamp(color, vec4(0), vec4(1));
+          //gl_FragColor = color;
       }"
    },
 
@@ -327,40 +350,15 @@
       }",
    }
 
-   -- obsolete shader for hexagon particles
-   ShaderParticles = {
-      "varying vec4 DestinationColor;"
-      ,
-      "attribute vec2  Offset;
-       attribute float StartTime;
-       attribute float EndTime;
-       attribute vec3  Velocity;
-       attribute vec4  Color;
-       uniform   float CurrentTime;
-       void main(void) {
-           if (CurrentTime >= EndTime) {
-               gl_Position = vec4(0.0, 0.0, -99999999.0, 1);
-               return;
-           }
-           float deltaT = CurrentTime - StartTime;
-           vec3  velocity = pow(0.8, deltaT) * Velocity;
-           vec3  position = Position.xyz + vec3(Offset, 0.0) + deltaT * velocity;
-           float v = deltaT / (EndTime - StartTime);
-           DestinationColor = (1.0 - v) * Color;
-           gl_Position = Transform * vec4(position, 1);
-       }"
-      ,
-      "void main(void) {
-           gl_FragColor = DestinationColor;
-       }"
-   }
-
    -- used for particles (GL_POINTS)
    ShaderParticlePoints = {
       "varying vec4 DestinationColor;
-       varying float Sides;"
+       varying float Sides;
+       #if USE_TRIS
+       varying vec2 Coord;
+       #endif"
       ,
-      "attribute vec2  Offset;
+      "attribute vec3  Offset;
        attribute float StartTime;
        attribute float EndTime;
        attribute vec3  Velocity;
@@ -368,8 +366,14 @@
        uniform   float CurrentTime;
        uniform   float ToPixels;
        void main(void) {
+       #if !USE_TRIS
            float size = 1.5 * ToPixels * Offset.x;
-           if (CurrentTime >= EndTime || size < 0.25) {
+           gl_PointSize = size;
+           if (CurrentTime >= EndTime || size < 0.25)
+       #else
+           if (CurrentTime >= EndTime)
+       #endif
+           {
                gl_Position = vec4(0.0, 0.0, -99999999.0, 1);
                return;
            }
@@ -377,25 +381,33 @@
            vec3  velocity = pow(0.8, deltaT) * Velocity;
            vec3  position = Position.xyz + deltaT * velocity;
            float v = deltaT / (EndTime - StartTime);
-           DestinationColor = (1.0 - v) * Color;
+           DestinationColor = (1.0 - v) * Color;           
+       #if USE_TRIS
+           Coord = Offset.xy;
+           if (Offset.y >= 10) {
+               Coord.y -= 10;
+               Sides = 1.0;
+            } else {
+               Sides = 0.0;
+           }
+           position.xy += (Coord.xy - 0.5) * (2.0 * Offset.z);
+       #else
            Sides = Offset.y;
-           gl_PointSize = size;
+       #endif
            gl_Position = Transform * vec4(position, 1);
        }"
       ,
       "
        float length2(vec2 x) { return dot(x, x); }
-       float mlength(vec2 x) { return abs(x.x) + abs(x.y); }
-       float squared(float x) { return x * x; }
 
        void main(void) {
-           //float val = 1.0 - squared(2.0 * length(gl_PointCoord - 0.5));
+       #if USE_TRIS
+           float val = 1.0 - 4.0 * length2(Coord - 0.5);
+       #else
            float val = 1.0 - 4.0 * length2(gl_PointCoord - 0.5);
-           //float val = 1.0 - 2.0 * mlength(gl_PointCoord - 0.5);
-           //float val = 1.0 - 2.0 * length(gl_PointCoord - 0.5);
+       #endif
            if (val <= 0.0)
                discard;
-           //val = max(0.0, val);
            if (Sides > 0.0) {
                gl_FragColor = DestinationColor;
            } else {

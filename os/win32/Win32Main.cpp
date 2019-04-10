@@ -44,17 +44,24 @@ extern uint gpuMemoryUsed;
 
 string ws2s(const std::wstring& wstr)
 {
+    DASSERT(wstr.size());
     int len = WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), wstr.length(), 0, 0, NULL, NULL);
     std::string r(len, '\0');
-    WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), wstr.length(), &r[0], len, NULL, NULL);
+    int written = WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), wstr.length(), &r[0], len, NULL, NULL);
+    DASSERT(len == written);
+    r.resize(written);
+    DASSERT(r.c_str()[r.size()] == '\0');
     return r;
 }
 
 std::wstring s2ws(const std::string& s)
 {
-    int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), s.length(), 0, 0);
+    int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), s.length(), NULL, 0);
     std::wstring r(len, L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), s.length(), &r[0], len);
+    int written = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), s.length(), &r[0], len);
+    DASSERT(len == written);
+    r.resize(written);
+    DASSERT(r.c_str()[r.size()] == L'\0');
     return r;
 }
 
@@ -252,6 +259,12 @@ std::wstring pathForFile(const char *fname, const char* flags)
     if (cpath.size())
         return cpath;
 
+	if (str_startswith(fname, "/cygdrive/")) {
+		cpath = s2ws(fname + strlen("/cygdrive/"));
+		cpath.insert(1, L":");
+		return cpath;
+	}
+
     cpath = str_w32path_standardize(s2ws(fname));
 
     // absolute path
@@ -342,10 +355,14 @@ static std::set<std::wstring> listDirectory(const char *path1, const char *mode)
 
     do
     {
-        if (data.cFileName[0] != '.')
+        if (data.cFileName[0] && data.cFileName[0] != '.')
             files.insert(data.cFileName);
     } while (FindNextFile(hdir, &data) != 0);
 
+    const DWORD err = GetLastError();
+    if (err != ERROR_NO_MORE_FILES)
+        ReportWin32ErrF(("FindNextFile('%s')", ws2s(path).c_str()), err);
+    
     FindClose(hdir);
 
     return files;
@@ -424,7 +441,7 @@ int OL_RemoveFileOrDirectory(const char* dirname)
     if (val != 0 && val != ERROR_FILE_NOT_FOUND) {
         ReportWin32Err("SHFileOperation(FO_DELETE)", val);
     }
-	return val == 0 ? 1 : 0;
+    return val == 0 ? 1 : 0;
 }
 
 int OL_RemoveFile(const char* fname)
@@ -442,6 +459,31 @@ int OL_OpenWebBrowser(const char* url)
 {
     int stat = (int)ShellExecute(NULL, L"open", s2ws(url).c_str(), NULL, NULL, SW_SHOWNORMAL);
     return stat > 32 ? 1 : 0;
+}
+
+int OL_OpenFolder(const char* url)
+{
+    std::wstring path = pathForFile(url, "w");
+    
+    HRESULT hr;
+    hr = CoInitializeEx(0, COINIT_MULTITHREADED);
+
+#if 1
+    ITEMIDLIST *folder = ILCreateFromPath(path.c_str());
+    hr = SHOpenFolderAndSelectItems(folder, 0, NULL, 0);
+#else
+    std::wstring dir = getDirname(path.c_str());
+    ITEMIDLIST *folder = ILCreateFromPath(dir.c_str());
+    std::vector<LPITEMIDLIST> v(1, ILCreateFromPath(path.c_str()));
+
+    hr = SHOpenFolderAndSelectItems(folder, v.size(), (LPCITEMIDLIST*)v.data(), 0);
+    for (auto idl : v)
+        ILFree(idl);
+#endif
+    
+    ILFree(folder);
+
+    return (hr == S_OK) ? 1 : 0;
 }
 
 
@@ -642,6 +684,7 @@ static void printModulesStackCrash(const char* flavor, const char* message, CONT
     string top_stack[4];
     int top_stack_count = arraySize(top_stack);
     const char* heuristic_msg = NULL;
+    string msg = str_format("Spacetime %s:\n%s\n\n", flavor, message);
     
     const HANDLE process = GetCurrentProcess();
 
@@ -697,11 +740,13 @@ static void printModulesStackCrash(const char* flavor, const char* message, CONT
                 { "nahimic", "MSI's Nahimic audio software" },
                 { "kraken", "Razer's Kraken headset software" },
                 { "manowar", "Razer's ManOWar headset software" },
+                { "ss2", "Sonic Studio 2 (bundled with ASUS)" },
+                { "ssaudio", "Steel Series headset software" },
                 // { "atiogl", "AMD graphics driver" }
             };
             
             bool in_list = false;
-            bool in_stack = true;
+            bool in_stack = false;
             foreach (const char* str, substrs)
                 in_list = in_list || str_contains(lname, str);
             for (int j=0; j<stack_count; j++)
@@ -715,10 +760,30 @@ static void printModulesStackCrash(const char* flavor, const char* message, CONT
 
             if (in_stack)
             {
+                // if there's a mod DLL in the stack, point out that it might be involved
+                static wchar_t filenameWide[MAX_PATH];
+                static char    filename[MAX_PATH];
+                if (GetModuleFileNameExW(process, hmodules[i], filenameWide, MAX_PATH)) {
+                    if (WideCharToMultiByte(CP_UTF8, 0, filenameWide, MAX_PATH, filename, MAX_PATH, nullptr, nullptr) <= 0)
+                        filename[0] = '\0';
+                    if (str_contains(filename, "\\mods\\") || str_contains(filename, "/mods/")) {
+                        string mod_callout = str_format("Mod containing '%s' *may* be playing a role in this crash.", name.c_str());
+                        msg += mod_callout; // add to dialog shown to user
+                        str_append_format(msg, "\nLocated at: %s\n", filename);
+
+                        ReportWin32("  ^ %s", mod_callout.c_str());
+                        // future nicety: instead print name of mod this DLL belongs to if we can
+                        ReportWin32("  ^ Located at: %s", filename);
+                    }
+                }
+
                 for_ (it, known_bad_sw)
                 {
                     if (str_contains(lname, it[0]))
+                    {
                         heuristic_msg = it[1];
+                        break;
+                    }
                 }
             }
         }
@@ -763,11 +828,10 @@ static void printModulesStackCrash(const char* flavor, const char* message, CONT
         }
     }
     
-    string msg = str_format("Spacetime %s:\n%s\n\n", flavor, message);
     for (int i=0; i<top_stack_count; i++)
-        msg += str_format("%d. %s\n", top_stack[i].c_str());
+        msg += str_format("%d. %s\n", i, top_stack[i].c_str());
     if (heuristic_msg) {
-        msg += "########### This looks like a problem with ";
+        msg += "########### This looks like a known problem with ";
         msg += heuristic_msg;
         msg += ". Make sure it is fully up to date, or consider uninstalling it. ###########";
     }
@@ -780,7 +844,7 @@ void OL_Terminate(const char* message)
 {
     if (!OLG_EnableCrashHandler())
         return;
-    if (!OLG_OnTerminate())
+    if (!OLG_OnTerminate(message))
         return;
 
     CONTEXT context;
@@ -792,7 +856,7 @@ void OL_Terminate(const char* message)
 
 static LONG WINAPI myExceptionHandler(EXCEPTION_POINTERS *info)
 {
-    if (!OLG_OnTerminate())
+    if (!OLG_OnTerminate("unhandled win32 exception"))
         return EXCEPTION_EXECUTE_HANDLER;
     
     ReportWin32("Unhandled Top Level Exception");
@@ -989,7 +1053,8 @@ void os_cleanup()
 
 int main(int argc, char* argv[])
 {
-
+    ReportWin32("main()");
+    
     // allow highdpi on retina-esque displays
     {
         // this causes a link error on XP

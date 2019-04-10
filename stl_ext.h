@@ -173,8 +173,9 @@ bool copy_delete(T *v)
 template <typename T>
 inline void deleteNull(T*& v)
 {
-    copy_delete(v);
+    T *q = v;
     v = NULL;
+    copy_delete(q);
 }
 
 template <typename T> struct watch_ptr;
@@ -182,8 +183,9 @@ template <typename T> struct watch_ptr;
 template <typename T>
 inline void deleteNull(watch_ptr<T>& v)
 {
-    copy_delete(v.get());
+    T *q = v.get();
     v = NULL;
+    copy_delete(q);
 }
 
 // smart pointer supporting distributed and centralized ownership
@@ -227,19 +229,13 @@ public:
     copy_ptr(const copy_ptr& o) { assign(o.m_ptr); }
     explicit copy_ptr(const T *t) { assign(t); }
     copy_ptr& operator=(const copy_ptr& o) { return assign(o.m_ptr); }
-    copy_ptr& assign(typename std::remove_const<T>::type *v)
-    {
-        if (m_ptr == v)
-            return *this;
-        else if (!v || copy_explicit_owner(v) || (std::is_const<T>::value && copy_refcount(v, +1)))
-            return reset(v);
-        else
-            return assign(const_cast<const T *>(v));
-    }
+    
     copy_ptr& assign(const T* v)
     {
         if (m_ptr == v)
             ;
+        else if (!v || copy_explicit_owner(v) || (std::is_const<T>::value && copy_refcount(v, +1)))
+            reset(const_cast<T*>(v));
         else if (!std::is_const<T>::value && m_ptr && !copy_explicit_owner(m_ptr))
             assign1<T>(v);
         else
@@ -302,7 +298,7 @@ copy_ptr<T> make_copy(T* &&v)
 
 struct Watchable;
 
-struct watch_ptr_base {
+struct DLLFACE watch_ptr_base {
 
     const Watchable* ptr  = NULL;
     watch_ptr_base*  next = NULL;
@@ -313,7 +309,7 @@ protected:
     void link(const Watchable* p);
 };
 
-struct Watchable : public IDeletable {
+struct DLLFACE Watchable : public IDeletable {
 
     mutable watch_ptr_base watch_list;
 
@@ -332,7 +328,7 @@ struct Watchable : public IDeletable {
 
 // smart pointer that automatically becomes NULL when it's pointee is deleted
 template <typename T>
-struct watch_ptr final : public watch_ptr_base {
+struct DLLFACE watch_ptr final : public watch_ptr_base {
 
     ~watch_ptr() 
     {
@@ -402,6 +398,12 @@ inline bool vec_contains(const std::initializer_list<T> &v, const T& t)
 {
     auto end = std::end(v);
     return std::find(std::begin(v), end, t) != end;
+}
+
+template <typename T>
+inline bool vec_contains(const std::unordered_set<T> &v, const T& t)
+{
+    return v.count(t);
 }
 
 template <typename V, typename Fun>
@@ -489,6 +491,12 @@ inline bool vec_add(V &v, const T& t)
     return adding;
 }
 
+template <typename V, typename T>
+inline bool vec_add(std::unordered_set<V> &v, const T& t)
+{
+    return v.insert(t).second;
+}
+
 template <typename V, typename V1>
 inline bool vec_extend(V &v, const V1& t)
 {
@@ -527,6 +535,7 @@ const T &vec_at(const T (&v)[S], int i, const T &def=dummy_ref<T>())
 
 template <typename V> size_t vec_size(const V &v) { return v.size(); }
 template <typename T, size_t S> size_t vec_size(const T (&v)[S]) { return S; }
+template <typename V> size_t vec_size(const pair<V*, V*> &v) { return v.second - v.first; }
 
 template <typename Vec>
 typename Vec::value_type &vec_index(Vec &v, size_t i)
@@ -821,6 +830,12 @@ void vec_unique(T& vec, Fun fun)
     vec.erase(std::unique(vec.begin(), vec.end(), fun), vec.end());
 }
 
+template <typename T>
+void vec_unique(T& vec)
+{
+    vec.erase(std::unique(vec.begin(), vec.end()), vec.end());
+}
+
 template <typename T, typename Fun>
 void vec_unique_deep(T& vec, Fun fun)
 {
@@ -1042,10 +1057,9 @@ template <typename T, typename Fun>
 inline auto vec_map(const T &inv, const Fun &fun) -> std::vector<decltype(fun(*std::begin(inv)))>
 {
     std::vector<decltype(fun(*std::begin(inv)))> outs;
+    outs.reserve(vec_size(inv));
     foreach (const auto &x, inv)
-    {
         outs.push_back(fun(x));
-    }
     return outs;
 }
 
@@ -1053,10 +1067,9 @@ template <typename R, typename T, typename Fun>
 inline std::vector<R> vec_map(const T &inv, const Fun &fun)
 {
     std::vector<R> outs;
+    outs.reserve(vec_size(inv));
     foreach (const auto &x, inv)
-    {
         outs.push_back(fun(x));
-    }
     return outs;
 }
 
@@ -1064,10 +1077,9 @@ template <typename R, typename T>
 inline std::vector<R> vec_map(const T &inv)
 {
     std::vector<R> outs;
+    outs.reserve(vec_size(inv));
     foreach (const auto &x, inv)
-    {
         outs.push_back(R(x));
-    }
     return outs;
 }
 
@@ -1550,6 +1562,7 @@ public:
     void* allocate();           // return a block of element_size bytes
     void deallocate(void *ptr); // free a block returned by allocate()
 
+    void release();
 
     friend void* operator new(size_t nbytes, MemoryPool& mp)
     {

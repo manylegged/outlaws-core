@@ -39,7 +39,6 @@ static DEFINE_CVAR(float, kNavRotKd, 0.3f);
 static DEFINE_CVAR(float, kNavSpinnerThreshold, 2.f);
 static DEFINE_CVAR(float, kNavSpinnerMinAccel, 1.f);
 
-
 #define USE_EIGEN 0
 #if USE_EIGEN
 #include "../eigen/Eigen/Dense"
@@ -267,13 +266,13 @@ float sNav::angAccelForTarget(float destAngle, float destAngVel, bool snap) cons
     if (snap)
         rotInt = 0.f;
 
-    const float angleError  = distanceAngles(destAngle, state.angle);
+    const float angleError  = distanceAngles(state.angle, destAngle);
     const float maxAngAccel = fabsf(angleError > 0.f ? maxPosAngAccel : maxNegAngAccel);
     
     if (maxAngAccel < epsilon)
         return 0.f;
 
-    const float approxRotPeriod = 2.f * sqrt(M_TAOf / maxAngAccel);
+    const float approxRotPeriod = 2.f * sqrt(M_TAUf / maxAngAccel);
 
     const bool snappy = !kNavThrustWhileTurning || snap || (dest.dims&SN_SNAPPY);
     
@@ -322,30 +321,14 @@ bool sNav::update()
     
     moversDisable();
 
-    if (dest.dims&SN_MISSILE_ANGLE)
-    {
-        const float2 ddirPerp = rotate(normalize(dest.cfg.position - state.position), dest.cfg.angle + M_PI_2f);
-        const float2 mydir    = angleToVector(state.angle);
-        const float  aerr     = dot(mydir, ddirPerp);
-        
-        foreach (snMover *mr, movers)
-        {
-            if (mr->useForTranslation) {
-                mr->accelEnabled = 1.f;
-            }
-            if (mr->useForRotation) {
-                mr->angAccelEnabled = aerr;
-            }
-        }
-    }
-    else if ((dest.dims&SN_POSITION) && !precision.posEqual(state.position, dest.cfg.position))
+    if ((dest.dims&SN_POSITION) && !precision.posEqual(state.position, dest.cfg.position))
     {
         const float2 destp = dest.cfg.position;
         const float2 destv = (dest.dims&(SN_VELOCITY|SN_TARGET_VEL)) ? dest.cfg.velocity : float2(0);
 
         float2 u;
         if (dest.dims&SN_TARGET_VEL) {
-            float2 normPErrPerp = rotate(normalize(destp - state.position), M_PI_2f);
+            float2 normPErrPerp = rotate90(normalize(destp - state.position));
             float2 vDiff = (state.velocity - destv);
             float2 dErr = normPErrPerp * dot(normPErrPerp, vDiff);
             u = 1.f * (destp - state.position) - 3.f * dErr;

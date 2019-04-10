@@ -3,8 +3,8 @@
 #define SDL_INC_H
 
 #ifdef _MSC_VER
-#  include "../../SDL2_ttf-2.0.12/include/SDL_ttf.h"
-#  include "../../SDL2_image-2.0.0/include/SDL_image.h"
+#  include "../../SDL2_ttf/include/SDL_ttf.h"
+#  include "../../SDL2_image/include/SDL_image.h"
 #  include "SDL.h"
 #  include "SDL_syswm.h"
 #  define OL_WINDOWS 1

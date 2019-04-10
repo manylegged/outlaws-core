@@ -237,6 +237,8 @@ inline int2 round_int(float2 f) { return int2(round_int(f.x), round_int(f.y)); }
 
 inline float2 angleToVector(float angle) { return float2(std::cos(angle), std::sin(angle)); }
 inline float vectorToAngle(float2 vec) { return std::atan2(vec.y, vec.x); }
+inline double2 angleToVector(double angle) { return double2(std::cos(angle), std::sin(angle)); }
+inline double vectorToAngle(double2 vec) { return std::atan2(vec.y, vec.x); }
 
 inline float2 a2v(float angle) { return float2(std::cos(angle), std::sin(angle)); }
 inline float v2a(float2 vec) { return std::atan2(vec.y, vec.x); }
@@ -253,8 +255,8 @@ inline float dotAngles(float a, float b)
 #define M_PIf float(M_PI)
 #define M_PI_2f float(M_PI_2)
 #define M_PI_4f float(M_PI_4)
-#define M_TAO (2.0 * M_PI)
-#define M_TAOf float(2.0 * M_PI)
+#define M_TAU (2.0 * M_PI)
+#define M_TAUf float(2.0 * M_PI)
 #define M_SQRT2f float(M_SQRT2)
 
 
@@ -284,14 +286,6 @@ inline int sign_int(T val, T threshold=epsilon)
 inline float2 rotate90(float2 v)  { return float2(-v.y, v.x); }
 inline float2 rotateN90(float2 v) { return float2(v.y, -v.x); }
 
-// return shortest signed difference between angles [0, pi]
-inline float distanceAngles(float a, float b)
-{
-    float e = dotAngles(a, b + M_PI_2f);
-    if (dotAngles(a, b) < 0.f)
-        e = std::copysign(2.f, e) - e;
-    return M_PI_2f * e;
-}
 
 inline int distance(int a, int b)
 {
@@ -381,6 +375,9 @@ inline T modulo(T x, T y)
              m));
 }
 
+inline float modulo(double x, float y) { return modulo<float>(x, y); }
+inline float modulo(float x, double y) { return modulo<float>(x, y); }
+
 
 template <typename T>
 inline glm::tvec2<T> modulo(glm::tvec2<T> val, glm::tvec2<T> div)
@@ -412,6 +409,16 @@ inline float2 min_abs(float2 a, float2 b)
 inline float2 max_abs(float2 a, float2 b)
 {
     return float2(max_abs(a.y, b.y), max_abs(a.y, b.y));
+}
+
+// return shortest signed difference between angles [0, pi]
+inline float distanceAngles(float a, float b)
+{
+    // float e = dotAngles(a, b + M_PI_2f);
+    // if (dotAngles(a, b) < 0.f)
+    //     e = std::copysign(2.f, e) - e;
+    // return M_PI_2f * e;
+    return modulo(b - a + 1.5f * M_TAUf, M_TAUf) - M_PIf;
 }
 
 // prevent nans
@@ -464,6 +471,8 @@ inline double distanceSqr(const double3 &a, const double3& b) { return lengthSqr
 
 inline float todegrees(float radians) { return 360.f / (2.f * M_PIf) * radians; }
 inline float toradians(float degrees) { return 2.f * M_PIf / 360.0f * degrees; }
+inline double todegrees(double radians) { return 360.0 / (2.0 * M_PI) * radians; }
+inline double toradians(double degrees) { return 2.0 * M_PI / 360.0 * degrees; }
 
 
 // rotate vector v by angle a
@@ -501,6 +510,28 @@ inline float2 justY(float v=1.f)  { return float2(0.f, v); }
 inline float2 justX(float2 v)     { return float2(v.x, 0.f); }
 inline float2 justX(float v=1.f)  { return float2(v, 0.f); }
 inline float3 justZ(float v=1.f)  { return float3(0.f, 0.f, v); }
+
+#define JUST2(V, T)                                      \
+    inline V V##x(T v) { return V(v, 0); }               \
+    inline V V##x(const V &v) { return V(v.x, 0); }      \
+    inline V V##y(T v) { return V(0, v); }               \
+    inline V V##y(const V &v) { return V(0, v.y); }
+
+#define JUST3(V, T)                                              \
+    inline V V##x(T v) { return V(v, 0, 0); }                    \
+    inline V V##x(const V &v) { return V(v.x, 0, 0); }           \
+    inline V V##y(T v) { return V(0, v, 0); }                    \
+    inline V V##y(const V &v) { return V(0, v.y, 0); }           \
+    inline V V##z(T v) { return V(0, v, 0); }                    \
+    inline V V##z(const V &v) { return V(0, v.y, 0); }
+
+JUST2(f2, float)
+JUST2(d2, double)
+JUST2(i2, int)
+
+JUST3(f3, float)
+JUST3(d3, double)
+JUST3(i3, int)
 
 template <typename T>
 inline T multiplyComponent(T v, int i, float x)
@@ -719,7 +750,7 @@ inline float smootherstep(float edge0, float edge1, float x)
 // map unorm to a smooth bell curve shape (0->0, 0.5->1, 1->0)
 inline float bellcurve(float x)
 {
-    return 0.5f * (-cos(M_TAOf * x) + 1);
+    return 0.5f * (-cos(M_TAUf * x) + 1);
 }
 
 // perlin/simplex noise, range is [-1 to 1]
@@ -818,6 +849,7 @@ int intersectPolySegment(float2 *outp, const float2 *points, int npoints, float2
 
 // assume clockwise winding
 bool intersectPolyPoint(const float2 *points, int npoints, float2 ca);
+bool intersectPolyCircle(const float2 *points, int npoints, float2 ca, float r);
 
 // orient and incircle are adapted from Jonathan Richard Shewchuk's "Fast Robust Geometric Predicates"
 
@@ -859,6 +891,13 @@ inline float areaForPoly(const int numVerts, const float2 *verts)
 
 // moment of intertia of polygon
 float momentForPoly(float mass, int numVerts, const float2 *verts, float2 offset);
+
+inline double regpoly_apothem(int n, double R=1.0) { return R * cos(M_PI / n); }
+inline double regpoly_circumradius(int n, double r=1.0) { return r / cos(M_PI / n); }
+inline double regpoly_radius_from_side(int n, double s) { return s / (2.0 * sin(M_PI / n)); }
+// inline double regpoly_area(int n, double R) { return 0.5 * n * R * R * sin(M_TAU / n); }
+inline double regpoly_area(int n, double R=1.0, double R1=0.0) { return 0.5 * n * R * (R1 ? R1 : R) * sin(M_TAU / n); }
+inline double regpoly_perimeter(int n, double R=1.0) { return n * 2.0 * R * sin(M_PI / n); }
 
 
 // ported into c++ from python source at http://doswa.com/blog/2009/07/13/circle-segment-intersectioncollision/
@@ -923,7 +962,7 @@ inline bool intersectRayCircle(const float2 &a, float2 d, const float2 &c, float
 // modified from http://stackoverflow.com/questions/1073336/circle-line-collision-detection
 // ray is at point E in direction d
 // circle is at point C with radius r
-bool intersectRayCircle(float2 *o, float2 E, float2 d, float2 C, float r);
+DLLFACE bool intersectRayCircle(float2 *o, float2 E, float2 d, float2 C, float r);
 
 inline bool intersectRaySegment(float2 rpt, float2 rdir, float2 sa, float2 sb)
 {
@@ -1153,12 +1192,24 @@ inline float2 toroidalDelta(const float2 &p, const float2 &q, const float2 &w)
 
     const float2 v = p - q;
 
+    if (w == f2())
+        return v;
+    return min_abs(v, min_abs(v-w, v+w));
+}
+
+inline double2 toroidalDelta(const double2 &p, const double2 &q, const double2 &w)
+{
+    const double2 v = p - q;
+    if (w == d2())
+        return v;
     return min_abs(v, min_abs(v-w, v+w));
 }
 
 // closest mapped position for POS relative to VIEW
 inline float2 toroidalPosition(const float2 &pos, const float2 &view, const float2 &w)
 {
+    if (w == f2())
+        return pos;
     const float2 delta = toroidalDelta(pos, modulo(view, w), w);
     return view + delta;
 }

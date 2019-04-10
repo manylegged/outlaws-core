@@ -93,6 +93,20 @@ static NSString *getDevSavePath()
     return base;
 }
 
+static bool str_startswith_(const char* str, const char* prefix)
+{
+    if (!str || !prefix)
+        return false;
+    while (*prefix)
+    {
+        if (*str != *prefix)    // will catch *str == NULL
+            return false;
+        str++;
+        prefix++;
+    }
+    return true;
+}
+
 static NSString* pathForFileName(const char* fname, const char* flags)
 {
     NSString* fullFileName = [NSString stringWithUTF8String:fname];
@@ -111,7 +125,7 @@ static NSString* pathForFileName(const char* fname, const char* flags)
         // read and write output files directly from source code repository
         return [getDevSavePath() stringByAppendingPathComponent:fullFileName];
     }
-    
+
     if (flags[0] != 'p')
     {
         NSString *savepath = [getBaseSavePath() stringByAppendingPathComponent:fullFileName];
@@ -122,6 +136,19 @@ static NSString* pathForFileName(const char* fname, const char* flags)
             return savepath;
         }
     }
+
+    // hack for steam only where "fields" is installed next to Reassembly.app
+    // in GOG "fields" goes in the resource dir
+    if (str_startswith_(fname, "fields/"))
+    {
+        NSString *fpath = [[[[NSBundle mainBundle] bundlePath]
+                               stringByDeletingLastPathComponent]
+                              stringByAppendingPathComponent:fullFileName];
+        BOOL isdir = NO;
+        if ([[NSFileManager defaultManager] fileExistsAtPath:fpath isDirectory:&isdir])
+            return fpath;
+    }
+    
     // no resources build has nothing in the bundle!
 #if NORES
     return [getDevSavePath() stringByAppendingPathComponent:fullFileName];
@@ -473,6 +500,39 @@ static int appendQuake3String(NSMutableAttributedString *mstring, NSFont *font,
     return 1;
 }
 
+static int draw_text(NSGraphicsContext *bitmapCtx, NSAttributedString* string, const char* str)
+{
+    CGContextRef ctx = [bitmapCtx graphicsPort];
+    CGContextSetShouldAntialias(ctx, YES);
+    // CContextSetShouldSmoothFonts(ctx, YES);
+    CGContextSetShouldSubpixelPositionFonts(ctx, YES);
+    CGContextSetShouldSubpixelQuantizeFonts(ctx, YES);
+    @try {
+        [string drawAtPoint:NSMakePoint(0.5, 0.5)]; // draw at offset position
+    } @catch (NSException* exception) {
+        LogMessage([NSString stringWithFormat:@"Error drawing string '%s': %@", str, exception.description]);
+        LogMessage([NSString stringWithFormat:@"Stack trace: %@", [exception callStackSymbols]]);
+        return 0;		
+    }
+    return 1;
+}
+
+static BOOL supports_draw_direct()
+{
+    static int OK = -1;
+    if (OK == -1)
+    {
+        NSOperatingSystemVersion version;
+        version.majorVersion = 10;
+        version.minorVersion = 12;
+        version.patchVersion = 1;
+        OK = [[NSProcessInfo processInfo] isOperatingSystemAtLeastVersion:version];
+        LogMessage([NSString stringWithFormat:@"Direct text rendering: %s", OK ? "YES" : "NO"]);
+    }
+
+    return OK;
+}
+
 int OL_StringImage(struct OutlawImage *img, const char* str, float size, int fontName, float maxw, float maxh)
 {
     // !!!!!
@@ -480,12 +540,13 @@ int OL_StringImage(struct OutlawImage *img, const char* str, float size, int fon
     // Regardless of the current monitor.
     // Higher res tex looks bad on lower res monitors, because the pixels don't line up
     // Apparently there is no way to tell it not to do that, but we can lie about the text size...
-    size *= OL_GetCurrentBackingScaleFactor() / getBackingScaleFactor();
+    // size *= OL_GetCurrentBackingScaleFactor() / getBackingScaleFactor();
+    size *= OL_GetCurrentBackingScaleFactor();
 
     NSFont* font = getFont(fontName, size);
     if (!font)
         return 0;
-    
+
     NSAttributedString* string = nil;
     NSMutableAttributedString *mstring = nil;
 
@@ -530,33 +591,43 @@ int OL_StringImage(struct OutlawImage *img, const char* str, float size, int fon
     frameSize.width = ceilf(frameSize.width);
     frameSize.height = ceilf(frameSize.height);
 
-    NSBitmapImageRep * bitmap = nil;
-    NSImage * image = [[[NSImage alloc] initWithSize:frameSize] autorelease];
+    frameSize.width = ((int)frameSize.width+1)&~1;
 
-	[image lockFocus];
+    int components = (mstring ? 4 : 2);
+
+
+
+    NSBitmapImageRep *bitmap = [[NSBitmapImageRep alloc] autorelease];
+
+    if (supports_draw_direct())
     {
-        CGContextRef ctx = [[NSGraphicsContext currentContext] graphicsPort];
-        CGContextSetShouldAntialias(ctx, YES);
-        // CContextSetShouldSmoothFonts(ctx, YES);
-        CGContextSetShouldSubpixelPositionFonts(ctx, YES);
-        CGContextSetShouldSubpixelQuantizeFonts(ctx, YES);
-        // const BOOL useAA = size >= 7.f;
-        // [[NSColor blackColor] setFill];
-        // [NSBezierPath fillRect:NSMakeRect(0, 0, frameSize.width, frameSize.height)];
-        @try {
-            [string drawAtPoint:NSMakePoint(0.5, 0.5)]; // draw at offset position
-            // [string drawAtPoint:NSMakePoint(0.0, 0.0)]; // draw at offset position
-        } @catch (NSException* exception) {
-            LogMessage([NSString stringWithFormat:@"Error drawing string '%s': %@", str, exception.description]);
-            LogMessage([NSString stringWithFormat:@"Stack trace: %@", [exception callStackSymbols]]);
+        bitmap = [bitmap initWithBitmapDataPlanes:NULL
+                                       pixelsWide:frameSize.width
+                                       pixelsHigh:frameSize.height
+                                    bitsPerSample:8
+                                  samplesPerPixel:components
+                                         hasAlpha:YES
+                                         isPlanar:NO
+                                   colorSpaceName:(components > 2) ? NSDeviceRGBColorSpace : NSDeviceWhiteColorSpace
+                                      bytesPerRow:components * frameSize.width
+                                     bitsPerPixel:components * 8];
+        NSGraphicsContext *bitmapCtx = [NSGraphicsContext graphicsContextWithBitmapImageRep:bitmap];
+        [NSGraphicsContext saveGraphicsState];
+        [NSGraphicsContext setCurrentContext:bitmapCtx];
+        if (!draw_text(bitmapCtx, string, str))
             return 0;
-        }
-        bitmap = [[[NSBitmapImageRep alloc] initWithFocusedViewRect:NSMakeRect(0.0f, 0.0f,
-                                                                               frameSize.width,
-                                                                               frameSize.height)]
-                     autorelease];
+        [NSGraphicsContext restoreGraphicsState];
     }
-	[image unlockFocus];
+    else
+    {
+        NSImage * image = [[[NSImage alloc] initWithSize:frameSize] autorelease];
+
+        [image lockFocus];
+        if (!draw_text([NSGraphicsContext currentContext], string, str))
+            return 0;
+        [bitmap initWithFocusedViewRect:NSMakeRect(0.0f, 0.0f, frameSize.width, frameSize.height)];
+        [image unlockFocus];
+    }
 
     img->width = [bitmap pixelsWide];
     img->height = [bitmap pixelsHigh];
@@ -610,10 +681,18 @@ void OL_ThreadEndIteration(void)
 
 FILE *g_logfile = nil;
 NSString *g_logpath = nil;
+typedef enum LogState { LOG_INIT, LOG_OPENING, LOG_OPEN, LOG_CLOSED } LogState;
+LogState g_logstate = LOG_CLOSED;
 
 int OL_IsLogOpen(void)
 {
     return g_logfile != nil;
+}
+
+void OL_OpenLog(void)
+{
+    if (g_logstate == LOG_CLOSED)
+        g_logstate = LOG_INIT;
 }
 
 void OL_ReportMessage(const char *str)
@@ -622,7 +701,9 @@ void OL_ReportMessage(const char *str)
     if (!str)
         __builtin_trap();
 #endif
-    if (!g_logfile) {
+    if (g_logstate != LOG_CLOSED && g_logstate != LOG_OPENING && !g_logfile)
+    {
+        g_logstate = LOG_OPENING;
         NSString *fname = pathForFileName(OLG_GetLogFileName(), "w");
         g_logpath = [fname retain];
         if (createParentDirectories(fname))
@@ -643,6 +724,7 @@ void OL_ReportMessage(const char *str)
                 NSLog(@"Error opening log at %@: %s", tildeFname, strerror(errno));
             }
         }
+        g_logstate = LOG_OPEN;
     }
     //NSLog(@"[DBG] %s\n", str);
     fprintf(stderr, "%s", str);
@@ -756,6 +838,11 @@ int OL_OpenWebBrowser(const char* url)
 {
     [[NSWorkspace sharedWorkspace] openURL: [NSURL URLWithString:[NSString stringWithUTF8String: url]]];
     return 1;
+}
+
+int OL_OpenFolder(const char* url)
+{
+    return OL_OpenWebBrowser(url);
 }
 
 const int OL_IsSandboxed(void)
@@ -907,6 +994,7 @@ void posix_oncrash(const char* msg)
 {
     if (!g_logpath || !g_logfile)
         return;
+    g_logstate = LOG_CLOSED;
     LogMessage([NSString stringWithFormat:@"%s", msg]);
     fclose(g_logfile);
     g_logfile = nil;

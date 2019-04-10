@@ -41,7 +41,6 @@ enum snDimension {
     SN_ANGLE     = 1<<2,
     SN_ANGVEL    = 1<<3,
     SN_TARGET_VEL = 1<<4,       // we don't care about our velocity, but we are passing in the target position velocity
-    SN_MISSILE_ANGLE = 1<<5,
     SN_VEL_ALLOW_ROTATION = 1<<6,
     SN_POS_ANGLE = 1<<7,
     SN_SNAPPY    = 1<<8,        // player parameters
@@ -123,7 +122,7 @@ struct sNav {
     mutable float rotInt = 0.f;
     
     // input/output
-	vector<snMover*> movers;
+    vector<snMover*> movers;
     float2           maxAccel;  // dependent on movers
     float            maxPosAngAccel = 0.f; // always positive
     float            maxNegAngAccel = 0.f; // always negative

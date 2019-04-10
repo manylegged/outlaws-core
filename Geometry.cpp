@@ -112,6 +112,19 @@ bool intersectPolyPoint(const float2 *points, int npoints, float2 ca)
     return true;
 }
 
+bool intersectPolyCircle(const float2 *points, int npoints, float2 ca, float r)
+{
+    if (intersectPolyPoint(points, npoints, ca))
+        return true;
+    
+    for (int i=0; i<npoints; i++)
+    {
+        if (intersectSegmentCircle(points[i], points[(i+1) % npoints], ca, r))
+            return true;
+    }
+    return true;
+}
+
 
 
 /*               Return a positive value if the point pd lies inside the     */
@@ -470,19 +483,31 @@ float snoise(vec2 v)
 
 bool mathRunTests()
 {
-    if (!IS_DEBUG)
-        return true;
+#if IS_DEBUG
     DASSERT(distanceRgb(0xff0000, 0xff0000) == 0.f);
     DASSERT(distanceRgb(0xff0000, 0x00ff00) > 0.7f);
     DASSERT(distanceRgb(0xff0000, 0xffffff) > 0.9f);
     DASSERT(distanceRgb(0xff0000, 0x000000) > 0.9f);
+
+    DASSERT(rgbf2rgb(f3(0, 0, 0)) == 0x000000);
+    DASSERT(rgbf2rgb(f3(0.5, 0.5, 0.5)) == 0x808080);
+    DASSERT(rgbf2rgb(f3(1, 1, 1)) == 0xffffff);
+    DASSERT(rgbf2rgb(f3(100, 100, 100)) == 0xffffff);
+
+    DASSERT(rgb2rgbf(0x0) == f3(0, 0, 0));
+    DASSERT(rgb2rgbf(0xffffff) == f3(1, 1, 1));
+
+    DASSERT(mult_hsv(0xffffff, f3(1, 1, 1)) == 0xffffff);
+    DASSERT(mult_hsv(0xffffff, f3(1, 1, 0.5)) == 0x808080);
+    DASSERT(mult_hsv(0xffffff, f3(1, 1, 0.0)) == 0x0);
+
 
     for (float x=-10.f; x<10.f; x += 0.1f)
     {
         DASSERT(floor_int(x) == (int) floor(x));
         DASSERT(ceil_int(x) == (int) ceil(x));
     }
-    
+#endif    
     return true;
 }
 

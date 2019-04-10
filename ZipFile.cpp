@@ -63,7 +63,7 @@ void ZF_ClearCached()
 {
     std::lock_guard<std::mutex> l(getZipMutex());
     ZipFileDir &zfd = getZipFileDir();
-    foreach (const ZipFileEntry &ze, zfd)
+    for_ (ze, zfd)
     {
         unzClose(ze.second.first);
         DPRINT(SAVE, ("close cashed %s (%d files)", ze.first.c_str(), (int)ze.second.second.size()));
@@ -187,6 +187,8 @@ string ZF_LoadFile(const char* path)
         }
         buf.resize(offset + read);
         gzclose(gzf);
+
+        DPRINT(SAVE, ("load gzip %s %d bytes", path, (int)buf.size()));
         return buf;
     }
     else if (str_endswith(path, ".gz"))
@@ -197,7 +199,9 @@ string ZF_LoadFile(const char* path)
     // 2. read uncompressed file
     string buf = ZF_LoadFileRaw(path);
     if (buf.size())
+    {
         return buf;
+    }
 
     if (!kReadZipFiles)
         return string();
@@ -246,6 +250,7 @@ string ZF_LoadFileRaw(const char *path)
     
     ASSERT(read == size);
     buf.resize(read);
+    DPRINT(SAVE, ("load raw %s %d bytes", path, (int)size));
     return buf;
 }
 
@@ -264,6 +269,7 @@ bool ZF_SaveFile(const char* path, const char* data, size_t size)
     if (!success) {
         ZF_Report("gzwrite wrote %d of %d bytes to '%s'", written, (int)size, path);
     }
+    DPRINT(SAVE, ("save gzip %s %d bytes", path, (int)size));
     return success;
 }
 
@@ -285,7 +291,9 @@ bool ZF_SaveFileRaw(const char* path, const char* data, size_t size)
 
     // translate newlines
 #if WIN32
-    if (str_endswith(fname, ".txt") || str_endswith(fname, ".lua"))
+    if (str_endswith(fname, ".txt") ||
+        str_endswith(fname, ".lua") ||
+        str_endswith(fname, ".json"))
     {
         string data1;
         data1.reserve(size);
@@ -331,6 +339,8 @@ bool ZF_SaveFileRaw(const char* path, const char* data, size_t size)
     }
 #endif
 
+    DPRINT(SAVE, ("save raw %s %d bytes", fname, (int)size));
+
     return 1;
 }
 
@@ -348,10 +358,10 @@ ZFDirMap ZF_LoadDirectory(const char* path, float* progress)
         int i=0;
         for (const char** ptr=files; *ptr; ptr++)
         {
-            const string fname = str_path_join(path, *ptr);
+            string fname = str_path_join(path, *ptr);
             string data = ZF_LoadFile(fname.c_str());
             if (data.size()) {
-                dir[fname] = std::move(data);
+                dir[std::move(fname)] = std::move(data);
             } else {
                 ZF_Report("Error loading '%s' from '%s'", *ptr, path);
             }
@@ -419,6 +429,7 @@ static string closeInflate(z_stream &stream, string&& str)
 string ZF_Compress(const char* data, size_t size)
 {
     z_stream stream;
+    memset(&stream, 0, sizeof(stream));
     int stat = 0;
     string dest;
 
@@ -444,6 +455,7 @@ string ZF_Decompress(const char* data, size_t size)
     if (!data || size == 0)
         return string();
     z_stream stream;
+    memset(&stream, 0, sizeof(stream));
     int stat = 0;
 
     // last dword is uncompressed size, but is only occasionally correct?

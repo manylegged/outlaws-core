@@ -96,6 +96,13 @@ struct GLScopeBlend {
     
 };
 
+inline bool GL_StateEquals(GLenum e, bool b)
+{
+    GLboolean bval = b;
+    glGetBooleanv(e, &bval);
+    return (bval == (GLboolean)b);
+}
+
 void deleteBufferInMainThread(GLuint buffer);
 
 // RAII for opengl buffers
@@ -153,12 +160,12 @@ public:
         glReportError();
     }
 
-    void BufferData(vector<Type> data, uint mode)
+    void BufferData(const vector<Type> &data, uint mode)
     {
         BufferData(data.size(), data.size() ? &data[0] : NULL, mode);
     }
 
-    void BufferData(uint size, Type* data, uint mode)
+    void BufferData(uint size, const Type* data, uint mode)
     {
         if (size == 0) {
             clear();
@@ -178,7 +185,7 @@ public:
         m_usage = mode;
     }
 
-    void BufferSubData(uint offset, uint size, Type* data)
+    void BufferSubData(uint offset, uint size, const Type* data)
     {
         ASSERT(m_id);
         ASSERT(offset + size <= m_size);
@@ -277,6 +284,7 @@ public:
     float2 tcoordmax() const { return m_size / m_texsize; }
     bool  empty() const { return m_texname == 0; } 
 
+    bool loadImage(OutlawImage *img);
     bool loadFile(const char* fname);
     bool writeFile(const char *fname) const;
 
@@ -313,18 +321,29 @@ public:
 
 const GLTexture &getDitherTex();
 
+inline void rotateAxisZ(glm::mat4 &m, float2 r)
+{
+    mat2 x = mat2(m) * mat2(r.x, r.y, -r.y, r.x);
+    m[0][0] = x[0][0];
+    m[0][1] = x[0][1];
+    m[1][0] = x[1][0];
+    m[1][1] = x[1][1];
+}
+
 
 // encapsulate the projection/modelview matrix and some related state
 struct ShaderState {
 
     glm::mat4            uTransform;
     uint                 uColor = 0xffffffff;
+    float                toPixels = 1.f;
+    float2               resolution = f2(1, 1);
 
     void translate(float2 t) { uTransform = glm::translate(uTransform, float3(t.x, t.y, 0)); }
     void translateZ(float z) { uTransform = glm::translate(uTransform, float3(0, 0, z)); }
     void translate(const float3 &t) { uTransform = glm::translate(uTransform, t); }
-    void rotate(float a)     { uTransform = glm::rotate(uTransform, a, float3(0, 0, 1)); }
-    void rotate(float2 rot)  { rotate(vectorToAngle(rot)); }
+    void rotate(float a)     { rotateAxisZ(uTransform, a2v(a)); }
+    void rotate(float2 rot)  { rotateAxisZ(uTransform, rot); }
     void scale(const float3 &s) { uTransform = glm::scale(uTransform, s); }
 
     void translateRotate(float2 t, float a)
@@ -333,8 +352,10 @@ struct ShaderState {
         rotate(a);
     }
 
+    void alpha(float v)                 { uColor = SetAlphaAXXX(uColor, v); }
     void color(uint c, float a=1)   { uColor = argb2abgr(0xff000000|c, a); }
     void color32(uint c, float a=1) { uColor = argb2abgr(c, a); }
+    
 
     void DrawElements(uint dt, size_t ic, const ushort* i) const;
     void DrawElements(uint dt, size_t ic, const uint* i) const;
@@ -522,9 +543,14 @@ private:
     GLuint m_programHandle = 0;
     GLint  u_transform     = -1;
     GLint  u_time          = -1;
+    GLint  u_toPixels      = -1;
+    GLint  u_resolution    = -1;
+    GLint  u_tex           = -1;
+    GLint  u_tex_res       = -1;
     GLint  a_position      = -1;
     string m_name;
-    
+
+    string m_texname;
     mutable vector<GLuint> m_enabledAttribs;
 
     static void vap1(uint slot, uint size, const float* ptr)  { glVertexAttribPointer(slot, 1, GL_FLOAT, GL_FALSE, size, ptr); }
@@ -568,6 +594,11 @@ protected:
         glReportError();
     }
 
+    void uniformColor(uint slot, uint color) const
+    {
+        float4 c = abgr2rgbaf(color);
+        glUniform4fv(slot, 1, &c[0]);
+    }
 
     template <typename V, typename T>
     void UseProgramBase(const ShaderState& ss, const V* ptr, const T* base) const
@@ -611,27 +642,103 @@ struct ShaderBase {
     
 };
 
+inline float2 translation2d(const mat3 &t) { return f2(t[2]); }
+inline float2 rotation2d(const mat3 &t) { return f2(t[0]); }
+inline float2 translation2d(const glm::mat4 &t) { return f2(t[3]); }
+inline float2 rotation2d(const glm::mat4 &t) { return f2(t[0]); }
+
+struct tf2d {
+    float2 pos;
+    float2 rot = f2(1, 0);
+
+    //SERIAL_ACCEPT(v) { return v.VISIT(pos) && v.VISIT_DEF(rot, f2(1.f, 0.f)); }
+    
+    tf2d() {}
+    tf2d(float px, float py, float rx, float ry) : pos(px, py), rot(rx, ry) {}
+    tf2d(f2 p, f2 r) : pos(p), rot(r) {}
+    tf2d(f2 p) : pos(p) {}
+    tf2d(const mat3 &m) : pos(translation2d(m)), rot(rotation2d(m)) {}
+    tf2d(float v) : rot(v, 0) {}
+    
+    explicit operator mat3() const
+    {
+        // rx -ry  px      00 10 20
+        // ry  rx  py      01 11 21
+        // 0   0   1       02 12 22
+        mat3 m(rot.x, rot.y, 0,
+               -rot.y, rot.x, 0,
+               pos.x, pos.y, 1);
+        return m;
+    }
+
+    tf2d &rotate(float2 r) { rot = ::rotate(rot, r); return *this; }
+    tf2d &rotate(float a) { rot = ::rotate(rot, a); return *this; }
+    tf2d &translate(float2 v) { pos += ::rotate(rot, v); return *this; }
+
+    tf2d rotated(float2 r) const { tf2d x=*this; return x.rotate(r); }
+    tf2d rotated(float a) const { tf2d x=*this; return x.rotate(a); }
+    tf2d translated(float2 v) const { tf2d x=*this; return x.translate(v); }
+
+    bool operator==(const tf2d &o) const { return pos == o.pos && rot == o.rot; }
+    
+    float2 operator*(float2 v) const
+    {
+        return ::rotate(rot, v) + pos;
+    }
+
+    float3 operator*(float3 v) const
+    {
+        return f3(rot.x * v.x - rot.y * v.y + pos.x * v.z,
+                  rot.y * v.x + rot.x * v.y + pos.y * v.z,
+                  v.z);
+    }
+
+    friend float2 transform(const tf2d &t, float2 v) { return t * v; }
+    friend float2 transform_vec(const tf2d &t, float2 v) { return ::rotate(t.rot, v); }
+    friend float2 translation(const tf2d &t) { return t.pos; }
+    friend float2 rotation(const tf2d &t) { return t.rot; }
+
+    friend tf2d inverse(const tf2d &t)
+    {
+        // rx -ry  px      00 10 20
+        // ry  rx  py      01 11 21
+        // 0   0   1       02 12 22
+
+        const float2 r = t.rot;
+        const float2 p = t.pos;
+        const float o_d = 1.f / (r.x * r.x + r.y * r.y);
+        return tf2d(+(-r.y * p.y - p.x * r.x) * o_d,
+                    -(+r.x * p.y - p.x * r.y) * o_d,
+                    r.x * o_d,
+                    -r.y * o_d);
+    }
+
+    tf2d &operator*=(const tf2d &t) { return (*this = (*this * t)); }
+    
+    tf2d operator*(const tf2d &t) const
+    {
+        return tf2d(rot.x * t.pos.x - rot.y * t.pos.y + pos.x,
+                    rot.y * t.pos.x + rot.x * t.pos.y + pos.y,
+                    rot.x * t.rot.x - rot.y * t.rot.y,
+                    rot.y * t.rot.x + rot.x * t.rot.y);
+    }
+};
+
 struct Transform2D {
 
-    glm::mat3 transform;
+    tf2d transform;
 
     Transform2D &translateRotate(float2 t, float a) { return translateRotate(t, angleToVector(a)); }
 
     Transform2D &translateRotate(float2 t, float2 rot)
     {
-        glm::mat3 m(rot.x, rot.y, 0,
-                    -rot.y, rot.x, 0,
-                    t.x, t.y, 1);
-        transform *=  m;
+        transform *= tf2d(t, rot);
         return *this;
     }
     
     Transform2D &translate(float2 t)
     {
-        glm::mat3 m(1, 0, 0,
-                    0, 1, 0,
-                    t.x , t.y, 1);
-        transform *= m;
+        transform.translate(t);
         return *this;
     }
 
@@ -639,43 +746,37 @@ struct Transform2D {
     
     Transform2D &rotate(float2 rot)
     {
-        glm::mat3 m(rot.x, rot.y, 0,
-                    -rot.y, rot.x, 0,
-                    0, 0, 1);
-        transform *=  m;
+        transform.rotate(rot);
         return *this;
     }
-
-    Transform2D &scale(float2 s)
-    {
-        glm::mat3 m(s.x, 0, 0,
-                    0, s.y, 0,
-                    0, 0,   1);
-        transform *= m;
-        return *this;
-    }
-
+    
 #ifdef CHIPMUNK_HEADER
     template <typename R>
     void apply(R &result, const cpVect &vec) const
     {
-        result.x += transform[0].x * vec.x + transform[1].x * vec.y + transform[2].x;
-        result.y += transform[0].y * vec.x + transform[1].y * vec.y + transform[2].y;
+        // result.x += transform[0].x * vec.x + transform[1].x * vec.y + transform[2].x;
+        // result.y += transform[0].y * vec.x + transform[1].y * vec.y + transform[2].y;
+        result.x += transform.rot.x * vec.x - transform.rot.y * vec.y + transform.pos.x;
+        result.y += transform.rot.y * vec.x + transform.rot.x * vec.y + transform.pos.y;
     }
 #endif
 
     template <typename R, typename T>
     void apply(R &result, const glm::tvec2<T> &vec) const
     {
-        result.x += transform[0].x * vec.x + transform[1].x * vec.y + transform[2].x;
-        result.y += transform[0].y * vec.x + transform[1].y * vec.y + transform[2].y;
+        // result.x += transform[0].x * vec.x + transform[1].x * vec.y + transform[2].x;
+        // result.y += transform[0].y * vec.x + transform[1].y * vec.y + transform[2].y;
+        result.x += transform.rot.x * vec.x - transform.rot.y * vec.y + transform.pos.x;
+        result.y += transform.rot.y * vec.x + transform.rot.x * vec.y + transform.pos.y;
     }
 
     template <typename R, typename T>
     void apply(R& result, const glm::tvec3<T> &vec) const
     {
-        result.x += transform[0].x * vec.x + transform[1].x * vec.y + transform[2].x;
-        result.y += transform[0].y * vec.x + transform[1].y * vec.y + transform[2].y;
+        // result.x += transform[0].x * vec.x + transform[1].x * vec.y + transform[2].x;
+        // result.y += transform[0].y * vec.x + transform[1].y * vec.y + transform[2].y;
+        result.x += transform.rot.x * vec.x - transform.rot.y * vec.y + transform.pos.x;
+        result.y += transform.rot.y * vec.x + transform.rot.x * vec.y + transform.pos.y;
         result.z += vec.z;
     }
 
@@ -715,7 +816,7 @@ const float2 &getCircleVertOffset(uint idx)
     {
         for (uint i=0; i<Verts; i++)
         {
-            const float angle = (float) i * (M_TAOf / (float) Verts);
+            const float angle = (float) i * (M_TAUf / (float) Verts);
             offsets[i] = angleToVector(angle);
         }
         initialized = true;
@@ -725,7 +826,7 @@ const float2 &getCircleVertOffset(uint idx)
 
 inline float2 getCircleVertOffset(uint idx, uint verts)
 {
-    const float angle = (float) idx * (M_TAOf / (float) verts);
+    const float angle = (float) idx * (M_TAUf / (float) verts);
     return angleToVector(angle);
 }
 
@@ -751,7 +852,7 @@ public:
         
         Mesh &p;
         V    curVert;
-        mat3   transform;
+        tf2d   transform;
 
         scope(Mesh &p_) : p(p_), curVert(p_.m_curVert), transform(p_.transform) {}
         ~scope()
@@ -770,7 +871,7 @@ public:
     void clear()
     {
         m_vl.clear();
-        transform = glm::mat3();
+        transform = tf2d();
         m_curVert.pos.z = 0.f;
         //m_curVert.color = 0xffffffff;
     }
@@ -780,6 +881,7 @@ public:
     bool BuffersEmpty() const { return m_vbo.empty(); }
 
     V& cur() { return m_curVert; }
+    void alpha(float a)                 { m_curVert.color = SetAlphaAXXX(m_curVert.color, a); }
     void color(uint c, float a=1)   { m_curVert.color = argb2abgr(c|0xff000000, a); }
     void color32(uint c, float a=1) { m_curVert.color = argb2abgr(c, a); }
 
@@ -790,6 +892,7 @@ public:
         m_curVert.pos.z += z;
     }
 
+    std::vector<V> &verts() { return m_vl; }
     V& getVertex(uint idx) { return m_vl[idx]; }
     uint getVertexCount() const { return m_vl.size(); }
 
@@ -1086,9 +1189,9 @@ public:
             program.UnuseProgram();
             this->m_vbo.Unbind();
         }
-        else if (!this->m_vl.empty())
+        else if (!this->m_vl.empty() && !m_il.empty())
         {
-            ASSERT(m_il.size() > 1);
+            //ASSERT(m_il.size() > 1);
             
             program.UseProgram(s, &this->m_vl[0], (V*)NULL);
             s.DrawElements(type, m_il.size(), &m_il[0]);
@@ -1242,7 +1345,8 @@ struct LineMesh : public PrimMesh<V, 2> {
     }
 
     // widthRadians is on either side of angleStart
-    void PushArc(float2 pos, float radius, float angleStart, float widthRadians, uint numVerts=32)
+    void PushArc(float2 pos, float radius, float angleStart, float widthRadians,
+                 uint numVerts=32, bool edges=false)
     {
         ASSERT(numVerts >= 3);
 
@@ -1250,15 +1354,19 @@ struct LineMesh : public PrimMesh<V, 2> {
         const float2 rot    = angleToVector(2.f * widthRadians / (float) (numVerts-1));
         float2       offset = radius * angleToVector(angleStart - widthRadians);
 
+        if (edges)
+            this->PushV1(pos);
+
         for (uint i=0; i < numVerts; ++i)
         {
             const uint j = this->PushV1(pos + offset);
             offset = ::rotate(offset, rot);
-            if (j > start) {
-                this->m_il.push_back(j-1);
-                this->m_il.push_back(j);
-            }
+            if (j > start)
+                this->PushI2(j-1, j);
         }
+
+        if (edges)
+            this->PushI2(start + numVerts, start);
     }
 
     uint PushCircle(float radius, uint numVerts=32)
@@ -1370,7 +1478,7 @@ struct LineMesh : public PrimMesh<V, 2> {
 
     void PushPointTri(float2 pos, float angle, float offset, float2 sz)
     {
-        glm::mat3 trans = this->transform;
+        tf2d trans = this->transform;
         this->translateRotate(pos, angle);
         this->translate(float2(offset, 0.f));
         PushTri(float2(sz.x, 0.f), flipX(sz), -sz);
@@ -1510,12 +1618,33 @@ struct TriMesh : public PrimMesh<V, 3> {
 
         uint        start  = this->m_vl.size();
         float2       offset = justX(radius);
-        const float2 rot    = angleToVector(M_TAOf / (float) numVerts);
+        const float2 rot    = angleToVector(M_TAUf / (float) numVerts);
 
         for (uint i=0; i < numVerts; ++i)
         {
             const uint j = this->PushV1(pos + offset);
             offset = ::rotate(offset, rot);
+
+            if (j - start > 1)
+            {
+                this->m_il.push_back(start);
+                this->m_il.push_back(j-1);
+                this->m_il.push_back(j);
+            }
+        }
+        return start;
+    }
+
+    uint PushEllipse(float2 pos, float2 radius, uint numVerts=32, float startAngle = 0.f)
+    {
+        ASSERT(numVerts >= 3);
+
+        uint start = this->m_vl.size();
+
+        for (uint i=0; i < numVerts; ++i)
+        {
+            const float2 p = pos + radius * a2v(M_TAUf * i / numVerts + startAngle);
+            const uint j = this->PushV1(p);
 
             if (j - start > 1)
             {
@@ -1553,7 +1682,7 @@ struct TriMesh : public PrimMesh<V, 3> {
         ASSERT(numVerts >= 3);
 
         const uint    start  = this->PushV1(pos);
-        const float2 rot    = angleToVector(M_TAOf / (float) numVerts);
+        const float2 rot    = angleToVector(M_TAUf / (float) numVerts);
         float2       offset = justX(radius);
 
         for (uint i=0; i < numVerts; ++i)
@@ -1721,7 +1850,7 @@ inline DMesh& theDMesh()
     return mesh;
 }
 
-enum ButtonStyle { S_BOX=1, S_CORNERS=2, S_FIXED=4, S_OVAL=8, S_3D=16 };
+enum ButtonStyle { S_BOX=1, S_CORNERS=2, S_FIXED=4, S_OVAL=8, S_3D=16, S_HEX=32 };
 
 void PushButton(TriMesh<VertexPosColor>* triP, LineMesh<VertexPosColor>* lineP, float2 pos, float2 r, 
                 uint bgColor, uint fgColor, float alpha);
@@ -1732,6 +1861,9 @@ void DrawButton(const ShaderState *data, float2 pos, float2 r, uint bgColor, uin
 
 void PushRect(TriMesh<VertexPosColor>* triP, LineMesh<VertexPosColor>* lineP, float2 pos, float2 r, uint bgColor, uint fgColor, float alpha);
 void DrawFilledRect(const ShaderState &data, float2 pos, float2 r, uint bgColor, uint fgColor, float alpha=1);
+
+void PushHex(TriMesh<VertexPosColor>* triP, LineMesh<VertexPosColor>* lineP, float2 pos, float2 r,
+             uint bgColor, uint fgColor, float alpha);
 
 void fadeFullScreen(const View& view, uint color);
 void sexyFillScreen(const ShaderState &ss, const View& view, uint color, uint color1);

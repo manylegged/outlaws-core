@@ -84,6 +84,14 @@ typedef unsigned short ushort;
 #undef MOD_SHIFT
 #endif
 
+#ifdef ABSOLUTE
+#undef ABSOLUTE
+#endif
+
+#ifdef RELATIVE
+#undef RELATIVE
+#endif
+
 std::wstring s2ws(const std::string& s);
 std::string ws2s(const std::wstring& wstr);
 void ReportWin32Err1(const char *msg, DWORD dwLastError, const char* file, int line);

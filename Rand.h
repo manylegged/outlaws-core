@@ -49,7 +49,7 @@ inline T randrange()
 // return a random number from [start-end)
 inline int randrange(int start, int end)
 {
-    ASSERT(start <= end);
+    // ASSERT(start <= end);
     if (start >= end-1)
         return start;
     std::uniform_int_distribution<int> uniform_dist(start, end-1);
@@ -106,9 +106,11 @@ typename Vec::value_type randselect_pop(Vec& vec)
 
 inline float randrange(float start, float end)
 {
-    ASSERT(start <= end);
+    // ASSERT(start <= end);
     if (start == end)
         return start;
+    if (start > end)
+        swap(start, end);
     std::uniform_real_distribution<float> uniform_dist(start, end);
     float result = uniform_dist(*my_random_device());
     DEBUG_RAND(("[%s] randrange(%g, %g) %g", thread_current_name(), start, end, result));
@@ -126,7 +128,7 @@ inline float3 randrange(float3 start, float3 end)
 }
 
 inline float randnorm() { return randrange(0.f, 1.f); }
-inline float randangle() { return randrange(0.f, M_TAOf); }
+inline float randangle() { return randrange(0.f, M_TAUf); }
 inline float2 randpolar(float minradius, float maxradius)
 {
     return randrange(minradius, maxradius) * angleToVector(randangle());

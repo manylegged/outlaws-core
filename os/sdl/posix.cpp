@@ -180,7 +180,7 @@ void posix_print_stacktrace()
 static void posix_signal_handler(int sig, siginfo_t *siginfo, void *context)
 {
     if (g_signaldepth == 0)
-        OLG_OnTerminate();
+        OLG_OnTerminate("signal");
 
     g_signaldepth++;
     if (g_signaldepth > 2)
@@ -202,7 +202,13 @@ static void posix_signal_handler(int sig, siginfo_t *siginfo, void *context)
 
     const ucontext_t *ctx = (ucontext_t*)context;
     const mcontext_t &mcontext = ctx->uc_mcontext;
+    string mmsg;
 
+#if __arm__
+
+    mmsg = str_format("ERR: %#lx, Addr: %#lx", mcontext.error_code, mcontext.fault_address);
+#else
+    
     if (sig == SIGILL || sig == SIGFPE || sig == SIGSEGV || sig == SIGBUS || sig == SIGTRAP)
     {
 #if __APPLE__
@@ -215,7 +221,6 @@ static void posix_signal_handler(int sig, siginfo_t *siginfo, void *context)
         message += msg0 + "\n";
     }
 
-    string mmsg;
 #if __APPLE__
 #ifdef __LP64__
     mmsg = str_format("PC/RIP: %#llx SP/RSP: %#llx, FP/RBP: %#llx",
@@ -231,6 +236,7 @@ static void posix_signal_handler(int sig, siginfo_t *siginfo, void *context)
 #else
     mmsg = str_format("PC/EIP: %#x SP/ESP: %#x, FP/EBP: %#x",
                       mcontext.gregs[REG_EIP], mcontext.gregs[REG_ESP], mcontext.gregs[REG_EBP]);
+#endif
 #endif
 #endif
     ReportPOSIX(mmsg);
@@ -302,7 +308,7 @@ void OL_Terminate(const char* message)
 {
     if (!OLG_EnableCrashHandler())
         return;
-    if (!OLG_OnTerminate())
+    if (!OLG_OnTerminate(message))
         return;
 
     posix_print_stacktrace();

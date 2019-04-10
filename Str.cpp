@@ -33,6 +33,8 @@
 #include <iomanip>
 #include <sstream>
 
+#include "base64.c"
+
 namespace std {
     // template class basic_string<char>;
     // template class vector<string>;
@@ -293,7 +295,8 @@ static int utf32_charwidth(uint chr)
             (0xAC00 <= chr && chr <= 0xD7FF) || // hangul extended
             (0x2E00 <= chr && chr <= 0x9FFF) || // hirigana, katakana, kanji, etc.
             (0xFF00 < chr && chr <= 0xFF60))    // fullwidth latin
-            ? 2 : 1;    
+            ? 2 :
+        (chr == '\n' || chr == '\0') ? 0 : 1;
 }
 
 template <typename C>
@@ -339,6 +342,62 @@ size_t utf8_width(const string &str, size_t pos, size_t len)
     }
     return chars;
 }
+
+
+lstring::Lexicon & lstring::Lexicon::instance()
+{
+    static Lexicon *self = new Lexicon;
+    return *self;
+}
+
+void lstring::lexicon_destroy()
+{
+    Lexicon &self = Lexicon::instance();
+
+    for_ (it, self.strings)
+        free((char*)it);
+    self.strings.clear();
+}
+
+size_t lstring::lexicon_bytes()
+{
+    size_t sz = sizeof(Lexicon) + Lexicon::instance().strings.size() * sizeof(std::string);
+    for_ (it, Lexicon::instance().strings)
+        sz += str_len(it) + 1;
+    return sz;
+}
+
+
+const char* lstring::Lexicon::intern(const char* ptr)
+{
+    if (!ptr || ptr[0] == '\0')
+        return NULL;
+    Lexicon &self = instance();
+    std::lock_guard<std::mutex> l(self.mutex);
+    auto it = self.strings.find(ptr);
+    if (it == self.strings.end())
+    {
+        const int len = strlen(ptr) + 1;
+        char *dat = (char*)malloc((len+3)&~3);
+        memcpy(dat, ptr, len);
+            
+        it = self.strings.insert(dat).first;
+    }
+    return *it;
+}
+
+size_t str_hash(const char* str)
+{
+    int len = str_len(str);
+    int len4 = len / sizeof(uint);
+    size_t hash = len;
+    for (int i=0; i<len4; i++)
+        hash = hash_combine(hash, ((uint*)str)[i]);
+    for (int i=len4 * sizeof(uint); i<len; i++)
+        hash = hash_combine(hash, str[i]);
+    return hash;
+}
+
 
 std::string str_format(const char *format, ...)
 {
@@ -451,6 +510,9 @@ static bool is_wrap(uint32_t it, const str_wrap_options_t &ops)
         return it == '\0' || (it <= 255 && str_contains(ops.wrap, (char)it)) ;
     if (str_isspace(it))
         return true;
+    // wrap after any cjk character
+    if (utf32_charwidth(it) == 2)
+        return true;
     switch (it)
     {
     case '|': case '_': case '.': case '?': case '!':
@@ -465,10 +527,11 @@ static bool is_wrap(uint32_t it, const str_wrap_options_t &ops)
 
 std::string str_word_wrap(const std::string &utf8, const str_wrap_options_t &ops)
 {
-    const size_t nlsize = strlen(ops.newline)-1;
+    const size_t nlsize = utf8_width(ops.newline);
 
     const ustring str = utf8_decode(utf8);
     std::string ret;
+    ret.reserve(utf8.size());
     int line_length = 0;
     std::string word;
     for (int i=0; i<=str.size(); i++)
@@ -482,6 +545,8 @@ std::string str_word_wrap(const std::string &utf8, const str_wrap_options_t &ops
                 // eat spaces at end of line
                 while (ret.size() && ret.back() == ' ')
                     ret.pop_back();
+                if (chr == '\0' && word.empty())
+                    break;
                 ret += ops.newline;
                 line_length = nlsize;
             }
@@ -501,8 +566,8 @@ std::string str_word_wrap(const std::string &utf8, const str_wrap_options_t &ops
             if (chr == '\n')
                 line_length = 0;
             else
-                line_length += word_len + 1;
-            word = string();
+                line_length += word_len + utf32_charwidth(chr);
+            word.clear();
         }
         else
         {
@@ -543,6 +608,7 @@ std::string str_align(const std::string& utf8, char token)
         return utf8;
 
     std::string str;
+    str.reserve(utf8.size());
     lineStart = 0;
     tokensInLine = 0;
     
@@ -588,7 +654,7 @@ std::string str_urldecode(const std::string &value)
 {
     std::string ret;
 
-    char seq[3] = {};
+    char seq[4] = {};
     int in_seq = 0;
     
     for (int i=0; i<value.size(); i++)
@@ -598,6 +664,7 @@ std::string str_urldecode(const std::string &value)
             seq[in_seq++ - 1] = c;
             if (in_seq == 3) {
                 in_seq = 0;
+                seq[3] = '\0';
                 long num = strtol(seq, NULL, 16);
                 if (num && num < 0xF7)
                     ret += num;
@@ -687,6 +754,7 @@ std::string str_strftime(const char* fmt)
     return str_strftime(fmt, std::localtime(&now));
 }
 
+#ifdef BUILDING_REASSEMBLY
 std::string str_numeral_format(int num)
 {
     if (!str_equals(OLG_GetLanguage(), "en") || abs(num) >= 100)
@@ -710,23 +778,39 @@ std::string str_numeral_format(int num)
     return ret;
 }
 
+const char* lang_space()
+{
+    const char* lang = OLG_GetLanguage();
+    return (str_startswith(lang, "zh") || str_startswith(lang, "ja")) ? "" : " ";
+}
 
-std::string lang_concat_adj(const string &adj, const string &noun)
+void lang_append_space(string &str)
+{
+    const char* lang = OLG_GetLanguage();
+    if (str_startswith(lang, "zh") || str_startswith(lang, "ja"))
+        return;
+    str += ' ';
+}
+
+std::string lang_concat_adj(const string &adj, const char* noun)
 {
     if (adj.empty())
         return noun;
     const char* lang = OLG_GetLanguage();
+    int suffix = str_len(noun);
     if (str_startswith(lang, "pt") ||
         str_startswith(lang, "es"))
     {
-        int suffix = noun.size();
         while (suffix > 0 && (str_isspace(noun[suffix-1]) || str_ispunct(noun[suffix-1])))
             suffix--;
-        return noun.substr(0, suffix) + " " + str_strip(adj) + noun.substr(suffix);
+        return str_substr(noun, 0, suffix) + " " + str_strip(adj) + str_substr(noun, suffix);
     }
     else
     {
-        return str_strip(adj) + " " + noun;
+        string str = str_strip(adj);
+        lang_append_space(str);
+        str += noun;
+        return str;
     }
 }
 
@@ -740,6 +824,7 @@ std::string lang_plural(const string &noun)
     // just use singular
     return noun;
 }
+#endif
 
 std::string lang_colon(const std::string &a, const std::string &b) { return a + _(": ") + b; }
 std::string lang_colon(const char *a, const std::string &b) { return a + (_(": ") + b); }
@@ -847,6 +932,8 @@ string str_path_sanitize(string path)
 
 std::string str_dirname(const std::string &str)
 {
+    if (str.empty())
+        return ".";
     size_t end = str.size()-1;
     while (end > 0 && strchr("/\\", str[end]))
         end--;
@@ -859,6 +946,8 @@ std::string str_dirname(const std::string &str)
 
 std::string str_basename(const std::string &str)
 {
+    if (str.empty())
+        return str;
     size_t end = str.size()-1;
     while (end > 0 && strchr("/\\", str[end]))
         end--;
@@ -889,8 +978,32 @@ string str_tohex(const char* digest, int size)
     return result;
 }
 
+std::string str_b64encode(const char* digest, int size)
+{
+    size_t out_len = 0;
+    char* buf = (char*) base64_encode((const unsigned char*)digest, size, &out_len);
+    if (!buf)
+        return string();
+    std::string ret = std::string(buf, out_len);
+    free(buf);
+    return ret;
+}
+
+std::string str_b64decode(const char* digest, int size)
+{
+    size_t out_len = 0;
+    char* buf = (char*) base64_decode((const unsigned char*)digest, size, &out_len);
+    if (!buf)
+        return string();
+    std::string ret = std::string(buf, out_len);
+    free(buf);
+    return ret;
+}
+
 std::string str_capitalize(std::string s)
 {
+    if (s.empty())
+        return s;
     s[0] = toupper(s[0]);
     for (int i=1; i<s.size(); i++) {
         if (str_contains(" \n\t_-", s[i-1]))
@@ -903,12 +1016,13 @@ std::string str_capitalize(std::string s)
 
 std::string str_capitalize_first(std::string s)
 {
-    s[0] = toupper(s[0]);
+    if (!s.empty())
+        s[0] = toupper(s[0]);
     return s;
 }
 
 
-#define TEST(A, B) ASSERTF(A == B, "\n%s\n!=\n%s", str_tocstr(A), str_tocstr(B))
+#define TEST(A, B) ASSERTF(A == B, "\n%s\n!=\n%s", str_tostr(A).c_str(), str_tostr(B).c_str())
 
 bool str_runtests()
 {
@@ -940,7 +1054,7 @@ bool str_runtests()
     TEST(str_path_join("foo/", "bar"), "foo/bar");
     TEST(str_path_join("foo/", "/bar"), "/bar");
     TEST(str_path_join("foo/", (const char*)NULL), "foo/");
-    TEST(str_path_join("foo/", ""), "foo/");
+    //TEST(str_path_join("foo/", ""), "foo/");
     TEST(str_path_join("", "foo/"), "foo/");
     TEST(str_path_join("/home/foo", "bar"), "/home/foo/bar");
     TEST(str_path_join("/home/foo", "bar", "/baz"), "/baz");
@@ -965,6 +1079,7 @@ bool str_runtests()
     // TEST(str_numeral_format(-1), "negative one");
 
     TEST(utf8_width("foo"), 3);
+    TEST(utf8_width("foo\n"), 3);
     TEST(utf8_width("NS-윤지"), 7);
     TEST(utf8_width("これか"), 6);
     TEST(utf8_width("чтобы"), 5);
@@ -992,7 +1107,8 @@ bool str_runtests()
     TEST(str_word_wrap("чтобы применить дополнительное оружие", 22),
          "чтобы применить\n"
          "дополнительное оружие");
-    TEST(str_word_wrap("스텔라 - 마리오네트", 16), "스텔라 -\n마리오네트");
+
+    // TEST(str_word_wrap("스텔라 - 마리오네트", 16), "스텔라 -\n마리오네트");
     
     str_wrap_options_t ops;
     ops.rewrap = true;
@@ -1000,9 +1116,11 @@ bool str_runtests()
     TEST(str_word_wrap("foo\n\nbar", ops), "foo\n\nbar");
     ops.width = 4;
     TEST(str_word_wrap("foo\nbar", ops), "foo\nbar");
+    TEST(str_word_wrap("使用虫洞可上传你的舰队且不改变世界", ops),
+         "使用\n虫洞\n可上\n传你\n的舰\n队且\n不改\n变世\n界");
     ops.width = 16;
-    TEST(str_word_wrap("で入手します。敵艦を破壊、仲間のスポ", ops),
-         "で入手します。\n敵艦を破壊、\n仲間のスポ");
+    // TEST(str_word_wrap("で入手します。敵艦を破壊、仲間のスポ", ops),
+         // "で入手します。\n敵艦を破壊、\n仲間のスポ");
 
     str_wrap_options_t ops1;
     ops1.wrap = ",";
@@ -1024,6 +1142,12 @@ bool str_runtests()
     TEST(str_chomp(" foo  "), " foo");
     string foo = " foo  ";
     TEST(str_chomp(std::move(foo)), " foo");
+
+    const string str = "使用虫洞可上传你的舰队且不改变世界чтобы применить дополнительное оружие" +
+                       string(url) +
+                       __FILE__;
+    
+    TEST( str_b64decode( str_b64encode(str) ), str );
     
     Report("Ending String Tests");
 #endif
@@ -1031,15 +1155,14 @@ bool str_runtests()
 }
 
 #if _MSC_VER
-
-#if __clang__
-#define cpuid(OUT, LEVEL) memset(OUT, 0, sizeof(OUT))
+#  if __clang__
+#    define cpuid(OUT, LEVEL) memset(OUT, 0, sizeof(OUT))
 typedef unsigned int regtype_t;
-#else
-#include <intrin.h>
-#define cpuid(OUT, LEVEL) __cpuid(OUT, LEVEL)
+#  else
+#  include <intrin.h>
+#  define cpuid(OUT, LEVEL) __cpuid(OUT, LEVEL)
 typedef int regtype_t;
-#endif
+#  endif
 
 std::string str_demangle(string name)
 {
@@ -1054,47 +1177,41 @@ std::string str_demangle(const char *str)
     return str_demangle(string(str));
 }
 
+std::string str_cpuid()
+{
+    regtype_t CPUInfo[4] = {};
+    char CPUBrandString[0x40] = {};
+    // Get the information associated with each extended ID.
+    cpuid(CPUInfo, 0x80000000);
+    unsigned nExIds = CPUInfo[0];
+    for (unsigned i=0x80000000; i<=nExIds; ++i)
+    {
+        cpuid(CPUInfo, i);
+        // Interpret CPU brand string
+        if  (i == 0x80000002)
+            memcpy(CPUBrandString, CPUInfo, sizeof(CPUInfo));
+        else if  (i == 0x80000003)
+            memcpy(CPUBrandString + 16, CPUInfo, sizeof(CPUInfo));
+        else if  (i == 0x80000004)
+            memcpy(CPUBrandString + 32, CPUInfo, sizeof(CPUInfo));
+    }
+    return str_strip(CPUBrandString);
+}
+
 #else
 
-#include <cxxabi.h>
-#include <cpuid.h>
+#  include <cxxabi.h>
+
+#  if __arm__
+std::string str_cpuid()
+{
+    return "ARM";
+}
+
+#  else
+#    include <cpuid.h>
 typedef unsigned int regtype_t;
-#define cpuid(OUT, LEVEL) __get_cpuid(LEVEL, &(OUT)[0], &(OUT)[1], &(OUT)[2], &(OUT)[3])
-
-std::string str_demangle(const char *str)
-{
-    int status;
-    char* result = abi::__cxa_demangle(str, NULL, NULL, &status);
-    ASSERTF(status == 0 || status == -2, "__cxa_demangle:%d: %s", status,
-            ((status == -1) ? "memory allocation failed" :
-             (status == -2) ? "input not valid name under C++ ABI mangling rules" :
-             (status == -3) ? "invalid argument" : "unexpected error code"));
-    if (status != 0 || !result)
-        return str;
-    string name = result;
-    free(result);
-    name = str_replace(name, "std::__1::", "std::");
-    name = str_replace(name, "unsigned long long", "uint64");
-    name = str_replace(name, "unsigned int", "uint");
-    name = str_replace(name, "basic_string<char, std::char_traits<char>, std::allocator<char> >", "string");
-#if __APPLE__
-    name = str_replace(name, "glm::detail::tvec2<float, (glm::precision)0>", "float2");
-    name = str_replace(name, "glm::detail::tvec3<float, (glm::precision)0>", "float3");
-    name = str_replace(name, "glm::detail::tvec2<int, (glm::precision)0>", "int2");
-    name = str_replace(name, "glm::detail::tvec3<int, (glm::precision)0>", "int3");
-#else
-    name = str_replace(name, "glm::detail::tvec2<float,0>", "float2");
-    name = str_replace(name, "glm::detail::tvec3<float,0>", "float3");
-#endif
-    return name;
-}
-
-std::string str_demangle(string name)
-{
-    return str_demangle(name.c_str());
-}
-
-#endif
+#    define cpuid(OUT, LEVEL) __get_cpuid(LEVEL, &(OUT)[0], &(OUT)[1], &(OUT)[2], &(OUT)[3])
 
 std::string str_cpuid()
 {
@@ -1126,3 +1243,39 @@ const char* str_cpuid_(void)
     return s.c_str();
 }
 
+#  endif
+
+std::string str_demangle(const char *str)
+{
+    int status;
+    char* result = abi::__cxa_demangle(str, NULL, NULL, &status);
+    ASSERTF(status == 0 || status == -2, "__cxa_demangle:%d: %s", status,
+            ((status == -1) ? "memory allocation failed" :
+             (status == -2) ? "input not valid name under C++ ABI mangling rules" :
+             (status == -3) ? "invalid argument" : "unexpected error code"));
+    if (status != 0 || !result)
+        return str;
+    string name = result;
+    free(result);
+    name = str_replace(name, "std::__1::", "std::");
+    name = str_replace(name, "unsigned long long", "uint64");
+    name = str_replace(name, "unsigned int", "uint");
+    name = str_replace(name, "basic_string<char, std::char_traits<char>, std::allocator<char> >", "string");
+#  if __APPLE__
+    name = str_replace(name, "glm::detail::tvec2<float, (glm::precision)0>", "float2");
+    name = str_replace(name, "glm::detail::tvec3<float, (glm::precision)0>", "float3");
+    name = str_replace(name, "glm::detail::tvec2<int, (glm::precision)0>", "int2");
+    name = str_replace(name, "glm::detail::tvec3<int, (glm::precision)0>", "int3");
+#  else
+    name = str_replace(name, "glm::detail::tvec2<float,0>", "float2");
+    name = str_replace(name, "glm::detail::tvec3<float,0>", "float3");
+#  endif
+    return name;
+}
+
+std::string str_demangle(string name)
+{
+    return str_demangle(name.c_str());
+}
+
+#endif

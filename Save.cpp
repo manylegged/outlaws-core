@@ -3,31 +3,24 @@
 #include "Steam.h"
 
 #include "Save.h"
+#include "Symbol.h"
 
 static DEFINE_CVAR(bool, kSteamCloudEnable, true);
-static DEFINE_CVAR(int, kParserMaxWarnings, 50);
+DEFINE_CVAR(int, kParserMaxWarnings, 50);
 
 static vector<string> s_early_msgs;
 
-void ReportEarly(const string &msg)
+void ReportEarly(string msg)
 {
     if (OL_IsLogOpen())
     {
         ReportFlush();
-        Report(msg);
+        Report(std::move(msg));
     }
     else
     {
-        s_early_msgs.push_back(msg);
+        s_early_msgs.push_back(std::move(msg));
     }
-}
-
-void ReportEarlyf(const char* fmt, ...)
-{
-    va_list vl;
-    va_start(vl, fmt);
-    ReportEarly(str_vformat(fmt, vl));
-    va_end(vl);
 }
 
 void ReportFlush()
@@ -46,6 +39,7 @@ string TypeSerializer::cleanupType(string type)
     type = str_replace(type, " const", "");
     return type;
 }
+
 
 SaveParser::SaveParser() { }
 SaveParser::~SaveParser() { }
@@ -75,9 +69,11 @@ bool SaveParser::loadData(const char* dta, const string &fn)
     return data != NULL;
 }
 
+static const char* kExtensions[] = {".lua", ".lua.gz", ".lisp", ".lisp.gz", ".txt", ".json", ".json.gz"};
+
 bool SaveParser::loadFile(const string& fname_)
 {
-    if (!str_endswith(fname_, ".lua") && !str_endswith(fname_, ".lua.gz") && !str_endswith(fname_, ".txt"))
+    if (!vec_any(kExtensions, [&](const char* ex) { return str_endswith(fname_, ex); }))
         return false;
     buffer = LoadFile(fname_);
     fname = fname_;
@@ -108,7 +104,7 @@ SaveSerializer& SaveSerializer::instance()
 SaveSerializer& SaveSerializer::setFlag(Flags flag, bool val)
 {
     setBits(flags, (ushort)flag, val);
-    if (flags&FORMAT_DISPLAY)
+    if (flags&HUMAN)
         indent = -1;
     return *this;
 }
@@ -116,22 +112,9 @@ SaveSerializer& SaveSerializer::setFlag(Flags flag, bool val)
 SaveSerializer& SaveSerializer::setColumnWidth(int v)
 {
     if (v < 0)
-        setFlag(FORMAT_NONE, true);
+        setFlag(COMPACT, true);
     else
         columnWidth = v;
-    return *this;
-}
-
-SaveSerializer& SaveSerializer::serializeGlobal(const IAcceptor *val)
-{
-    if (globals.count(val))     // already written
-        return *this;
-    const string& name = val->value_name();
-    insertName(name.c_str());
-    insertTokens(" = ");
-    serialize(val);
-    insertToken('\n');
-    globals.insert(val);
     return *this;
 }
 
@@ -142,41 +125,6 @@ float SaveSerializer::prepare(float f) const
         return 0.f;
     return f;
 }
-
-void SaveSerializer::serialize(const IAcceptor *ia)
-{
-    visitIndex = -1;
-    if (globals.count(ia)) {
-        insertName(ia->value_name().c_str());
-    } else {
-        const char* type = ia->type_name();
-        o += type;
-        serializeVisitable(ia);
-    }
-}
-
-bool SaveParser::parseGlobals()
-{
-    string ident;
-    while (1)
-    {
-        const char* save = data;
-        if (!parseIdent(&ident))
-            return true;
-        if (!parseToken('=')) {
-            data = save;        // back up
-            return true;
-        }
-        
-        IAcceptor *val = NULL;
-        PARSE_FAIL_UNLESS(parse(&val), "while parsing global '%s'", ident.c_str());
-        //const string name = val->value_name();
-        //PARSE_FAIL_UNLESS(ident == name, "name mismatch '%s' = '%s'", ident.c_str(), name.c_str());
-        globals[ident] = val;
-    }
-    return true;
-}
-
 
 #define BINARY_UINT_MARKER '%'
 #define BINARY_UINT64_MARKER '$'
@@ -207,7 +155,7 @@ void SaveSerializer::serialize(uint i)
     }
     else
     {
-        str_append_format(o, (i > 100000 ? "%#x" : "%d"), i);
+        str_append_format(o, (i > 100000 ? ((flags&JSON) ? "\"#%x\"" : "%#x") : "%d"), i);
     }
 }
 
@@ -231,32 +179,30 @@ void SaveSerializer::serialize(uint64 i)
 
 void SaveSerializer::serialize(float f)
 {
-    if (flags&FORMAT_DISPLAY) {
+    if (flags&HUMAN) {
         str_append_format(o, "%.2f", f);
     } else {
         str_append_format(o, "%.3f", prepare(f));
+        while (o.back() == '0')
+            o.pop_back();
+        if (o.back() == '.')
+            o.pop_back();
     }
-    while (o.back() == '0')
-        o.pop_back();
-    if (o.back() == '.')
-        o.pop_back();
 }
 
-
-bool SaveSerializer::isIdent(const char* s)
+void SaveSerializer::indent1()
 {
-    if (!str_issym(*s)) {
-        return false;
-    }
-    while (str_isdigit(*s) || str_issym(*s)) {
-        s++;
-    }
-    return *s == '\0';
+    const int c = (flags&COMPACT) ? 0 :
+                  (flags&LISP) ? 1 : 2;
+
+    lastnewline = o.size();
+	o.append(c * indent, ' ');
+    lastnewlineindentend = o.size();
 }
 
 void SaveSerializer::chompForToken(int token)
 {
-    if (flags&(BINARY|FORMAT_NONE)) {
+    if (flags&(BINARY|COMPACT)) {
         if (o.back() == ',')
             o.pop_back();
         o += (char) token;
@@ -281,14 +227,19 @@ void SaveSerializer::insertToken(char token)
 {
     switch (token) {
     case '=':
-        if (flags&FORMAT_DISPLAY)
+        if (flags&HUMAN)
             o += ": ";
+        else if ((flags&JSON) || (flags&LISP))
+            o += ':';
         else
             o += '=';
         break;
     case '{':
+    case '(':
         indent++;
-        if (flags&FORMAT_DISPLAY) {
+        if (flags&LISP) {
+            o += '(';
+        } else if (flags&HUMAN) {
             insertToken('\n');
         } else {
             o += token;
@@ -298,33 +249,40 @@ void SaveSerializer::insertToken(char token)
         chompForToken('[');
         break;
     case ']':
+    case ')':
     case '}':{
         // eat trailing whitespace and commas
         indent--;
-        chompForToken(!(flags&FORMAT_DISPLAY) ? token : -1);
+        chompForToken((flags&LISP) ? ')' :
+                      (flags&HUMAN) ? -1 : token);
         break;
     }
     case ',':
-        if (flags&FORMAT_DISPLAY) {
+        if (flags&HUMAN) {
             insertToken('\n');
-        } else if (flags&(BINARY|FORMAT_NONE)) {
+            // insertToken(' ');
+            // insertToken((o.size() - lastnewline > columnWidth) ? '\n' : ' ');
+        } else if (flags&LISP) {
+            insertToken(' ');
+        } else if (flags&(BINARY|COMPACT)) {
             o += ',';
         } else {
             chompForToken(',');
-            if (o.size() - lastnewline > columnWidth)
-                insertToken('\n');
-            else
-                o += ' ';
+            insertToken((o.size() - lastnewline > columnWidth) ? '\n' : ' ');
         }
         break;
+    case ' ':
+        if ((flags&LISP) && (o.size() - lastnewline > columnWidth))
+            insertToken('\n');
+        else
+            o += token;
+        break;
     case '\n':
-        if (flags&FORMAT_NONE)
+        if (flags&COMPACT)
             break;
         if (o.size() != lastnewlineindentend) {
             chompForToken('\n');
-            lastnewline = o.size();
             indent1();
-            lastnewlineindentend = o.size();
         }
         break;
     default:
@@ -340,32 +298,106 @@ void SaveSerializer::insertTokens(const char* tkns)
 }
 
 
+void SaveSerializer::forceInsertToken(char token)
+{
+    o += token;
+    
+    if (token == '\n')
+        indent1();
+}
+
+static bool is_ident(char c)
+{
+    return str_isdigit(c) || str_issym(c) || c == '.';
+}
+
+static bool is_ident(const char* s)
+{
+    if (!str_issym(*s))
+        return false;
+    while (is_ident(*s))
+        s++;
+    return *s == '\0';
+}
+
 void SaveSerializer::insertName(const char* name)
 {
-    if (flags&FORMAT_DISPLAY)
+    if (flags&JSON)
+        serialize(name);
+    else if (flags&HUMAN)
         o += str_capitalize(name);
-    else
+    else if (is_ident(name))
         o += name;
+    else
+        serialize(name);
+}
+
+void SaveSerializer::serializeKey(const char* name)
+{
+    if ((flags&LISP) && is_ident(name)) {
+        insertToken(':');
+        insertName(name);
+        insertToken(' ');
+    } else {
+        insertName(name);
+        insertToken('=');
+    }
+}
+
+void SaveSerializer::serializeKey(const Symbol &name)
+{
+    serializeKey(name.str().c_str()); 
+}
+
+void SaveSerializer::serialize(const Symbol &st)
+{
+    // serialize(st.str());
+    insertName(st.str());
+}
+
+void SaveSerializer::padColumn(int width)
+{
+    int c = (o.size() - lastnewline);
+    o.append(max(1, width - c), ' ');
 }
 
 void SaveSerializer::serializeE(uint64 v, const EnumType &e)
 {
-    if (flags&BINARY) {
+    if (flags&BINARY)
+    {
         serialize(v);
         return;
     }
     
     // try exact match first
     lstring name = e.getName(v);
-    if (name) {
-        o += name.c_str();
+    if (name)
+    {
+        insertName(name.c_str());
+        return;
+    }
+
+    if ((flags&JSON) && e.isBitset())
+    {
+        insertToken('[');
+        foreach (const EnumType::Elem &se, e.elems)
+        {
+            if ((v&se.second) != se.second)
+                continue;
+            insertName(se.first.c_str());
+            v &= ~se.second;
+            if (v == 0)
+                break;
+            insertToken(',');
+        }
+        insertToken(']');
         return;
     }
 
     // then try to build up bits
     if (v != 0 && v != ~0 && e.isBitset())
     {
-        foreach (const EnumType::Pair &se, e.elems)
+        foreach (const EnumType::Elem &se, e.elems)
         {
             if ((v&se.second) != se.second)
                 continue;
@@ -373,7 +405,7 @@ void SaveSerializer::serializeE(uint64 v, const EnumType &e)
             v &= ~se.second;
             if (v == 0)
                 return;
-            o += "|";
+            o += (flags&LISP) ? '/' : '|';
         }
     }
     // finally resort to numbers!!!
@@ -384,7 +416,7 @@ void SaveSerializer::serializeEAll(const EnumType &e)
 {
     insertToken('{');
     int i = 0;
-    foreach (const EnumType::Pair &se, e.elems)
+    foreach (const EnumType::Elem &se, e.elems)
     {
         if (i != 0) {
             insertToken(',');
@@ -411,7 +443,7 @@ ParserLocation SaveParser::getCurrentLoc() const
     loc.logger = logger;
 
     const char* lineBegin = std::max(data, start + 1);
-    while (lineBegin >= dataLastLine && *(lineBegin-1) != '\n' && *(lineBegin-1) != '\0' &&
+    while (lineBegin > dataLastLine && *(lineBegin-1) != '\n' && *(lineBegin-1) != '\0' &&
            (data - lineBegin) < 200)
     {
         lineBegin--;
@@ -419,6 +451,8 @@ ParserLocation SaveParser::getCurrentLoc() const
     for (const char *ptr=lineBegin; *ptr != '\0' && *ptr != '\n' && (ptr - lineBegin) < 300; ptr++)
         loc.currentLine += *ptr;
     loc.currentLine = str_chomp(loc.currentLine);
+    for (ParseContext *s=stack; s && lineBegin <= s->begin && (data - s->begin) > 1; s=s->next)
+        loc.context.push_back(make_pair(s->begin - lineBegin + 1, s->desc()));
     loc.currentLineColumn = data - lineBegin + 1;
     loc.isEof = scanEof(data);
     return loc;
@@ -431,7 +465,45 @@ string ParserLocation::format(const char* type, const string &msg, bool first) c
     string ret = str_format("%s:%d: %s: ", fname.c_str(), line, type) + msg;
     if (!first)
         return ret;
-    if (currentLineColumn >= 0 && currentLine.size())
+    if (context.size() && currentLineColumn >= 0 && currentLine.size())
+    {
+        string cline = currentLine;
+
+        if (context[0].first > 100)
+        {
+            int2 col = i2(context[0].first, currentLineColumn);
+            cline = "..." + cline.substr(col.x - 40 - 3, 100);
+            col.y = col.y - col.x + 40;
+            col.x = 40;
+            string marker(max(1, col.x-1), ' ');
+            marker.append(col.y - col.x, '~');
+            if (context[0].second.size())
+                marker += str_format(" (%s)", context[0].second);
+            if (cline.size() > 100) {
+                cline.resize(100);
+                cline += "...";
+            }
+            ret += "\n" + cline + "\n" + marker;
+        }
+        else
+        {
+            ret += "\n" + cline;
+            for_ (ctx, context)
+            {
+                int2 col = i2(ctx.first, currentLineColumn);
+                string marker(max(1, col.x-1), ' ');
+                marker.append(col.y - col.x, '~');
+                if (ctx.second.size())
+                    marker += str_format(" (%s)", ctx.second);
+                if (cline.size() > 100) {
+                    cline.resize(100);
+                    cline += "...";
+                }
+                ret += "\n" + marker;
+            }
+        }
+    }
+    else if (currentLineColumn >= 0 && currentLine.size())
     {
         int col = currentLineColumn;
         string cline = currentLine;
@@ -439,7 +511,7 @@ string ParserLocation::format(const char* type, const string &msg, bool first) c
             cline = "..." + cline.substr(col - 40 - 3, 100);
             col = 40;
         }
-        string marker(col, ' ');
+        string marker(max(1, col), ' ');
         marker.back() = '^';
         if (cline.size() > 100) {
             cline.resize(100);
@@ -467,7 +539,7 @@ string ParserLocation::shortLoc() const
 void ParserLocation::Report(const char* type, const string &msg) const
 {
     string it = format(type, msg);
-    DPRINT(INFO, ("%s", it.c_str()));
+    DPRINT(INFO, "%s", it.c_str());
     if (logger)
         logger->Report(it);
 }
@@ -475,76 +547,6 @@ void ParserLocation::Report(const char* type, const string &msg) const
 string SaveParser::errmsg(const char* type, const string& msg) const
 {
     return getCurrentLoc().format(type, msg, (error_count == 0));
-}
-
-string SaveParser::errfmt(const char* type, const char* errformat, ...) const
-{
-    va_list vl;
-    va_start(vl, errformat);
-    string msg = errmsg(type, str_vformat(errformat, vl));
-    va_end(vl);
-    return msg;
-}
-
-static void SaveReport(LogRecorder *logger, const string &msg)
-{
-    if (logger)
-        logger->Report(msg);
-    ReportEarly(msg);
-}
-
-void SaveParser::warn(const char* errformat, ...) const
-{
-    if (fail_ok || warn_count >= kParserMaxWarnings)
-        return;
-    va_list vl;
-    va_start(vl, errformat);
-    string msg = str_vformat(errformat, vl);
-    va_end(vl);
-
-    SaveReport(logger, errmsg("warning", msg));
-
-    warn_count++;
-    if (warn_count == kParserMaxWarnings)
-    {
-        SaveReport(logger, str_format("%s: warning: ignoring future warnings (kParserMaxWarnings=%d)",
-                                      fname.c_str(), kParserMaxWarnings));
-    }
-}
-
-bool SaveParser::error(const char* errformat, ...) const
-{
-    if (fail_ok)
-        return false;
-    va_list vl;
-    va_start(vl, errformat);
-    string msg = str_vformat(errformat, vl);
-    va_end(vl);
-
-    SaveReport(logger, errmsg("error", msg));
-    
-    error_count++;
-    return false;
-}
-
-bool SaveParser::fail1(const char* func, uint linenum, const char* errformat, ...) const
-{
-    if (fail_ok)
-        return false;
-    va_list vl;
-    va_start(vl, errformat);
-    string msg = str_vformat(errformat, vl);
-    va_end(vl);
-
-    SaveReport(logger, errmsg("error", msg));
-        
-#if DEBUG
-    if (!logger && error_count == 0)
-        OLG_OnAssertFailed(__FILE__, linenum, func, "PARSE_FAIL", "");
-#endif
-
-    error_count++;
-    return false;
 }
 
 
@@ -566,8 +568,16 @@ char SaveParser::nextChar()
 }
 
 
-bool SaveParser::skipSpace()
+bool SaveParser::skipSpace(const char** after)
 {
+    if (after)
+    {
+        const char* &ptr = *after;
+        while (str_isspace(*ptr))
+            ptr++;
+        return true;
+    }
+    
     if (!data)
         return false;
     
@@ -582,7 +592,8 @@ bool SaveParser::skipSpace()
         {
             nextChar();
         }
-        else if (!cliMode && chr == '#')
+        else if (!cliMode && (chr == '#' || (chr == ';' &&
+                                             (data[1] == ';' || data[1] == ' '))))
         {
             while (*data != '\n' && *data != '\0')
             {
@@ -617,44 +628,109 @@ bool SaveParser::skipSpace()
     return true;
 }
 
+template <typename T>
+static uint parse_exponent(const char* data, T *v)
+{
+    if (!(*data == 'e' || *data == 'E'))
+        return 0;
+    data++;
+    char* end = 0;
+    const double exp = strtod(data, &end);
+    if (end <= data)
+        return 1;
+    *v = round(*v * pow(10.0, exp));
+    return (end - data) + 1;
+}
+
 bool SaveParser::parseIntegral(uint64* v)
 {
     skipSpace();
     if (parseBinaryIntegral(v))
         return true;
     char* end = 0;
-    const uint64 lval = strtoull(data, &end, 0);
+    uint64 lval = strtoull(data, &end, 0);
     if (end <= data)
         return false;
-    *v = lval;
     data = end;
+    data += parse_exponent(data, &lval);
+    *v = lval;
     return true;
 }
 
-bool SaveParser::parseToken(const char* token)
+bool SaveParser::parseIntegral(long long *v)
 {
     skipSpace();
+    uint64 bv;
+    if (parseBinaryIntegral(&bv))
+    {
+        *v = bv;
+        return true;
+    }
+    // parse "#453453" style colors for JSON/etc.
+    const bool quoted = (data[0] == '"' && data[1] == '#');
+    if (quoted)
+        data += 2;
+    char* end = 0;
+    long long lval = strtoll(data, &end, quoted ? 16 : 0);
+    if (end <= data)
+        return false;
+    data = end;
+    data += parse_exponent(data, &lval);
+    *v = lval;
+    if (quoted)
+        parseToken('"');
+    return true;
+}
+
+bool SaveParser::parseToken(const char* token, const char** after)
+{
     const size_t len = strlen(token);
-    bool found = strncmp(data, token, len) == 0;
+    if (len == 1)
+        return parseToken(token[0], after);
+    skipSpace(after);
+    const char* &ptr = (after ? *after : data);
+    bool found = strncmp(ptr, token, len) == 0;
     if (found)
-        data += len;
+        ptr += len;
     return found;
 }
 
-bool SaveParser::parseToken(char token)
+static bool is_token(char chr, char token)
 {
-    skipSpace();
-    bool found = (*data == token);
-    if (found)
-        data++;
-    return found;
+    if (chr == '\0')
+        return false;
+    switch (token)
+    {
+    case '{': return strchr("{([", chr);
+    case '}': return strchr("})]", chr);
+    case '|': return strchr("|/", chr);
+    case '=': return strchr("=:", chr);
+    default:  return chr == token;
+    }
+}
+
+bool SaveParser::parseToken(char token, const char** after)
+{
+    skipSpace(after);
+    const char* &ptr = (after ? *after : data);
+    if (!is_token(*ptr, token))
+        return false;
+    ptr++;
+    return true;
 }
 
 bool SaveParser::atToken(char token)
 {
     skipSpace();
-    return (*data == token);
+    return is_token(*data, token);
 }
+
+bool SaveParser::atToken(const char* token)
+{
+    skipSpace();
+    return strncmp(data, token, strlen(token)) == 0;
+}
+
 
 bool SaveParser::parseToTokens(string *s, const char *tokens)
 {
@@ -668,19 +744,19 @@ bool SaveParser::parseToTokens(string *s, const char *tokens)
     return *data != '\0';
 }
 
-bool SaveParser::parseIdent(std::string* s)
+bool SaveParser::parseIdent(std::string* s, const char** after)
 {
-    skipSpace();
-    if (!str_issym(*data))
-        return false;
-
+    skipSpace(after);
+    const char* &ptr = (after ? *after : data);
+    if (!str_issym(*ptr))
+        return parseQuotedString(s, '"', after); // json
     s->clear();
-    while (str_isdigit(*data) || str_issym(*data) || *data == '.')
+	ParseContext pc(this, "ident");
+    while (is_ident(*ptr))
     {
-        *s += *data;
-        data++;
+        *s += *ptr;
+        ptr++;
     }
-
     return true;
 }
 
@@ -703,18 +779,27 @@ bool SaveParser::parseArg(string* s)
     return true;
 }
 
+inline bool str_isname(char c)
+{
+    return (str_isprint(c) || utf8_isutf8(c)) &&
+        !str_contains(" \t\n,{}()|", c);
+}
+
 bool SaveParser::parseName(std::string* s)
 {
     skipSpace();
     s->clear();
-    while (isprint(*data) && !str_isspace(*data) && *data != ',')
+    ParseContext pc(this, "name");
+    if (*data == '\0')
+        return false;
+    while (str_isname(*data))
     {
         *s += *data;
         data++;
     }
-
     return true;
 }
+
 
 void SaveSerializer::serialize(const char* s)
 {
@@ -736,39 +821,84 @@ void SaveSerializer::serialize(const char* s)
     o += '"';
 }
 
-bool SaveParser::parseQuotedString(string *s, char quote)
+bool SaveParser::parseQuotedString(string *s, char quote, const char** after)
 {
-    if (!parseToken(quote))
+    if (!parseToken(quote, after))
         return false;
 
     s->clear();
-    while (*data != quote && *data != '\0')
+    const char* &ptr = (after ? *after : data);
+    while (*ptr != quote && *ptr != '\0')
     {
-        if (*data == '\\')
+        if (*ptr == '\\')
         {
-            data++;
-            switch (*data) {
+            ptr++;
+            switch (*ptr) {
             case 'n':  *s += '\n'; break;
             case '\\': *s += '\\'; break;
             case '\n': break;
             default:
-                if (*data != quote)
+                if (*ptr != quote)
                     *s += '\\';
-                *s += *data;
+                *s += *ptr;
                 break;
             }
         }
         else
         {
-            *s += *data;
+            *s += *ptr;
         }
 
-        nextChar();
+        if (after)
+            ptr++;
+        else
+            nextChar();
     }
 
-    PARSE_FAIL_UNLESS(parseToken(quote), "expected closing '%c' while parsing string, got EOF", quote);
+    if (parseToken(quote, after))
+        return true;
+    if (after)
+        return false;
+    PARSE_FAIL("expected closing '%c' while parsing string, got EOF", quote);
+}
+
+static bool spaces_only(const char* v)
+{
+    for (; str_isspace(*v); v++)
+        if (*v == '\n')
+            return false;
     return true;
 }
+
+bool SaveParser::parseKey(string *v)
+{
+    const char* after = data;
+            
+    // lisp :key val
+    if (parseToken(':', &after) && spaces_only(after) && parseIdent(v, &after))
+    {
+        data = after;
+        return true;
+    }
+    // lua key = val OR JSON "key" : val
+    if (parseIdent(v, &after) && spaces_only(after) && parseToken('=', &after) &&
+        !(*(after-1) == ':' && str_isalpha(*after)))     // NOTE avoid (data :key val) misparse as data : key
+    {
+        data = after;
+        return true;
+    }
+    return false;
+}
+
+bool SaveParser::parseKey(Symbol *s)
+{
+    string v;
+    if (!parseKey(&v))
+        return false;
+    *s = Symbol(v);
+    return true;
+}
+
 
 bool SaveParser::parse(string* s)
 {
@@ -776,10 +906,11 @@ bool SaveParser::parse(string* s)
     if (lcl) {
         PARSE_FAIL_UNLESS(parseToken('('), "Expected '(' after gettext _");
     }
+    ParseContext pc(this, "string");
     bool success = false;
     if (parseQuotedString(s, '"') || parseQuotedString(s, '\'')) {
         success = true;
-    } else if (str_isalnum(*data)) {
+    } else if (str_isname(*data)) {
         success = parseName(s);
     }
     if (lcl) {
@@ -790,38 +921,44 @@ bool SaveParser::parse(string* s)
     return success;
 }
 
+bool SaveParser::parse(Symbol* s)
+{
+    string t;
+    if (!parse(&t))
+        return false;
+    if (t.size() > kSymbolMaxChars)
+    {
+        t.resize(kSymbolMaxChars);
+        warn("Truncating to '%s', symbol length %d>%d chars", t, (int)t.size(), kSymbolMaxChars);
+    }
+    *s = Symbol(t);
+    return true;
+}
+
 bool SaveParser::parse(lstring* s)
 {
     string t;
     bool r = parse(&t);
     if (r)
-        *s = lstring(t);
+        *s = lstring(std::move(t));
     return r;
 }
 
 bool SaveParser::parse(bool* v)
 {
-    skipSpace();
-    if (*data == '1')
-    {
+    if (parseToken('1')) {
         *v = true;
-        data++;
-    }
-    else if (*data == '0')
-    {
+    } else if (parseToken('0')) {
         *v = false;
-        data++;
-    }
-    else
-    {
+    } else {
         std::string s;
-        PARSE_FAIL_UNLESS(parseIdent(&s), "expected 'true' or 'false'");
+        PARSE_FAIL_UNLESS(parseIdent(&s), "expected 'true' or 'false' while parsing bool");
         s = str_tolower(s);     // ignore case
-        if (s == "true")
+        if (s == "t" || s == "true")
             *v = true;
-        else if (s == "false")
+        else if (s == "nil" || s == "false")
             *v = false;
-        else PARSE_FAIL("expected 'true' or 'false' parsing bool, got %s", s.c_str());
+        else PARSE_FAIL("expected 'true' or 'false' parsing bool, got '%s'", s);
     }
     return true;
 }
@@ -837,40 +974,99 @@ bool SaveParser::parse(float* v)
 
 bool SaveParser::parse(double* v)
 {
-    skipSpace();
-    char* end = 0;
-    const double val = strtod(data, &end);
-    // eat msvc special nans
-    // #IO #INF #SNAN #QNAN #IND
-    while (*end && str_contains("#IONFSAQD", *end))
-        end++;
-    PARSE_FAIL_UNLESS(end > data && !fpu_error(val), "expected float");
+    ParseContext pc(this, "float");
+    
+    double val = 0;
+    if (parseToken("pi"))
+    {
+        val = M_PI;
+    }
+    else if (parseToken("tau"))
+    {
+        val = M_TAU;
+    }
+    else
+    {
+        char* end = 0;
+        val = strtod(data, &end);
+        // eat msvc special nans
+        // #IO #INF #SNAN #QNAN #IND
+        // while (*end && str_contains("#IONFSAQD", *end))
+            // end++;
+        if (end == data)
+            return false;
+        // PARSE_FAIL_UNLESS(end > data && !fpu_error(val), "expected float");
+        data = end;
+    }
+
+    if (parseToken('*'))
+    {
+        double m = 1;
+        PARSE_FAIL_UNLESS(parse(&m), "expected float while parsing float expression");
+        val *= m;
+    }
+    else if (parseToken('/'))
+    {
+        double div = 1.0;
+        PARSE_FAIL_UNLESS(parse(&div), "expected float while parsing float expression");
+        val /= div;
+    }
+    
     *v = val;
-    data = end;
     return true;
 }
 
 bool SaveParser::parseE(uint64 *h, const EnumType &e)
 {
+    ParseContext pc(this, e.name.c_str());
     std::string s;
-    if (parseIdent(&s))
+    
+    if (parseToken('['))        // JSON
     {
-        const uint64 val = e.getVal(str_toupper(s));
-        if (val != ~0) {
+        while (!parseToken(']'))
+        {
+            PARSE_FAIL_UNLESS(parse(&s), "expected enum field");
+            const uint64 val = e.getVal(str_toupper(s));
+            PARSE_FAIL_UNLESS(val != ~0, "enum '%s' has no member '%s'", e.name, s);
             *h |= val;
-        } else {
-            warn("No enum field '%s'", s.c_str());
+            parseToken(',');
         }
-    }
-    else
-    {
-        uint64 v = 0;
-        PARSE_FAIL_UNLESS(parse(&v), "expected uint64 while parsing enum");
-        *h |= v;
-    }
 
-    return parseToken('|') ? parseE(h, e) : true;
+        return true;
+    }
+    
+    do {
+        if (parseIdent(&s))
+        {
+            const uint64 val = e.getVal(str_toupper(s));
+            PARSE_FAIL_UNLESS(val != ~0, "enum '%s' has no member '%s'", e.name, s);
+            *h |= val;
+        }
+        else
+        {
+            uint64 v = 0;
+            PARSE_FAIL_UNLESS(parse(&v), "expected uint64 or member while parsing enum '%s'", s);
+            *h |= v;
+        }
+    } while (parseToken('|'));
+    return true;
 }
+
+DynamicObj::DynamicObj() : type(&ReflectionLayout::instance<ReflectionNull>()) { }
+DynamicObj DynamicObj::operator[](const char* s) const { return (*type)(self, s); }
+DynamicObj DynamicObj::operator[](const uint i) const { return (*type)(self, i); }
+size_t DynamicObj::size() const { return type->size(); }
+DynamicObj DynamicObj::operator()() const { return (*type)(self); }
+bool DynamicObj::operator==(const DynamicObj &o) const { return (type == o.type) && type->equal(self, o.self); }
+DynamicObj DynamicObj::clone() const { return DynamicObj(*type, type->clone(self)); }
+
+LispVal DynamicObj::read() const { return type->read(self); }
+bool DynamicObj::write(LispVal v, const LispEnv *e) const { return type->write(self, v, e); }
+void DynamicObj::serialize(SaveSerializer &s) const { type->serialize(s, self); }
+int DynamicObj::parse(SaveParser &p) const { return type->parse(p, self); }
+int DynamicObj::skip(SaveParser &p) const { return type->skip(p); }
+const string &DynamicObj::name() const { return type->name(); }
+void DynamicObj::clear() const { type->clear(self); }
 
 template <typename T>        
 static bool skipDeprecated(SaveParser &sp, const char* name)
@@ -879,190 +1075,248 @@ static bool skipDeprecated(SaveParser &sp, const char* name)
     if (!sp.parse(&val))
         return false;
 
-    DPRINT(DEPRECATED, ("%s", sp.errmsg("warning", str_format("Ignored deprecated field '%s' : %s", name, PRETTY_TYPE(T))).c_str()));
+    DPRINT(DEPRECATED, "%s", sp.errmsg("warning", str_format("Ignored deprecated field '%s' : %s", name, PRETTY_TYPE(T))));
     return true;
 }
 
+struct CVarIndex {
+    std::map<lstring, CVarBase*>                        index;
+    std::unordered_map<const void*, CVarBase*>          value_index;
+    std::unordered_map<lstring, pair<string, string> >  incomplete_index;
+    std::mutex                                          mutex;
+};
 
-std::map<lstring, CVarBase*>& CVarBase::index()
+static CVarIndex &cvar()
 {
-    static std::map<lstring, CVarBase*> s_index;
-    return s_index;
+    static CVarIndex i;
+    return i;
 }
 
- std::map<lstring, pair<string, string> >& CVarBase::incomplete_index()
+inline string file_name_onedir(const char* file)
 {
-    static std::map<lstring, pair<string, string> > s_incomplete_index;
-    return s_incomplete_index;
+    size_t slash = str_rfind(file, OL_PATH_SEP);
+    if (slash == ~0)
+        return file;
+    slash = str_rfind(file, OL_PATH_SEP, slash-1);
+    if (slash == ~0)
+        return file;
+    file += slash + 1;
+#if OL_WINDOWS
+    return str_replace(file, '\\', '/');
+#else
+    return file;
+#endif
 }
-
- std::mutex &CVarBase::mutex()
+// MSVC uses lower case file names to do the same on other platforms
+CVarBase::CVarBase(lstring name, const char* comment, const char *file)
+    : m_name(name), m_comment(comment), m_file(str_tolower(file_name_onedir(file)))
 {
-    static std::mutex m;
-    return m;
-}
-
-CVarBase::CVarBase(lstring name, const char* comment) : m_name(name), m_comment(comment)
-{
-    ASSERT(!index()[name]);
-    index()[name] = this;
+    ASSERT(!cvar().index[name]);
+    cvar().index[name] = this;
 }
 
 CVarBase::~CVarBase()
 {
-    ASSERT(index()[m_name] == this);
-    index().erase(m_name);
+    ASSERT(cvar().index[m_name] == this);
+    cvar().index.erase(m_name);
 }
 
 std::string CVarBase::get(lstring key)
 {
-    std::lock_guard<std::mutex> l(mutex());
-    CVarBase *cv = index()[key];
+    std::lock_guard<std::mutex> l(cvar().mutex);
+    CVarBase *cv = cvar().index[key];
     return cv ? cv->toString() : "";
+}
+
+vector<std::string> CVarBase::comp(lstring key)
+{
+    std::lock_guard<std::mutex> l(cvar().mutex);
+    CVarBase *cv = cvar().index[key];
+    return cv ? cv->comp() : vector<string>();
 }
 
 static bool s_cvar_file_loaded = false;
 
-void CVarBase::reportIncomplete()
+void CVarBase::onClose()
 {
-    std::lock_guard<std::mutex> l(mutex());
+    std::lock_guard<std::mutex> l(cvar().mutex);
     
-    foreach (auto &x, incomplete_index())
+    foreach (auto &x, cvar().incomplete_index)
     {
         Report(x.second.second.c_str());
     }
 
     // also write cvar file if none exists
-    
-    if (s_cvar_file_loaded)
-    {
-        Report("cvars.txt changed - not dumping");
-        return;
-    }
+    // if (s_cvar_file_loaded)
+    // {
+        // Report("cvars.txt changed - not dumping");
+        // return;
+    // }
 
     writeToFile();
+}
+
+static void writeCvar(SaveSerializer &ss, const char* name, const CVarBase &cv)
+{
+    if (cv.isDefault() || !cv.save())
+        ss.o += "# ";
+	ss.o += name;
+    ss.insertTokens(" = ");
+    cv.serialize(ss);
+    // if (cv.getComment() || cv.hasMinMax())
+    {
+        ss.padColumn(50);
+        ss.o += "# (";
+        ss.o += cv.getTypeString();
+        ss.o += ") ";
+        ss.o.append(max(0, 6 - (int)str_len(cv.getTypeString())), ' ');
+        ss.o += cv.getFile();
+        if (cv.getComment().size())
+        {
+            ss.o += " // ";
+            ss.o += cv.getComment();
+        }
+    }
+    ss.forceInsertToken('\n');
 }
 
 bool CVarBase::writeToFile()
 {
     SaveSerializer ss;
     ss.o += "# -*- mode: default-generic -*-\n";
-    ss.o += "# This file contains development game variables\n";
-    ss.o += "# It is automatically regenerated at game startup unless overwriting would loose settings\n";
-    ss.o += "# Lines beginning with a '#' are comments - remove the '#' to modify the value\n";
-    ss.o += string("# Generated by Reassembly version: ") + getBuildDate() + "\n";
-    ss.o += string("# ") + OL_GetPlatformDateInfo() + "\n\n";
+    ss.o += "# NOTE: this file is read on startup and rewritten on shutdown\n";
+    if (!OLG_UseDevSavePath())
+    {
+        ss.o += str_format("# %s version: %s\n", OLG_GetName(), getBuildDate());
+        str_wrap_options_t w(90);
+        w.newline = "\n#    ";
+        ss.o += string("# ") + str_word_wrap(OL_GetPlatformDateInfo(), w) + "\n";
+    }
+    ss.forceInsertToken('\n');
     ss.setColumnWidth(-1);
-    foreach (auto &it, index())
-    {
-        if (!it.second)
-            continue;
-        const CVarBase &cv = *it.second;
-        if (cv.getComment() || cv.hasMinMax()) {
-            ss.o += "### ";
-            ss.o += it.first.c_str();
-            ss.o += ": ";
-            ss.o += cv.getTypeString();
-            if (cv.getComment())
-            {
-                ss.o += ": ";
-                ss.o += cv.getComment();
-            }
-            ss.o += '\n';
-        }
-        if (cv.isDefault())
-            ss.o += "# ";
-        ss.o += it.first.c_str();
-        ss.insertTokens(" = ");
-        cv.serialize(ss);
-        ss.o += '\n';
-    }
 
-    if (ZF_SaveFileRaw("data/cvars.txt", ss.str()))
+    vector<const CVarBase*> vec;
+    for_ (it, cvar().index)
     {
-        Reportf("Wrote default cvars to cvars.txt");
+        if (it.second)
+            vec.push_back(it.second);
     }
-    else
-    {
-        Reportf("Failed to write cvars.txt");
-    }
-    return true;
+    vec_sort(vec, [](const CVarBase *a, const CVarBase *b) {
+                      return (a->getFile() != b->getFile()) ? a->getFile() < b->getFile() :
+                          a->getName() < b->getName(); });
+    for_ (cv, vec)
+        if (!cv->isDefault())
+            writeCvar(ss, cv->getName().c_str(), *cv);
+    for_ (cv, vec)
+        if (cv->isDefault())
+            writeCvar(ss, cv->getName().c_str(), *cv);
+
+    bool ok = ZF_SaveFileRaw("data/cvars.txt", ss.str());
+    Reportf("Wrote default cvars to cvars.txt: %s", ok ? "OK" : "FAILED");
+    return ok;
 }
 
-bool CVarBase::parseCVars(SaveParser &sp)
+bool CVarBase::parseCVars(SaveParser &sp, bool save_value)
 {
-    std::lock_guard<std::mutex> l(mutex());
+    std::lock_guard<std::mutex> l(cvar().mutex);
+    std::string s;
     while (!sp.isEof())
     {
-        std::string s;
-        if (sp.parseArg(&s))
+        if (!sp.parseArg(&s))
         {
-            if (sp.getFileName().size() && sp.getFileName() != "-")
-                s_cvar_file_loaded = true;
-            
-            if (str_startswith(s, "--"))
-                s = str_replace(s, "--", "k");
-
-            const lstring name(s);
-            CVarBase *cv = index()[name];
-
-            const bool isor = sp.parseToken('|');
-            const bool isandnot = !isor && sp.parseToken('&');
-            sp.parseToken('='); // optional
-
-            if (isandnot && !sp.parseToken('~'))
-                sp.error("expected ~ after &=");
-
-            if (cv == NULL) {
-                string val;
-                sp.parseToTokens(&val, sp.getCliMode() ? " -\n" : ";\n");
-                if (!val.size())
-                    return sp.error("no value for uninstantiated cvar '%s'", name.c_str());
-                const string msg = sp.errfmt("warning", "uninstantiated cvar '%s'", name.c_str());
-                incomplete_index()[name] = make_pair(val, msg);
-            } else if (isor) {
-                if (!cv->parseValueOr(sp))
-                    return sp.error("failed to parse |= for cvar '%s'", name.c_str());
-            } else if (isandnot) {
-                if (!cv->parseValueAndNot(sp))
-                    return sp.error("failed to parse &= for cvar '%s'", name.c_str());
-            } else if (!cv->parseValue(sp))
-                return sp.error("failed to parse cvar '%s'", name.c_str());
-        }
-        else
-        {
-            sp.error("parsing cvars from '%s'", sp.getFileName().c_str());
+            sp.error("parsing cvars from '%s'", sp.getFileName());
             ASSERT_FAILED("", "Cvar parse failed");
             break;
         }
+        if (sp.getFileName().size() && sp.getFileName() != "-")
+            s_cvar_file_loaded = true;
+            
+        if (str_startswith(s, "--"))
+            s = str_replace(s, "--", "k");
+
+        size_t dot = str_find(s, '.');
+        
+        const lstring name = str_substr(s, 0, dot);
+        CVarBase *cv = cvar().index[name];
+
+        if (cv == NULL) {
+            string val;
+            sp.parseToTokens(&val, sp.getCliMode() ? " -\n" : ";\n");
+            if (!val.size())
+                return sp.error("no value for uninstantiated cvar '%s'", name);
+            const string msg = sp.errfmt("warning", "uninstantiated cvar '%s'", name);
+            cvar().incomplete_index[name] = make_pair(val, msg);
+            continue;
+        }
+
+        cv->save(save_value);
+        
+        const bool isor = sp.parseToken('|');
+        const bool isandnot = !isor && sp.parseToken('&');
+        sp.parseToken('='); // optional
+
+		if (dot != -1) {
+			if (!cv->parseValue(sp, str_substr(s, dot + 1)))
+				return sp.error("failed to parse cvar '%s'.%s", name, str_substr(s, dot + 1));
+		} else if (isor) {
+            if (!cv->parseValueOr(sp))
+                return sp.error("failed to parse |= for cvar '%s'", name);
+        } else if (isandnot) {
+            if (!sp.parseToken('~'))
+                return sp.error("expected ~ after &=");
+            if (!cv->parseValueAndNot(sp))
+                return sp.error("failed to parse &= for cvar '%s'", name);
+        } else if (!cv->parseValue(sp))
+            return sp.error("failed to parse cvar '%s'", name);
+
         sp.parseToken(';'); // optional
     }
     return true;
 }
 
+static void writeCvarNameVal(SaveSerializer &ss, const CVarBase *cvar)
+{
+    if (cvar)
+    {
+        ss.o += cvar->getName().c_str();
+        ss.insertTokens(" = ");
+        ss.o += cvar->toString();
+        ss.insertToken('\n');
+    }
+}
 
 std::string CVarBase::getAll()
 {
-    std::lock_guard<std::mutex> l(mutex());
     SaveSerializer ss;
-    foreach (auto &it, index())
+    std::lock_guard<std::mutex> l(cvar().mutex);
+    foreach (auto &it, cvar().index)
+        writeCvarNameVal(ss, it.second);
+    return ss.str();
+}
+
+std::string CVarBase::getMatching(const std::string &query)
+{
+	const string q = str_tolower(query);
+    SaveSerializer ss;
+    std::lock_guard<std::mutex> l(cvar().mutex);
+    foreach (auto &it, cvar().index)
     {
-        if (it.second)
+        if (it.second && (str_tolower(it.first.str()).find(q) != -1 ||
+                          str_tolower(it.second->getComment()).find(q) != -1 ||
+                          str_tolower(it.second->getFile().str()).find(q) != -1))
         {
-            ss.o += it.first.c_str();
-            ss.insertTokens(" = ");
-            ss.o += it.second->toString();
-            ss.insertToken('\n');
+            writeCvarNameVal(ss, it.second);
         }
     }
     return ss.str();
 }
 
+
 vector<std::string> CVarBase::getAllNames()
 {
-    std::lock_guard<std::mutex> l(mutex());
+    std::lock_guard<std::mutex> l(cvar().mutex);
     vector<std::string> all;
-    foreach (auto &it, index())
+    foreach (auto &it, cvar().index)
     {
         if (it.second)
         {
@@ -1074,13 +1328,15 @@ vector<std::string> CVarBase::getAllNames()
 
 bool CVarBase::initialize()
 {
-    std::lock_guard<std::mutex> l(mutex());
+    std::lock_guard<std::mutex> l(cvar().mutex);
 
-    if (incomplete_index().count(m_name))
+    cvar().value_index[getVptr()] = this;
+    
+    if (cvar().incomplete_index.count(m_name))
     {
-        SaveParser sp(incomplete_index()[m_name].first);
+        SaveParser sp(cvar().incomplete_index[m_name].first);
         parseValue(sp);
-        incomplete_index().erase(m_name);
+        cvar().incomplete_index.erase(m_name);
         return true;
     }
     return false;
@@ -1088,25 +1344,49 @@ bool CVarBase::initialize()
 
 void loadCVars(const char* txt)
 {
-    if (txt) {
-        SaveParser sp;
-        sp.loadData(txt);
-        sp.setCliMode(true);
-        CVarBase::parseCVars(sp);
-    }
-
     SaveParser sp;
     if (sp.loadFile("data/cvars.txt")) {
-        CVarBase::parseCVars(sp);
+        CVarBase::parseCVars(sp, true);
     } else {
         ReportEarlyf("cvars file not found");
     }
+
+    if (sp.loadFile("data/platform_cvars.txt")) {
+        CVarBase::parseCVars(sp, false);
+    } else {
+        ReportEarlyf("platform cvars file not found");
+    }
+
+    if (txt) {
+        SaveParser sp;
+#if __APPLE__
+        sp.loadData(str_replace(txt, "-NSDocumentRevisionsDebugMode YES", "").c_str());
+#else
+        sp.loadData(txt);
+#endif
+        sp.setCliMode(true);
+        CVarBase::parseCVars(sp, false);
+    }
+}
+
+pair<CVarBase*, DynamicObj> CVarBase::get_cvar(const char* key)
+{
+    size_t dot = str_find(key, '.');
+    CVarBase *cv = map_get(cvar().index, str_substr(key, 0, dot));
+    if (!cv)
+        return make_pair(cv, DynamicObj());
+    return make_pair(cv, (dot == -1) ? cv->dyobj() : cv->dyobj()[key + dot+1]);
+}
+
+CVarBase* CVarBase::get_cvar(void *value)
+{
+    return cvar().value_index[value];
 }
 
 
 #define DEF_CCV(TYPE)                                                   \
-    TYPE CreateCVar_ ## TYPE(const char* name, TYPE* vptr, TYPE value, const char* comment) { \
-        return (new CVar<TYPE>(name, vptr, value, comment))->getDefault();      \
+    TYPE CreateCVar_ ## TYPE(const char* name, TYPE* vptr, TYPE value, const char* file) { \
+        return (new CVar<TYPE>(name, vptr, value, file, ""))->getDefault(); \
     }
 
 DEF_CCV(float);
@@ -1119,6 +1399,20 @@ DEF_CCV(int);
 DEF_CCV(uint);
 DEF_CCV(int2);
 DEF_CCV(bool);
+
+
+
+template <typename T>
+bool checkMinMax1(CVar<T> *cv)
+{
+    if (!cv->hasMinMax())
+        return true;
+    T cl = clamp(*cv->m_vptr, cv->m_min, cv->m_max);
+    if (cl == *cv->m_vptr)
+        return true;
+    *cv->m_vptr = cl;
+    return false;
+}
 
 template<> bool CVar<float>::checkMinMax() { return checkMinMax1(this); }
 template<> bool CVar<int>::checkMinMax() { return checkMinMax1(this); }
@@ -1136,9 +1430,9 @@ string cmd_cvar(void* data, const char* cmdname, const char *args)
     // cvar kName = val
     {
         SaveParser sp(args, true);
-        std::string s;
         if (CVarBase::parseCVars(sp))
         {
+            std::string s;
             SaveParser(args, true).parseIdent(&s);
             return CVarBase::get(lstring(s));
         }
@@ -1146,16 +1440,11 @@ string cmd_cvar(void* data, const char* cmdname, const char *args)
 
     // cvar query
     string query;
-    if (!SaveParser::parse(args, &query, true))
+    SaveParser sp(args, true);
+    if (sp.parse(&query))
+        return CVarBase::getMatching(query);
+    else
         return "specify a search query";
-    vector<string> names = str_split('\n', CVarBase::getAll());
-    vector<string> matching;
-    foreach (const string &name, names)
-    {
-        if (str_tolower(name).find(str_tolower(query)) != -1)
-            matching.push_back(name);
-    }
-    return str_join('\n', matching);
 }
 
 string cmd_save_cvars(void* data, const char* name, const char *args)

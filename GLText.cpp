@@ -71,14 +71,12 @@ void GLText::load(const string& str, int font_, float size, float pointSize)
     if (chars == texChars && fontSize == texFontSize && pointSize == texPointSize)
         return;
     
-    texture.clear();
-
     if (!chars.size())
         return;
     
     OutlawImage img = {};
     int status = OL_StringImage(&img, chars.c_str(), fontSize, font,
-                                globals.windowSizePoints.x, globals.windowSizePoints.y);
+                                globals.windowSizePixels.x, globals.windowSizePixels.y);
 
     if (!status || img.width <= 0 || img.height <= 0)
         return;

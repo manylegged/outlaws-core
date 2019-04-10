@@ -87,6 +87,17 @@ void ShaderTextureBase::DrawQuad(const ShaderState& ss, const GLTexture& texture
     bindTextureDrawElements(ss, texture, v, arraySize(kQuadIndices), kQuadIndices);
 }
 
+void ShaderTextureBase::DrawQuad(const ShaderState& ss, float2 a, float2 b, float2 c, float2 d) const
+{
+    VertexPosTex v[] = { { float3(a, 0), float2(0, 1) },
+                         { float3(b, 0), f2(1, 1) },
+                         { float3(c, 0), float2(1, 0) },
+                         { float3(d, 0), float2() } };
+    UseProgram(ss, v);
+    ss.DrawElements(GL_TRIANGLES, arraySize(kQuadIndices), kQuadIndices);
+    UnuseProgram();
+}
+
 
 void ShaderTextureBase::DrawRectScale(const ShaderState &ss, const GLTexture& texture,
                                       float2 scale, float2 pos, float2 rad) const

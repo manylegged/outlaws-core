@@ -29,17 +29,16 @@ DIA2DUMP = "C:/Users/Arthur/Documents/DIA2Dump/Release/Dia2Dump.exe"
 if sys.platform.startswith("darwin"):
     PDB_SYMBOLS = ["/Volumes/BOOTCAMP/symbols",
                    "/Volumes/Users/Arthur/AppData/Local/Temp/SymbolCache"]
-    OUTLAWS_WIN32 = ["win32",
-                     "/Volumes/BOOTCAMP/Users/Arthur/Documents/outlaws/win32",
-                     "/Volumes/Users/Arthur/Documents/outlaws/win32"] # thor/eclipse
+    OUTLAWS_WIN32 = ["win32"]
     OUTLAWS_LINUX = ["linux", "linux/symbols", "/Volumes/arthur/outlaws/linux"]
 else:
-    PDB_SYMBOLS = ["C:/symbols",
-                   "//THOR/Users/Arthur/AppData/Local/Temp/SymbolCache"]
-    OUTLAWS_WIN32 = ["win32", "//THOR/Users/Arthur/Documents/outlaws/win32"]
+    PDB_SYMBOLS = ["C:/symbols"]
+    OUTLAWS_WIN32 = ["win32"]
     OUTLAWS_LINUX = ["linux", "linux/symbols", "//AUXILIA/arthur/Documents/outlaws/linux"]
 
 REL_SYM_PATH = {"ReassemblyRelease":["steam", "release"],
+                "ReassemblyReleaseGOG":["gog"],
+                "ReassemblyReleaseXP":["steam"],
                 "ReassemblyBuilder":["builder"],
                 "ReassemblyRelease64":["release"],
                 "ReassemblySteam32":["steam"]}
@@ -84,6 +83,10 @@ TRIAGE_IGNORE_TRACE = set(["posix_signal_handler",
                            # around error handling in msvc140
                            "??_C@_0CA@IFNNBHIE@FwGetRpcCallersProcessImageName?$AA@",
                            "___scrt_fastfail",
+                           "AslpFileLargeGetCrcChecksum$filt$0",
+                           "___crtSleepConditionVariableSRW",
+                           "void (*std::get_new_handler())()",
+                           "void (*std::set_new_handler(void (*)()))()",
                            #"void Concurrency::details::_ReportUnobservedException",
                            "__Mtx_clear_owner",
                            "AslpFileQueryExportName$filt$0",
@@ -112,6 +115,30 @@ TRIAGE_IGNORE_TRACE = set(["posix_signal_handler",
                            "A_SHAUpdate",
                            "CompatCacheLookupExe",
 ])
+
+HTML_TEMPLATE_1 = u"""<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html>
+<head><title>Reassembly Crash Demangler</title>
+<meta charset="UTF-8">
+<link rel="stylesheet" type="text/css" href="/wp-content/themes/anisoptera/style.css">
+</head>
+<body id="page">
+<a href="/"><img class="site-logo" src="/wp-content/themes/anisoptera/images/site-logo.png"></a>
+<h2>Crash Demangler</h2>
+<p style="width: 800;">Upload Reassembly crash logs here to get more information about what caused the crash.
+This page will translate the hex stack traces (0x123abcd) at the bottom of the log into dll and C++ symbol names. 
+You can use this information to determine what may have caused the crash and if graphics drivers or 3rd party libraries were related.</p>
+<form action="stack_lookup.py" method="post" enctype="multipart/form-data">
+<input type="file" name="fileToUpload" id="fileToUpload">
+<input type="submit" value="Submit" name="submit">
+</form>
+<code style="white-space: pre-line">"""
+HTML_TEMPLATE_2 = """
+</code>
+</body>
+"""
+
+is_cgi = False
 
 paren_re = re.compile("[(][^()]*[)] *(const)?")
 angle_re = re.compile("[<][^<>]+[>]")
@@ -239,6 +266,10 @@ def shorten_fname(fname):
     else:
         # base = "linux" if sys.platform.startswith("linux") else ""
         fname = os.path.normpath(os.path.join(ROOT, fname))
+    if is_cgi:
+        idx = fname.find("symbols/")
+        fname = fname[idx + len("symbols/"):]
+        return fname;
     if os.path.exists(fname):
         return abbreviate_fname(fname)
     # fix case insensitiveity
@@ -295,6 +326,7 @@ def get_dll_symbols(modname):
 
     symbol_path = [os.path.join(ROOT, w32, "%s.line.gz" % pdb) for w32 in OUTLAWS_WIN32]
     symbol_path.extend(os.path.join(ROOT, w32, "symbols", "%s.globals.gz" % lpdb) for w32 in OUTLAWS_WIN32)
+    # print symbol_path
 
     paths = glob_files(symbol_path)
     for pat in paths:
@@ -322,49 +354,60 @@ def get_symbol_type_handle(modname, version):
         return get_dll_symbols(modname)
     elif ".so." in modname:
         return get_so_symbols(modname)
-    elif version:
-        log("version is", version)
-        basename = os.path.splitext(modname)[0]
-        platform = "win32" if modname.endswith(".exe") else "linux"
-        dirns = REL_SYM_PATH.get(basename, "")
-        symbol_path = OUTLAWS_WIN32 if platform == "win32" else OUTLAWS_LINUX
-        version_roots = [os.path.join(ROOT, p, dirn, version)
-                         for p in symbol_path
-                         for dirn in dirns]
-        # print version_roots
-        typ = "line" if platform == "win32" else "elf"
-        symname = "%s.%s.gz" % (basename, typ)
-        paths = glob_files(os.path.join(b, symname) for b in version_roots)
-        if len(paths):
-            # log("using", paths[0])
-            return typ, gzip.open(paths[0])
-        if platform == "linux" and sys.platform.startswith("linux"):
-            ret = get_so_symbols(modname, version)
-            if ret[0]:
-                # log("using", ret[0])
-                return ret
-        # try earlier version (Only a few days tolerance)
-        version_list = glob_files(os.path.join(os.path.dirname(x), "*_*_*/") for x in version_roots)
-        vdate = parse_version(version)
-        mn = timedelta(days=2)
-        mnpath = None
-        mnver = None
-        for fil in version_list:
-            ver = os.path.basename(fil[:-1])
-            dat = parse_version(ver)
-            if not dat:
-                continue
-            delta = abs(vdate - dat)
-            # print ver, dat, delta
-            if delta < mn:
-                mn = delta
-                mnpath = fil
-                mnver = ver
-        if mnpath:
-            warning("using symbols from %s for %s" % (mnver, version))
-            fuzzy_version[version] = mnver;
-            return typ, gzip.open(os.path.join(mnpath, symname))
+    elif not version:
+        return None, []
+    log("version is", version)
+    basename = os.path.splitext(modname)[0]
+    platform = "win32" if modname.endswith(".exe") else "linux"
+    dirns = REL_SYM_PATH.get(basename, "")
+    symbol_path = OUTLAWS_WIN32 if platform == "win32" else OUTLAWS_LINUX
+    version_roots = [os.path.join(ROOT, p, dirn, version)
+                     for p in symbol_path
+                     for dirn in dirns]
+    # print version_roots
+    typ = "line" if platform == "win32" else "elf"
+    symname = "%s.%s.gz" % (basename, typ)
+    paths = glob_files(os.path.join(b, symname) for b in version_roots)
+    if len(paths):
+        # log("using", paths[0])
+        return typ, gzip.open(paths[0])
+    if platform == "linux" and sys.platform.startswith("linux"):
+        ret = get_so_symbols(modname, version)
+        if ret[0]:
+            # log("using", ret[0])
+            return ret
+    # try earlier version (Only a few days tolerance)
+    version_list = glob_files(os.path.join(os.path.dirname(x), "*_*_*/") for x in version_roots)
+    vdate = parse_version(version)
+    mn = timedelta(days=2)
+    mnpath = None
+    mnver = None
+    for fil in version_list:
+        ver = os.path.basename(fil[:-1])
+        dat = parse_version(ver)
+        if not dat:
+            continue
+        delta = abs(vdate - dat)
+        # print ver, dat, delta
+        if delta < mn:
+            mn = delta
+            mnpath = fil
+            mnver = ver
+    if mnpath:
+        warning("using symbols from %s for %s" % (mnver, version))
+        fuzzy_version[version] = mnver;
+        return typ, gzip.open(os.path.join(mnpath, symname))
         # warning("no symbols for %s %s" % (modname, version))
+
+    log("downloading symbols %s %s..." % (platform, version))
+    sys.path.append(os.path.join(ROOT, "server"))
+    import feed
+    status = feed.exec_command(
+        ["rsync", "-avr", "ani:anisopteragames.com/symbols/%s/steam/%s" % (platform, version),
+         os.path.join(ROOT, platform, "steam")], feed.RSYNC_TIMEOUT)
+    log("rsync returned %d" % status)
+    if status == 0:
+        return get_symbol_type_handle(modname, version)
     return None, []
 
 
@@ -740,8 +783,9 @@ class extract_opts:
         self.triage = None
         self.handlers = []
         self.matches = 0
+        self.force_version = True
 
-version_re = re.compile("Build Version: ([a-zA-Z]+).*(Release|Debug|Develop|Builder|Steam)(32|64) ([^,]*),")
+version_re = re.compile("Build Version: ([a-zA-Z]+).*(Release|Debug|Develop|Builder|Steam)(32|64)(XP)?( GOG)? ([^,]*),")
 gl_re = re.compile("^OpenGL (Renderer|Version):")
 basere = re.compile("'([^']+)' base address is 0x([a-fA-F0-9]+), size is 0x([a-fA-F0-9]+)")
 addrre = re.compile("[cC]alled from 0x([a-fA-F0-9]+)")
@@ -771,12 +815,16 @@ def extract_callstack(logf, opts):
     is_full = (opts.triage is None)
     greps_match = (opts.greps == None)
 
-    if logf == "-":
-        data = sys.stdin
-    elif logf.endswith(".gz"):
-        data = gzip.open(logf)
-    else:
-        data = open(logf)
+    try:
+        if logf == "-":
+            data = sys.stdin
+        elif logf.endswith(".gz"):
+            data = gzip.open(logf)
+        else:
+            data = open(logf)
+    except:
+        log("unable to open %s" % logf)
+        return
     symbols = None
 
     # header, version
@@ -785,12 +833,15 @@ def extract_callstack(logf, opts):
         if not m:
             continue
         platform = m.group(1)
-        build = m.group(2) + m.group(3)
-        dat = datetime.strptime(m.group(4), "%b %d %Y")
+        build = m.group(2) + m.group(3) + (m.group(4) or "") + (m.group(5) or "")
+        print m.groups()
+        dat = datetime.strptime(m.group(6), "%b %d %Y")
         version = dat.strftime("%Y_%m_%d")
         if is_full:
             log("Reassembly version:", version)
-        if dat < opts.version or build.startswith("Debug") or build.startswith("Develop"):
+        if not opts.force_version and (dat < opts.version or \
+                                       build.startswith("Debug") or \
+                                       build.startswith("Develop")):
             close_inpt(data)
             return
         if is_full:
@@ -801,13 +852,15 @@ def extract_callstack(logf, opts):
     # analytic log handlers
     for line in data:
         line = line.strip()
+        if (line.startswith("\\n")): # that one mod...
+            continue
         for h in opts.handlers:
             line = h.onLine(line)
         if opts.printall:
             print line
         elif is_full:
             lastfew.append(line)
-            while (len(lastfew) > 5):
+            while (len(lastfew) > 10):
                 lastfew.pop(0)
         for mre, prfx in [(sched_re, "CHECK"), (sdl_win_re, "SDL_CreateWindow"), (terminate_re, "TERMINATE")]:
             m = mre.search(line)
@@ -882,7 +935,16 @@ def extract_callstack(logf, opts):
             mod.name = m.group(1)
             mod.base = int(m.group(2), 16)
             mod.size = int(m.group(3), 16)
-            mod.version = version if (mod.name.endswith(".exe") or "Reassembly" in mod.name) else None
+            if (mod.name.endswith(".exe") or "Reassembly" in mod.name):
+                if (opts.force_version and not is_triage and version and opts.version and \
+                    (parse_version(version) - opts.version).days <= 2):
+                    mod.version = opts.version.strftime("%Y_%m_%d")
+                    log("using command line version: %s instead of parsed version: %s" %
+                        (mod.version, version))
+                else:
+                    mod.version = version
+            else:
+                mod.version = None
             mod.symbols = None # load lazily
             module_map.append(mod)
             # log("module:", "%#10x+%#09x" % (mod.base, mod.size), os.path.basename(mod.name), mod.version)
@@ -909,6 +971,9 @@ def extract_callstack(logf, opts):
                             break
                 break
             line = "\n" + line
+
+        if line.startswith("-----"):
+            break;
 
         m = addrre.search(line)
         if m:
@@ -1071,6 +1136,7 @@ def main():
             ops.version = parse_version(val)
         if opt == "-t":
             triage = True
+            ops.force_version = False
         if opt == "-c":
             copy = True
         if opt == "-n":
@@ -1195,7 +1261,28 @@ Options:
         do_triage(files, ops)
 
 
+def cgi_main():
+    print "content-type: text/html; charset=UTF-8"
+    print ""
+    reload(sys)
+    sys.setdefaultencoding('utf-8')
+
+    global is_cgi
+    is_cgi = True
+
+    opts = extract_opts()
+    print HTML_TEMPLATE_1
+    # print "argv[0] =", sys.argv[0]
+    # print "ROOT =", ROOT
+
+    extract_callstack("-", opts)
+    print HTML_TEMPLATE_2
+
 if __name__ == '__main__':
-    ROOT = os.path.abspath(os.path.join(os.path.dirname(sys.argv[0]), ".."))
-    ROOT = ROOT.replace("/cygdrive/c/", "c:/")
-    main()
+    if os.environ.get("SERVER_NAME", ""):
+        ROOT = os.path.abspath("../symbols")
+        cgi_main()
+    else:
+        ROOT = os.path.abspath(os.path.join(os.path.dirname(sys.argv[0]), ".."))
+        ROOT = ROOT.replace("/cygdrive/c/", "c:/")
+        main()

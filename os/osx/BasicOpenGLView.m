@@ -26,6 +26,22 @@ double OL_GetCurrentTime()
     return CFAbsoluteTimeGetCurrent () - gStartTime;
 }
 
+// copied from SDL_Delay
+void OL_Sleep(double seconds)
+{
+    int was_error;
+    struct timespec elapsed, tv;
+    elapsed.tv_sec = floor(seconds);
+    elapsed.tv_nsec = (seconds - elapsed.tv_sec) * 1e9;
+    do {
+        errno = 0;
+
+        tv.tv_sec = elapsed.tv_sec;
+        tv.tv_nsec = elapsed.tv_nsec;
+        was_error = nanosleep(&tv, &elapsed);
+    } while (was_error && (errno == EINTR));
+}
+
 // if error dump gl errors to debugger string, return error
 GLenum glReportError (void)
 {
@@ -47,13 +63,26 @@ void OL_GetWindowSize(float *pixelWidth, float *pixelHeight, float *pointWidth, 
     *pointHeight = pointSize.size.height;
 }
 
+
+static const NSApplicationPresentationOptions
+kFullscreenPresentationOptions = (NSApplicationPresentationHideMenuBar|
+                                  NSApplicationPresentationHideDock|
+                                  NSApplicationPresentationFullScreen);
+
+static void setupPresentationOptions(BOOL fullscreen)
+{
+    NSApplicationPresentationOptions opts = fullscreen ? kFullscreenPresentationOptions :
+                                            NSApplicationPresentationDefault;
+    [[NSApplication sharedApplication] setPresentationOptions:opts];
+}
+
 void OL_SetFullscreen(int fullscreen)
 {
     fullscreen = fullscreen ? 1 : 0;
     if (fullscreen != gView->fullscreen)
     {
-        [[gView window] toggleFullScreen: gView];
         gView->fullscreen = fullscreen;
+        [[gView window] toggleFullScreen: gView];
         LogMessage(fullscreen ? @"SetFullscreen YES" : @"SetFullscreen NO");
      }
 }
@@ -102,6 +131,19 @@ float getBackingScaleFactor(void)
         }
     }
     
+    return displayScale;
+}
+
+float OL_GetCurrentBackingScaleFactor(void)
+{
+    static CGFloat displayScale = 1.f;
+    static int callIdx = 0;
+
+    if (hasScaleMethod() && (callIdx++ % 100) == 0)
+    {
+        displayScale = [[[gView window] screen] backingScaleFactor];
+    }
+
     static BOOL printedScreens = FALSE;
     if (!printedScreens)
     {
@@ -118,19 +160,6 @@ float getBackingScaleFactor(void)
                                  (int)(frame.size.height * scale),
                                  scale]);
         }
-    }
-    
-    return displayScale;
-}
-
-float OL_GetCurrentBackingScaleFactor(void)
-{
-    static CGFloat displayScale = 1.f;
-    static int callIdx = 0;
-
-    if (hasScaleMethod() && (callIdx++ % 100) == 0)
-    {
-        displayScale = [[[gView window] screen] backingScaleFactor];
     }
     
     return displayScale;
@@ -155,28 +184,6 @@ int OL_IsQuitting(void)
 
 @implementation BasicOpenGLView
 
-// pixel format definition
-+ (NSOpenGLPixelFormat*) basicPixelFormat
-{
-    /// WARNING WARNING this does not do anything!!!!!!!
-    /// Use interface builder to update the pixel format...
-    /// WARNING WARNING
-    NSOpenGLPixelFormatAttribute attributes [] = {
-        NSOpenGLPFAWindow,
-        NSOpenGLPFADoubleBuffer,        // double buffered
-        NSOpenGLPFADepthSize, (NSOpenGLPixelFormatAttribute)16, // 16 bit depth buffer
-
-        NSOpenGLPFAMultisample,
-        NSOpenGLPFASampleBuffers, (NSOpenGLPixelFormatAttribute)1,
-        NSOpenGLPFASamples, (NSOpenGLPixelFormatAttribute)4,
-        NSOpenGLPFANoRecovery,
-
-        (NSOpenGLPixelFormatAttribute)nil
-    };
-    return [[[NSOpenGLPixelFormat alloc] initWithAttributes:attributes] autorelease];
-}
-
-// ---------------------------------
 
 // per-window timer function, basic time based animation preformed here
 - (void)animationTimer:(NSTimer *)timer
@@ -428,6 +435,17 @@ static NSCursor* invisibleCursor()
         
         NSRect rectView = [self convertRectToBacking:[self bounds]];
         glViewport(0, 0, rectView.size.width, rectView.size.height);
+
+        static CGFloat width = 0;
+        static CGFloat height = 0;
+
+        if (width != rectView.size.width || height != rectView.size.height)
+        {
+            width = rectView.size.width;
+            height = rectView.size.height;
+            LogMessage([NSString stringWithFormat: @"Resized: %.fx%.f", width, height]);
+        }
+        
         // draw the whole game
 
         @try 
@@ -477,6 +495,7 @@ void OL_SetSwapInterval(int interval)
 {
     GLint swapInt = interval;
     [[gView openGLContext] setValues:&swapInt forParameter:NSOpenGLCPSwapInterval];
+    LogMessage([NSString stringWithFormat:@"Set swap interval: %d", swapInt]);
 }
 
 // set initial OpenGL state (current context is set)
@@ -486,15 +505,6 @@ void OL_SetSwapInterval(int interval)
     [self setWantsBestResolutionOpenGLSurface:YES];
 
     OLG_InitGL(NULL);
-}
-// ---------------------------------
-
--(id) initWithFrame: (NSRect) frameRect
-{
-    NSOpenGLPixelFormat * pf = [BasicOpenGLView basicPixelFormat];
-
-    self = [super initWithFrame: frameRect pixelFormat: pf];
-    return self;
 }
 
 // ---------------------------------
@@ -514,26 +524,23 @@ void OL_SetSwapInterval(int interval)
     return YES;
 }
 
-static const NSApplicationPresentationOptions
-kFullscreenPresentationOptions = (NSApplicationPresentationHideMenuBar|
-                                  NSApplicationPresentationHideDock|
-                                  NSApplicationPresentationFullScreen);
-
-// ---------------------------------
-static void setupPresentationOptions(BOOL fullscreen)
+- (void)windowWillEnterFullScreen:(NSNotification *)notification
 {
-    NSApplicationPresentationOptions opts = fullscreen ? kFullscreenPresentationOptions :
-                                            NSApplicationPresentationDefault;
-    [[NSApplication sharedApplication] setPresentationOptions:opts];
+    LogMessage(@"Will Enter Fullscreen");
 }
 
 - (void)windowDidEnterFullScreen:(NSNotification *)notification
 {
     self->fullscreen = YES;
     setupPresentationOptions(YES);
-    if (!self->closing)
-        OLG_SetFullscreenPref(1);
+    // if (!self->closing)
+        // OLG_SetFullscreenPref(1);
     LogMessage(@"Did Enter Fullscreen");
+}
+
+- (void)windowWillExitFullScreen:(NSNotification *)notification
+{
+    LogMessage(@"Will Exit Fullscreen");
 }
 
 - (void)windowDidExitFullScreen:(NSNotification *)notification
@@ -541,9 +548,34 @@ static void setupPresentationOptions(BOOL fullscreen)
     self->fullscreen = NO;
     setupPresentationOptions(NO);
     
-    if (!self->closing)
-        OLG_SetFullscreenPref(0);
+    // if (!self->closing)
+        // OLG_SetFullscreenPref(0);
     LogMessage(@"Did Exit Fullscreen");
+}
+
+- (NSArray<NSWindow *> *)customWindowsToExitFullScreenForWindow:(NSWindow *)window
+{
+    return nil;
+}
+
+- (NSArray<NSWindow *> *)customWindowsToEnterFullScreenForWindow:(NSWindow *)window
+{
+    return nil;
+}
+
+- (void)windowDidFailToExitFullScreen:(NSWindow *)window
+{
+    LogMessage(@"Failed Exit Fullscreen");
+
+    self->fullscreen = YES;
+    
+    //setupPresentationOptions(0);
+    // OL_SetFullscreen(0);
+}
+
+- (void)windowDidFailToEnterFullScreen:(NSWindow *)window
+{
+    LogMessage(@"Failed Enter Fullscreen");
 }
 
 - (NSApplicationPresentationOptions)window:(NSWindow *)window
@@ -580,6 +612,27 @@ static void setupPresentationOptions(BOOL fullscreen)
 
 - (void) awakeFromNib
 {
+    NSOpenGLPixelFormatAttribute attrs[] =
+        {
+        NSOpenGLPFADoubleBuffer,
+        NSOpenGLPFADepthSize, 24,
+        NSOpenGLPFAOpenGLProfile,
+        NSOpenGLProfileVersionLegacy,
+        0
+    };
+    
+    NSOpenGLPixelFormat *pf = [[[NSOpenGLPixelFormat alloc] initWithAttributes:attrs] autorelease];
+    
+    if (!pf)
+    {
+        NSLog(@"No OpenGL pixel format");
+    }
+    
+    NSOpenGLContext* context = [[[NSOpenGLContext alloc] initWithFormat:pf shareContext:nil] autorelease];
+    
+    [self setPixelFormat:pf];
+    [self setOpenGLContext:context];
+    
     // start animation timer
     timer = [NSTimer timerWithTimeInterval:(1.0f/60.0f) target:self selector:@selector(animationTimer:) userInfo:nil repeats:YES];
     [[NSRunLoop currentRunLoop] addTimer:timer forMode:NSDefaultRunLoopMode];

@@ -43,7 +43,8 @@ public:
     typedef std::pair<key_type, mapped_type> value_type;
     
 private:
-    typedef std::vector< uint > bucket_type;
+    //typedef std::vector< uint > bucket_type;
+    typedef std::basic_string<uint> bucket_type;
 
     std::vector<value_type>  m_elements;   // store actual contents
     std::vector<bucket_type> m_cells;      // array of grid cells
@@ -101,6 +102,14 @@ public:
             m_elements.clear();
         }
         m_currentQuery = 0;
+    }
+
+    void shrink_to_fit()
+    {
+        m_elements.shrink_to_fit();
+        m_cells.shrink_to_fit();
+        for_ (el, m_cells)
+            el.shrink_to_fit();
     }
 
     int   width()     const { return m_width; }

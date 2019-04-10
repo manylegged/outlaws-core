@@ -45,7 +45,7 @@ extern float2      kButtonPad;
 #endif
 
 DEF_COLOR(kGUIBg, 0xb0202020);
-DEF_COLOR(kGUIBgActive, 0xf0404040);
+DEF_COLOR(kGUIBgActive, 0xf0383838);
 DEF_COLOR(kGUIFg, 0xf0909090);
 DEF_COLOR(kGUIFgMid, 0xf0b8b8b8);
 DEF_COLOR(kGUIFgActive, 0xffffffff);
@@ -100,6 +100,7 @@ struct ButtonBase : public WidgetBase {
     void render(const ShaderState &s_, bool selected=false);
     virtual void renderButton(DMesh& mesh, bool selected=false)=0;
     virtual void renderContents(const ShaderState &s_) {};
+    virtual void renderContents1(const ShaderState &s_) {};
     
     virtual bool HandleEvent(const Event* event, bool* isActivate, bool* isPress=NULL);
     
@@ -206,7 +207,7 @@ struct Scrollbar final : public WidgetBase{
     bool        pressed = false; // is actively dragging thumb?
     bool        moved = false;   // scrolled window, needs to recompute hovered
     float       sfirst  = 0.f;  // float version of first for scrolling
-    WidgetBase *parent  = NULL;
+    const WidgetBase *parent  = NULL;
 
     uint        defaultBGColor = kGUIBg;
     uint        defaultFGColor = kGUIFg;
@@ -217,6 +218,8 @@ struct Scrollbar final : public WidgetBase{
     void render(DMesh &mesh);
     bool HandleEvent(const Event *event);
     void makeVisible(int row);
+
+    void setup(const WidgetBase *base, i2 dims, int widget_count);
 
     Rect2d thumb() const;
 };
@@ -368,6 +371,7 @@ struct TextInputCommandLine : public TextInputBase {
 
 struct ContextMenu : public WidgetBase {
     // position is upper left corner, right below title
+    Scrollbar      scrollbar;
     vector<string> lines;
     vector<bool>   enabled;
     float          textSize = 16;
@@ -398,7 +402,7 @@ struct BContextBase : public Button {
     bool        showSelection = true;
 
     bool HandleEventMenu(const Event* event, bool* selectionChanged);
-    void renderContents(const ShaderState &ss);
+    void renderContents1(const ShaderState &ss) override;
     void setSelection(int index);
 
 private:
@@ -482,7 +486,7 @@ struct OptionSlider : public WidgetBase {
 struct OptionEditor {
 
     enum Type { FLOAT, INT };
-    enum Format { DEFAULT, SECONDS, COUNT };
+    enum Format { DEFAULT, SECONDS, COUNT, PERCENT };
 
     OptionSlider slider;
     const char*  label   = NULL;
@@ -493,6 +497,7 @@ struct OptionEditor {
     float        start = 0.f;
     float        mult = 1.f;
     string       txt;
+    bool         right = false;
 
     float getValueFloat() const;
     void setValueFloat(float v);
@@ -714,8 +719,9 @@ struct MessageBoxBase : public WidgetBase {
     float  textSize = 16.f;
     float  alpha2   = 1.f;
 
-    Button okbutton = Button(_("OK"));
+    Button okbutton;
 
+    MessageBoxBase();
     void updateFade();
     void render(const ShaderState &ss, const View& view);
 };
@@ -730,6 +736,7 @@ struct MessageBoxWidget : public MessageBoxBase {
 
 struct ConfirmWidget : public MessageBoxBase {
 
+    bool allow_dismiss = true;
     Button cancelbutton;
 
     ConfirmWidget();
@@ -743,7 +750,7 @@ struct ScrollMessageBox : public WidgetBase {
     string        title;
     TextInputBase message;
     
-    Button okbutton = Button(_("OK"));
+    Button okbutton;
 
     ScrollMessageBox();
     void render(const ShaderState &ss, const View &view);
@@ -764,6 +771,7 @@ struct TextBox {
     float       alpha   = 1.f;
     
     void Draw(const ShaderState& ss1, float2 point, const string& text) const;
+    void DrawSub(const ShaderState& ss1, float2 point, const string& text, const string &text2, float text2size) const;
 };
 
 struct TextBoxString {
@@ -789,7 +797,7 @@ struct OverlayMessage : public WidgetBase {
     bool       border = false;
     
     bool isVisible() const;
-    bool setMessage(const string& msg, uint clr=0); // return true if changed
+    bool setMessage(string msg, uint clr=0); // return true if changed
     void setVisible(bool visible=true);
     void render(const ShaderState &ss);
     

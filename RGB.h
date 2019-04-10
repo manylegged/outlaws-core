@@ -46,26 +46,10 @@ inline float4 argb2rgbaf(uint argb)
     return m * float4((argb>>16)&0xff, (argb>>8)&0xff, (argb&0xff), (argb>>24)&0xff);
 }
 
-inline uint rgbaf2argb(const float4 &rgba_)
-{
-	float4 rgba = rgba_;
-    rgba.x = clamp(rgba.x, 0.f, 1.f);
-    rgba.y = clamp(rgba.y, 0.f, 1.f);
-    rgba.z = clamp(rgba.z, 0.f, 1.f);
-    rgba.w = clamp(rgba.w, 0.f, 1.f);
-    rgba = round(rgba * 255.f);
-    return (uint(rgba.w)<<24) | (uint(rgba.x)<<16) | (uint(rgba.y)<<8) | uint(rgba.z);
-}
+// Graphics.cpp
+uint rgbaf2argb(const float4 &rgba_);
 
-inline uint rgbf2rgb(const float3 &rgb_)
-{
-	float3 rgb = rgb_;
-    rgb.x = clamp(rgb.x, 0.f, 1.f);
-    rgb.y = clamp(rgb.y, 0.f, 1.f);
-    rgb.z = clamp(rgb.z, 0.f, 1.f);
-    rgb = round(rgb * 255.f);
-    return uint(rgb.x)<<16 | uint(rgb.y)<<8 | uint(rgb.z);
-}
+uint rgbf2rgb(const float3 &rgb_);
 
 inline uint rgbf2argb(const float3 &rgb)
 {
@@ -90,33 +74,11 @@ inline float GetAlphaAXXX(uint color)
     return (float) ((color&ALPHA_OPAQUE)>>24) / 255.f;
 }
 
-inline uint PremultiplyAlphaAXXX(uint color)
-{
-    float4 c = argb2rgbaf(color);
-    c.x *= c.w;
-    c.y *= c.w;
-    c.z *= c.w;
-    return rgbaf2argb(c);
-}
+uint PremultiplyAlphaAXXX(uint color);
 
-inline uint PremultiplyAlphaAXXX(uint color, float alpha)
-{
-    float4 c = argb2rgbaf(color);
-    c.x *= c.w;
-    c.y *= c.w;
-    c.z *= c.w;
-    c.w = alpha;
-    return rgbaf2argb(c);
-}
+uint PremultiplyAlphaAXXX(uint color, float alpha);
 
-inline uint PremultiplyAlphaXXX(uint color, float preAlpha, float alpha)
-{
-    float3 c = rgb2rgbf(color);
-    c.x *= preAlpha;
-    c.y *= preAlpha;
-    c.z *= preAlpha;
-    return ALPHAF(alpha)|rgbf2rgb(c);
-}
+uint PremultiplyAlphaXXX(uint color, float preAlpha, float alpha);
 
 // Inverse of sRGB "gamma" function. (approx 2.2)
 inline double inv_gam_srgb(int ic) {
@@ -163,13 +125,8 @@ inline uint GetContrastWhiteBlack(float3 color)
     return GetLumargbf(color) > 0.5f ? 0x000000 : 0xffffff;
 }
 
-inline uint32 argb2abgr(uint32 argb, float alpha)
-{
-    float fa = (float) (argb>>24) / 255.f;
-    uint  a  = clamp(round_int(fa * alpha * 255.f), 0, 0xff);
-    uint  r0b = (argb&0xff00ff);
-    return (a << 24) | (r0b << 16)| (argb&0x00ff00)  | (r0b >> 16);
-}
+uint32 argb2abgr(uint32 argb, float alpha);
+uint32 argb2abgr_zero_alpha(uint32 argb, float alpha);
 
 inline uint32 argb2abgr(uint32 argb)
 {
@@ -202,16 +159,7 @@ inline uint32 bgra2argb(uint32 bgra)
     return (bgra<<24) | ((bgra&0xff00)<<8) | ((bgra&0xff0000)>>8) | (bgra>>24);
 }
 
-inline uint rgbaf2abgr(const float4 &rgba_)
-{
-	float4 rgba = rgba_;
-    rgba.x = clamp(rgba.x, 0.f, 1.f);
-    rgba.y = clamp(rgba.y, 0.f, 1.f);
-    rgba.z = clamp(rgba.z, 0.f, 1.f);
-    rgba.w = clamp(rgba.w, 0.f, 1.f);
-    rgba = round(rgba * 255.f);
-    return (uint(rgba.w)<<24) | (uint(rgba.z)<<16) | (uint(rgba.y)<<8) | uint(rgba.x);
-}
+uint rgbaf2abgr(const float4 &rgba_);
 
 inline uint lerpAXXX(uint color, uint color1, float v)
 {
@@ -228,38 +176,12 @@ inline uint randlerpXXX(uint color, uint color1)
     return lerpXXX(color, color1, randrange(0.f, 1.f));
 }
 
-inline uint randlerpXXX(const std::initializer_list<uint>& lst)
-{
-    float3 color;
-    float total = 0.f;
-    foreach (uint cl, lst)
-    {
-        const float val = randrange(epsilon, 1.f);
-        color += val * rgb2rgbf(cl);
-        total += val;
-    }
-    return rgbf2rgb(color / total);
-}
+uint randlerpXXX(const std::initializer_list<uint>& lst);
 
 // lolengine.net/blog/2013/07/27/rgb-to-hsv-in-glsl
 
-inline float3 rgb2hsv_(float3 c)
-{
-    float4 K = float4(0.f, -1.f / 3.f, 2.f / 3.f, -1.f);
-    float4 p = glm::mix(float4(c.z, c.y, K.w, K.z), float4(c.y, c.z, K.x, K.y), glm::step(c.z, c.y));
-    float4 q = glm::mix(float4(p.x, p.y, p.w, c.x), float4(c.x, p.y, p.z, p.x), glm::step(p.x, c.x));
-
-    float d = q.x - min(q.w, q.y);
-    float e = 1.0e-10;
-    return float3(abs(q.z + (q.w - q.y) / (6.f * d + e)), d / (q.x + e), q.x);
-}
-
-inline float3 hsv2rgb_(float3 c)
-{
-    float4 K = float4(1.f, 2.f / 3.f, 1.f / 3.f, 3.f);
-    float3 p = abs(glm::fract(float3(c.x) + float3(K.x, K.y, K.z)) * 6.f - float3(K.w));
-    return c.z * glm::mix(float3(K.x), clamp(p - float3(K.x), 0.f, 1.f), c.y);
-}
+float3 rgb2hsv_(float3 c);
+float3 hsv2rgb_(float3 c);
 
 inline float3 rgbf2hsvf(float3 rgb)
 {
@@ -268,13 +190,7 @@ inline float3 rgbf2hsvf(float3 rgb)
     return hsv;
 }
 
-inline float3 hsvf2rgbf(float3 hsv)
-{
-    hsv.x = modulo(hsv.x/360.f, 1.f);
-    hsv.y = clamp(hsv.y, 0.f, 1.f);
-    hsv.z = clamp(hsv.z, 0.f, 1.f);
-    return hsv2rgb_(hsv);
-}
+float3 hsvf2rgbf(float3 hsv);
 
 inline uint hsvf2rgb(const float3 &hsv) { return rgbf2rgb(hsvf2rgbf(hsv)); }
 inline float3 rgb2hsvf(uint rgb) { return rgbf2hsvf(rgb2rgbf(rgb)); }

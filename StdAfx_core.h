@@ -39,9 +39,7 @@ using std::vector;
 using std::swap;
 
 // last chance to catch log string before it hits the OS layer
-void Report(string &&str);
-void Report(const string &str);
-void Report(const char* str);
+DLLFACE void Report(string str);
 
 inline void vReportf(const char *format, va_list vl)  __printflike(1, 0);
 
@@ -65,7 +63,7 @@ inline void Reportf(const char *format, ...)
 
 // use pthreads instead of std::thread on mac because the default stack size is really small and
 // there is no way to change it using std::thread
-#define OL_USE_PTHREADS defined(__APPLE__)
+#define OL_USE_PTHREADS __APPLE__
 
 #if !TARGET_OS_IPHONE
 #define IS_TABLET 0
@@ -90,7 +88,7 @@ inline void Reportf(const char *format, ...)
 #define ASSERTF(X, Y, ...) (__builtin_expect(!(X), 0) ? ASSERT_FAILED(#X, Y, __VA_ARGS__) : 0)
 #define ASSERT_(X, FL, LN, FN, Y, ...) (__builtin_expect(!(X), 0) ? OLG_OnAssertFailed(FL, LN, FN, #X, (Y), ## __VA_ARGS__) : 0)
 
-#define assert_eql(A, B) ASSERTF(A == B, "'%s' != '%s'", str_tocstr(A), str_tocstr(B))
+#define assert_eql(A, B) ASSERTF(A == B, "'%s' != '%s'", str_tostr(A).c_str(), str_tostr(B).c_str())
 
 #define CASE_STR(X) case X: return #X
 
@@ -128,7 +126,7 @@ void DPRINTVAR1(const char* name, const T& X)
 
 
 // base class for deferred deletion by main thread
-struct IDeletable {
+struct DLLFACE IDeletable {
 
     virtual void onQueueForDelete() {}
     virtual ~IDeletable() {}

@@ -234,7 +234,7 @@ void thread_join(OL_Thread thread)
 #endif
 
 
-static DEFINE_CVAR(int, kMempoolMaxChain, 10);
+static DEFINE_CVAR(int, kMempoolMaxChain, 15);
 
 size_t MemoryPool::create(size_t cnt)
 {
@@ -273,15 +273,24 @@ size_t MemoryPool::create(size_t cnt)
     return count;
 }
 
-MemoryPool::~MemoryPool()
+void MemoryPool::release()
 {
 #if _WIN32
-    if (!VirtualFree(pool, 0, MEM_RELEASE))
+    if (pool && !VirtualFree(pool, 0, MEM_RELEASE))
         ReportWin32Err1("VirtualFree", GetLastError(), __FILE__, __LINE__);
 #else
     free(pool);
 #endif
     delete next;
+    
+    pool = NULL;
+    next = NULL;
+}
+
+
+MemoryPool::~MemoryPool()
+{
+    release();
 }
 
 bool MemoryPool::isInPool(const void *pt) const
@@ -306,14 +315,14 @@ void* MemoryPool::allocate()
             if (index+1 >= kMempoolMaxChain) {
                 ASSERT_FAILED("Memory Pool", "%d/%d pools allocated! No memory available",
                               index+1, kMempoolMaxChain);
-                throw std::bad_alloc();
+                OL_Terminate("Out of block memory! Pool limit hit.");
             }
             next = new MemoryPool(element_size);
             next->index = index+1;
             if (!next->create(count)) {
                 delete next;
                 next = NULL;
-                throw std::bad_alloc();
+                OL_Terminate("Out of block memory! Allocation failed.");
             }
         }
         return next->allocate();

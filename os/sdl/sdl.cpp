@@ -4,6 +4,7 @@
 #include "StdAfx.h"
 
 #include <locale>
+#include <list>
 
 #include "Graphics.h"
 
@@ -19,13 +20,15 @@ static SDL_RWops   *g_logfile        = NULL;
 static const char*  g_logpath        = NULL;
 static string       g_logdata;
 enum LogStates { LOG_INIT, LOG_OPENING, LOG_OPEN, LOG_CLOSED };
-static LogStates    g_logstate       = LOG_INIT;
+static LogStates    g_logstate       = LOG_CLOSED;
 static int          g_supportsTearControl = -1;
+static int          g_swapInterval = 0;
 static bool         g_wantsLogUpload = false;
 
 static DEFINE_CVAR(bool, kOpenGLDebug, IS_DEVEL);
-static DEFINE_CVAR(bool, kMaximizeWindow, IS_DEVEL);
+static DEFINE_CVAR(bool, kMaximizeWindow, true);
 static DEFINE_CVAR(bool, kTTFDebug, false);
+static DEFINE_CVAR(int, kFrameSleepMethod, 1);
 
 #if OL_WINDOWS
 #define OL_ENDL "\r\n"
@@ -174,6 +177,12 @@ int OL_IsLogOpen(void)
     return g_logfile != NULL && g_logstate == LOG_OPEN;
 }
 
+void OL_OpenLog(void)
+{
+    if (g_logstate == LOG_CLOSED)
+        g_logstate = LOG_INIT;
+}
+
 void OL_ReportMessage(const char *str_)
 {
 #if OL_WINDOWS
@@ -208,6 +217,8 @@ void OL_ReportMessage(const char *str_)
                 g_logdata = str_replace(g_logdata, "\n", OL_ENDL);
 #endif
                 SDL_RWwrite(g_logfile, g_logdata.c_str(), g_logdata.size(), 1);
+                g_logdata.clear();
+                g_logdata.shrink_to_fit();
             }
             // call self recursively
             ReportSDL("Log file opened at %s", path);
@@ -216,7 +227,7 @@ void OL_ReportMessage(const char *str_)
         }
     }
 #if OL_WINDOWS
-    str = str_replace(str, "\n", OL_ENDL);
+    str = str_replace(str, '\n', OL_ENDL);
 #endif
     
     SDL_RWwrite(g_logfile, str.c_str(), str.size(), 1);
@@ -385,6 +396,8 @@ void OL_SetWindowSizePoints(int w, int h)
 void OL_SetSwapInterval(int interval)
 {
     const int error = SDL_GL_SetSwapInterval(interval);
+    // ReportSDL("SetSwapInterval(%d) -> %d", interval, error);
+    g_swapInterval = interval;
     if (interval < 0) {
         const int supports = error ? 0 : 1;
         if (supports != g_supportsTearControl) {
@@ -392,6 +405,8 @@ void OL_SetSwapInterval(int interval)
                       error ? SDL_GetError() : "OK");
             g_supportsTearControl = supports;
         }
+        if (!supports)
+            OL_SetSwapInterval(1);
     }
 }
 
@@ -655,7 +670,7 @@ struct StringRenderer {
         st.text = string(&text[strip_start], chr_start - strip_start);
 
         if (st.text.size()) {
-            int pixel_height;
+            int pixel_height = 0;
             if (TTF_SizeUTF8(st.font, st.text.c_str(), &st.pixel_width, &pixel_height)) {
                 ReportSDLErr("TTF_SizeUTF8");
                 st.text = string();
@@ -1179,23 +1194,38 @@ static bool initGlew()
     return status == 1 ? true : false;
 }
 
-
-int sdl_os_main(int argc, const char **argv)
+void OL_Sleep(double sleep)
 {
-    int mode = OLG_Init(argc, argv);
+    if (sleep <= 0.0)
+        return;
+    // 0. sleep_for consistently sleeps slightly too long
+    // 1. SDL_Delay has low CPU, is pretty accurate
+    // 2. spinning is very accurate but wastes power
+    // adaptive vsync / tear control is the best though!
+    if (kFrameSleepMethod == 0)
+        std::this_thread::sleep_for(std::chrono::microseconds(floor_int(1e6 * sleep)));
+    else if (kFrameSleepMethod == 1)
+        SDL_Delay(floor_int(sleep * 1000.0));
+    else if (kFrameSleepMethod == 2) {
+        double start = OL_GetCurrentTime();
+        do {
+#ifdef YieldProcessor
+            YieldProcessor();
+#endif
+        } while (OL_GetCurrentTime() - start < sleep);
+    }
+}
 
+static int init_sdl()
+{
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER ) < 0)
     {
         ReportSDL("SDL_Init Failed (retrying without gamepad): %s", SDL_GetError());
         if (SDL_Init(SDL_INIT_VIDEO) < 0)
         {
-            sdl_os_report_crash(str_format("SDL_Init() failed: %s", SDL_GetError()));
             return 1;
         }
     }
-
-    if (!os_init())
-        return 1;
 
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     SDL_GL_SetAttribute(SDL_GL_RED_SIZE, 8);
@@ -1205,22 +1235,39 @@ int sdl_os_main(int argc, const char **argv)
 
     if (kOpenGLDebug)
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_DEBUG_FLAG);
+    return 0;
+}
 
+int sdl_os_main(int argc, const char **argv)
+{
+    ReportSDL("sdl_os_main()");
+    int mode = OLG_Init(argc, argv);
+
+    if (init_sdl() && mode)
+    {
+        sdl_os_report_crash(str_format("SDL_Init() failed: %s", SDL_GetError()));
+        return 1;
+    }
+    
+    if (!os_init())
+        return 1;
+    
     if (mode == 0)
     {
         SDL_Window *window = SDL_CreateWindow("OpenGL test", -32, -32, 32, 32, SDL_WINDOW_OPENGL|SDL_WINDOW_HIDDEN);
+        SDL_GLContext context = NULL;
         if (window) {
-            SDL_GLContext context = SDL_GL_CreateContext(window);
-            if (context) {
-                if (!initGlew())
-                    return 1;
-
-                OLG_Draw();
-
-                SDL_GL_DeleteContext(context);
-            }
-            SDL_DestroyWindow(window);
+            context = SDL_GL_CreateContext(window);
+            if (context && !initGlew())
+                return 1;
         }
+        
+        OLG_Draw();
+
+        if (context)
+            SDL_GL_DeleteContext(context);
+        if (window)
+            SDL_DestroyWindow(window);
         ReportSDL("Goodbye!\n");
         return 0;
     }
@@ -1303,15 +1350,16 @@ int sdl_os_main(int argc, const char **argv)
         HandleEvents();
         OLG_Draw();
 
-        const float targetFPS = OLG_GetTargetFPS();
-        if (targetFPS > 0.f)
+        if (g_swapInterval == 0)
         {
-            const double frameTime = max(0.0, OL_GetCurrentTime() - start);
-            const double targetFrameTime = 1.0 / targetFPS;
+            const float targetFPS = OLG_GetTargetFPS();
+            if (targetFPS > 0.f)
+            {
+                const double frameTime = max(0.0, OL_GetCurrentTime() - start);
+                const double targetFrameTime = 1.0 / targetFPS;
+                const double sleep = targetFrameTime - frameTime;
 
-            if (frameTime < targetFrameTime) {
-                std::this_thread::sleep_for(std::chrono::microseconds(round_int(1e6 * (targetFrameTime - frameTime))));
-                // SDL_Delay((targetFrameTime - frameTime) * 1000.0);
+                OL_Sleep(sleep);
             }
         }
     }

@@ -51,14 +51,26 @@ static const uint kGraphColors[] = {
 
 #define COLOR_AXIS 0x01ff5f
 
+static const uint kFrameLoggerSortFrames = 120;
+
 struct FrameLogger {
 
-    typedef std::pair<lstring, double>          PhaseTime;
+    struct PhaseTime {
+        lstring first;
+        int     index;
+        double second;
+    };
+    // typedef std::pair<lstring, double>          PhaseTime;
     typedef std::unordered_map<lstring, double> Dict;
     typedef std::vector<PhaseTime>              VDict;
 
-    struct Stats     { double mean = 0.f, stddev = 0.f; }; // seconds
-    struct PhaseData { uint color = 0; bool stacked = true; };
+    struct PhaseData {
+        lstring name;
+        uint    color   = 0;
+        bool    stacked = true;
+        int     index   = 0;
+        double  mean    = 0, stddev=0;
+    };
 
     const char*                                  m_title = NULL;
     float                                        m_barWidth = 2.f;
@@ -70,7 +82,6 @@ struct FrameLogger {
     double                                       m_frameDeadline;
     vector<PhaseTime>                            m_currentPhases;
     Dict                                         m_current;
-    std::unordered_map<lstring, Stats>           m_stats;
 
     // shared, mutex protected
     std::mutex                                   m_mutex;
@@ -82,24 +93,32 @@ struct FrameLogger {
     double                                       m_maxTimeMs = 16.0;
     float                                        m_labelWidth = 100.f;
     std::vector<VDict>                           m_sortLog;
-    std::unordered_set<lstring>                  m_phases;
+    vector<PhaseData>                            m_phaseCache;
+    std::set<double>                             m_heights;
     uint                                         m_frame = 0;
     
     // RAII phase timing wrapper
     struct Phase {
         FrameLogger *logger;
         const char  *name;
-        Phase(FrameLogger& l, const char *n) : logger(&l), name(n) { l.beginPhase(name); }
-        Phase(FrameLogger* l, const char *n) : logger(l), name(n) { if (l) l->beginPhase(name); }
+        Phase(FrameLogger& l, const char *n, double t=0) : logger(&l), name(n) { l.beginPhase(name, t); }
+        Phase(FrameLogger* l, const char *n, double t=0) : logger(l), name(n) { if (l) l->beginPhase(name, t); }
         ~Phase() { end(); }
         void end() { if (logger) logger->endPhase(name); logger = NULL; }
-        void phase(const char* nm)
+        void phase(const char* nm, double t=0)
         {
             if (!logger)
                 return;
             logger->endPhase(name);
-            logger->beginPhase(nm);
+            logger->beginPhase(nm, t);
             name = nm;
+        }
+
+        double time() const
+        {
+            if (!logger)
+                return 0.0;
+            return max(0.0, OL_GetCurrentTime() - logger->m_currentPhases.back().second);
         }
             
     };
@@ -116,11 +135,11 @@ struct FrameLogger {
         m_current.clear();
     }
 
-    void beginPhase(const char *phase)
+    void beginPhase(const char *phase, double t=0.0)
     {
         if (m_paused)
             return;
-        m_currentPhases.push_back(std::make_pair(phase, OL_GetCurrentTime()));
+        m_currentPhases.push_back({phase, 0, t ? t : OL_GetCurrentTime()});
     }
 
     void endPhase(const char *phase)
@@ -147,24 +166,43 @@ struct FrameLogger {
         m_phaseData[phase].stacked = false;
     }
 
-    void endFrame()
+    void addStack(const char *phase, double length)
+    {
+        if (m_paused)
+            return;
+        map_setdefault(m_current, phase, 0.0) += length;
+    }
+
+    void endFrame(double frame_time=0)
     {
         if (m_paused)
             return;
         ASSERT(m_currentPhases.empty());
-        ASSERT(m_frameStartTime > 0.0);
-        addPhase("Frame", OL_GetCurrentTime() - m_frameStartTime);
-        m_frameStartTime = 0.0;
+        if (frame_time == 0)
+        {
+            ASSERT(m_frameStartTime > 0.0);
+            addPhase("Frame", OL_GetCurrentTime() - m_frameStartTime);
+            m_frameStartTime = 0.0;
+        }
+        else
+        {
+            addPhase("Frame", frame_time);
+        }
 
         std::lock_guard<std::mutex> l(m_mutex);
-        foreach (const PhaseTime& phase, m_current) {
-            if (!m_phaseData[phase.first].color)
-                m_phaseData[phase.first].color = kGraphColors[m_phaseData.size() % arraySize(kGraphColors)];
+        for_ (phase, m_current) {
+        // foreach (const PhaseTime& phase, m_current) {
+            PhaseData &pd = m_phaseData[phase.first];
+            if (!pd.color)
+                pd.color = kGraphColors[m_phaseData.size() % arraySize(kGraphColors)];
         }
         
-        m_log.push_back(m_current);
+        m_log.push_back(move(m_current));
         while (m_log.size() > m_graphItems)
+        {
+            m_current = move(m_log.front());
             m_log.pop_front();
+        }
         m_current.clear();
     }
 
@@ -177,78 +215,106 @@ struct FrameLogger {
 
         static const float kPointHeightMs = 0.1f;
 
-        m_sortLog.clear();
-        foreach (const Dict& pt, m_log) {
-            m_sortLog.push_back(VDict(pt.begin(), pt.end()));
+        int i=0;
+        m_phaseCache.resize(m_phaseData.size());
+        for_ (it, m_phaseData) {
+            it.second.index = i;
+            it.second.name = it.first;
+            m_phaseCache[i] = it.second;
+            i++;
+        }
+        
+        // m_sortLog.clear();
+        // foreach (const Dict& pt, m_log)
+            // m_sortLog.push_back(VDict(pt.begin(), pt.end()));
+        m_sortLog.resize(m_log.size());
+        for (int k=0; k<m_log.size(); k++)
+        {
+            VDict &sl = m_sortLog[k];
+            Dict &pt = m_log[k];
+            sl.resize(pt.size());
+            int j = 0;
+            for_(x, pt)
+            {
+                sl[j++] = { x.first, m_phaseData[x.first].index, x.second };
+            }
         }
 
         // compute statistics
-        if (m_frame++ % 60 == 0)
+        if (m_frame++ % kFrameLoggerSortFrames == 0)
         {
             m_curMaxTimeMs = 0;
-            m_stats.clear();
-            foreach (const PhaseTime &phase, m_log[0]) 
-            {
-                Stats stat;
-                foreach (const Dict& mp, m_log) {
-                    double times = map_get(mp, phase.first, 0.0);
-                    stat.mean += times;
-                    m_curMaxTimeMs = max(m_curMaxTimeMs, 1000.f * times);
-                }
-                stat.mean /= m_log.size();
+            const double inv_size = 1.0 / m_log.size();
 
-                foreach (const Dict& mp, m_log) {
-                    double times = map_get(mp, phase.first, 0.0);
-                    stat.stddev += (times - stat.mean) * (times - stat.mean);
-                }
-                stat.stddev = sqrt(stat.stddev / m_log.size());
+            for_ (pd, m_phaseCache) {
+                pd.mean = 0;
+                pd.stddev = 0;
+            }
             
-                m_stats[phase.first] = stat;
+            for_ (vd, m_sortLog) {
+                for_ (pt, vd)
+                    m_phaseCache[pt.index].mean += pt.second;
+            }
+
+            for_ (pd, m_phaseCache)
+                pd.mean *= inv_size;
+
+            for_ (vd, m_sortLog) {
+                for_ (pt, vd) {
+                    PhaseData &pd = m_phaseCache[pt.index];
+                    pd.stddev += squared(pt.second - pd.mean);
+                }
+            }
+
+            for_ (pd, m_phaseCache)
+            {
+                pd.stddev = sqrt(pd.stddev * inv_size);
+                if (pd.name == "Frame")
+                    m_curMaxTimeMs = max(1.0, 1000.f * (pd.mean + 2.f * pd.stddev));
+                m_phaseData[pd.name] = pd;
             }
         }
 
         //m_maxTimeMs = lerp(m_maxTimeMs, m_curMaxTimeMs, 0.01);
         m_maxTimeMs = m_curMaxTimeMs;
-        m_phases.clear();
         foreach (VDict& vec, m_sortLog) {
             std::sort(vec.begin(), vec.end(), [&](const PhaseTime& a, const PhaseTime& b) { 
-                    return m_stats[a.first].stddev < m_stats[b.first].stddev;
+                    return m_phaseCache[a.index].stddev < m_phaseCache[b.index].stddev;
                 });
-            foreach (const PhaseTime &phase, vec)
-                m_phases.insert(phase.first);
         }
 
 
         // draw labels
-        std::set<double> heights;
+        m_heights.clear();
         double           ystart = 0;
         uint             pindex = 0;
         float            lwidth = 0.f;
 
-        foreach (const lstring phase, m_phases) 
+        const double textSize = 8;
+        const double textHeight = GLText::getScaledSize(textSize);
+        
+        for_ (pd, m_phaseCache) 
         {
-            const Stats  stat       = m_stats[phase];
-            const double y          = 1000.f * stat.mean * (graphSize.y / m_maxTimeMs);
-            const double textHeight = GLText::getScaledSize(8);
-            double       yoff       = 0;
+            const double     y     = 1000.f * pd.mean * (graphSize.y / m_maxTimeMs);
+            double           yoff  = 0;
 
-            if (m_phaseData[phase].stacked) {
+            if (pd.stacked) {
                 yoff    = y + ystart;
                 ystart += y;
             } else {
                 yoff = y;
             }
 
-            foreach (double d, heights) {
+            foreach (double d, m_heights) {
                 if (abs(d - yoff) < textHeight)
                     yoff = d + textHeight;
             }
-            heights.insert(yoff);
+            m_heights.insert(yoff);
 
-            float2 lsize = GLText::DrawScreen(ss, graphStart + float2(-3, yoff),
-                                              GLText::MID_RIGHT, ALPHA_OPAQUE|m_phaseData[phase].color,
-                                              textHeight, "%s: %.1f/%.1f", phase.c_str(), 
-                                              1000.0 * stat.mean, 1000.0 * stat.stddev);
+            float2 lsize = GLText::Fmt(ss, graphStart + float2(-3, yoff), GLText::MID_RIGHT,
+                                       ALPHA_OPAQUE|pd.color, textSize,
+                                       "%s: %.1f/%.1f", pd.name.c_str(),
+                                       1000.0 * pd.mean, 1000.0 * pd.stddev);
             lwidth = max(lwidth, lsize.x);
             pindex++;
         }
@@ -256,7 +322,7 @@ struct FrameLogger {
         
         // graph
         const float2 pointSize(graphSize.x / m_graphItems,
-                               clamp(kPointHeightMs * graphSize.y / m_maxTimeMs, 1.f, graphSize.y/10.f));
+                               clamp(kPointHeightMs * graphSize.y / m_maxTimeMs, 1.0, graphSize.y/10.0));
         uint xi = 0;
         foreach (const VDict& mp, m_sortLog) 
         {
@@ -264,10 +330,11 @@ struct FrameLogger {
             pindex = 0;
             ystart = 0;
             foreach (const PhaseTime &phase, mp) {
-                mesh.tri.color(m_phaseData[phase.first].color, 0.5f);
+                const PhaseData &pd = m_phaseCache[phase.index];
+                mesh.tri.color(pd.color, 0.5f);
                 const float y = 1000.f * phase.second * (graphSize.y / m_maxTimeMs);
-                if (m_phaseData[phase.first].stacked) {
-                    mesh.tri.PushRectCorners(graphStart + float2(x - 0.5f * pointSize.x, ystart), 
+                if (pd.stacked) {
+                    mesh.tri.PushRectCorners(graphStart + float2(x - 0.5f * pointSize.x, ystart),
                                           graphStart + float2(x + 0.5f * pointSize.x, ystart + y));
                     ystart += y;
                 } else {
@@ -286,7 +353,7 @@ struct FrameLogger {
         DMesh::Handle h(theDMesh());
         
         h.mp.line.color(COLOR_AXIS);
-        // h.mp.line.PushRect(view.center, view.size/2.f);
+        // h.mp.line.Rect(view.center, view.size/2.f);
 
         const float2 start = view.center - view.size/2.f + justX(m_labelWidth) + float2(10.f);
         const float2 graphSize = view.size - justX(m_labelWidth) - float2(20.f);

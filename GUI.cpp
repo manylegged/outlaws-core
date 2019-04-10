@@ -171,10 +171,18 @@ void Button::renderButton(DMesh& mesh, bool selected)
 
     mesh.translateZ(0.1f);
 
+    position = floor(position) + f2(0.5f);
+    size = 2.f * round(size * 0.5f);
+
+    const uint bg = getBGColor();
+    const uint fg = getFGColor(selected);
+
     if (style&S_BOX) {
-        PushRect(&mesh.tri, &mesh.line, position, 0.5f * size, getBGColor(), getFGColor(selected), alpha);
+        PushRect(&mesh.tri, &mesh.line, position, 0.5f * size, bg, fg, alpha);
+    } else if (style&S_HEX) {
+        PushHex(&mesh.tri, &mesh.line, position, 0.5f * size, bg, fg, alpha);
     } else if (style&S_CORNERS) {
-        PushButton(&mesh.tri, &mesh.line,  position, 0.5f * size, getBGColor(), getFGColor(selected), alpha);
+        PushButton(&mesh.tri, &mesh.line, position, 0.5f * size, bg, fg, alpha);
     }
 
     mesh.translateZ(-0.1f);
@@ -191,8 +199,9 @@ void Button::renderContents(const ShaderState &ss)
 
     if (style&S_FIXED)
     {
-        renderButtonText(ss, pos, size.x - padding.x, align, textFont, tcolor, &dynamicTextSize, 6.f, textSize, text);
-        renderButtonText(ss, pos, size.x - padding.x, GLText::DOWN_CENTERED, textFont, stc, &dynamicSubtextSize, 6.f, subtextSize, subtext);
+        const float w = size.x - 2.f * padding.x;
+        renderButtonText(ss, pos, w, align, textFont, tcolor, &dynamicTextSize, 6.f, textSize, text);
+        renderButtonText(ss, pos, w, GLText::DOWN_CENTERED, textFont, stc, &dynamicSubtextSize, 6.f, subtextSize, subtext);
     }
     else
     {
@@ -208,7 +217,10 @@ bool URLButton::HandleEvent(const Event* event, bool *isActivate, bool *isPress)
     if (!Button::HandleEvent(event, &activate))
         return false;
     if (activate) {
-        OL_OpenWebBrowser(url.c_str());
+        if (str_startswith(url, "http"))
+            OL_OpenWebBrowser(url.c_str());
+        else
+            OL_OpenFolder(url.c_str());
         if (isActivate)
             *isActivate = activate;
     }
@@ -318,6 +330,21 @@ bool TextInputBase::HandleEvent(const Event* event, bool *textChanged)
         startChars.y = clamp(startChars.y, 0, max(0, (int)lines.size() - sizeChars.y));
         return true;
     }
+    else if (active && event->type == Event::KEY_DOWN)
+    {
+        if (event->key == NSPageUpFunctionKey)
+        {
+            startChars.y -= sizeChars.y;
+            startChars.y = clamp(startChars.y, 0, max(0, (int)lines.size() - sizeChars.y));
+            return true;
+        }
+        else if (event->key == NSPageDownFunctionKey)
+        {
+            startChars.y += sizeChars.y;
+            startChars.y = clamp(startChars.y, 0, max(0, (int)lines.size() - sizeChars.y));
+            return true;
+        }
+    }
 
     if (locked)
         return false;
@@ -410,14 +437,6 @@ bool TextInputBase::HandleEvent(const Event* event, bool *textChanged)
             cursor.x = 0;
             break;
         }
-        case NSPageUpFunctionKey:
-            startChars.y -= sizeChars.y;
-            startChars.y = clamp(startChars.y, 0, max(0, (int)lines.size() - sizeChars.y));
-            return true;
-        case NSPageDownFunctionKey:
-            startChars.y += sizeChars.y;
-            startChars.y = clamp(startChars.y, 0, max(0, (int)lines.size() - sizeChars.y));
-            return true;
         default:
         {
             string str = event->toUTF8();
@@ -692,6 +711,7 @@ string TextInputCommandLine::cmd_find(void* data, const char* name, const char* 
 
 void TextInputCommandLine::pushPrompt()
 {
+    std::lock_guard<std::recursive_mutex> l(mutex);
     lines.push_back(prompt);
 
     cursor.y = (int)lines.size() - 1;
@@ -744,6 +764,7 @@ bool TextInputCommandLine::doCommand(const string& line)
         DPRINT(CONSOLE, ("-> '%s'", ot.c_str()));
 
         const vector<string> nlines = str_split('\n', str_word_wrap(ot, sizeChars.x));
+        std::lock_guard<std::recursive_mutex> l(mutex);
         lines.insert(lines.end(), nlines.begin(), nlines.end());
     }
     pushPrompt();
@@ -781,20 +802,22 @@ bool TextInputCommandLine::HandleEvent(const Event* event, bool *textChanged)
 
     if (active && event->type == Event::KEY_DOWN)
     {
+        std::unique_lock<std::recursive_mutex> l(mutex);
         switch (KeyState::instance().keyMods() | event->key)
         {
         case MOD_CTRL|'l': {
-            std::lock_guard<std::recursive_mutex> l(mutex);
             lines.erase(lines.begin(), lines.end()-1);
             scrollForInput();
             break;
         }
         case NSUpArrowFunctionKey:
         case NSDownArrowFunctionKey:
+        case MOD_CTRL|'p':
+        case MOD_CTRL|'n':
             if (commandHistory.size())
             {
                 lastSearch = "";
-                const int delta = (event->key == NSUpArrowFunctionKey) ? -1 : 1;
+                const int delta = (event->key == NSUpArrowFunctionKey || event->key == 'p')  ? -1 : 1;
                 historyIndex = modulo((historyIndex + delta), (commandHistory.size() + 1));
                 setLineText(historyIndex >= commandHistory.size() ? currentCommand : commandHistory[historyIndex]);
             }
@@ -802,7 +825,9 @@ bool TextInputCommandLine::HandleEvent(const Event* event, bool *textChanged)
         case '\r':
         {
             lastSearch = "";
-            doCommand(getLineText());
+            string cmd = getLineText();
+            l.unlock();
+            doCommand(cmd);
             return true;
         }
         case MOD_CTRL|'r':
@@ -935,8 +960,10 @@ bool TextInputCommandLine::HandleEvent(const Event* event, bool *textChanged)
     }
 
     bool changed = false;
-    const bool handled = TextInputBase::HandleEvent(event, &changed);
+    if (!TextInputBase::HandleEvent(event, &changed))
+        return false;
 
+    std::lock_guard<std::recursive_mutex> l(mutex);
     if (changed)
     {
         currentCommand = getLineText();
@@ -958,17 +985,14 @@ bool TextInputCommandLine::HandleEvent(const Event* event, bool *textChanged)
     if (line.size() < prompt.size()) {
         setLineText("");
     } else if (!str_startswith(line, prompt)) {
-        std::lock_guard<std::recursive_mutex> l(mutex);
         for (int i=0; i<prompt.size(); i++) {
             if (line[i] != prompt[i])
                 line.insert(i, 1, prompt[i]);
         }
     }
 
-    if (handled)
-        lastSearch = "";
-
-    return handled;
+    lastSearch = "";
+    return true;
 }
 
 void ContextMenu::setLine(int line, const string &txt)
@@ -986,13 +1010,14 @@ int ContextMenu::getHoverSelection(float2 p) const
     if (lines.empty() || !intersectPointRectangle(p, getCenterPos(), size/2.f))
         return -1;
 
-    const float2 relp = p - position;
-    const float lineHeight = size.y / lines.size();
-    const int sel = (int) floor(-relp.y / lineHeight);
+    const int    vis_lines  = min((int)lines.size(), scrollbar.visible);
+    const float2 relp       = p - position;
+    const float  lineHeight = size.y / vis_lines;
+    const int    sel        = (int) floor(-relp.y / lineHeight);
 
     if (sel >= lines.size() || !enabled[sel])
         return -1;
-    return sel;
+    return sel + scrollbar.first;
 }
 
 void ContextMenu::openMenu(float2 pos)
@@ -1003,10 +1028,14 @@ void ContextMenu::openMenu(float2 pos)
     position = pos;
     openTime = globals.updateStartTime;
     active = true;
+    scrollbar.parent = this;
 }
 
 bool ContextMenu::HandleEvent(const Event* event, int* select)
 {
+    if (lines.size() > scrollbar.visible && scrollbar.HandleEvent(event))
+        return true;
+    
     if (!event->isMouse())
         return false;
 
@@ -1048,18 +1077,24 @@ bool ContextMenu::HandleEvent(const Event* event, int* select)
 
 void ContextMenu::render(const ShaderState &ss)
 {
+    if (lines.empty() || !active || alpha < epsilon)
+        return;
+
+    scrollbar.setup(this, i2(1, 15), lines.size());
+    scrollbar.position = (position + flipY(size/2.f)) + f2x(size/2.f - scrollbar.size.x/2.f);
+    const int first = scrollbar.first;
+    const int last = scrollbar.last();
+    const int vis_lines = last - first;
+    
     // always calculate size
     float2 sz;
-    for (uint i=0; i<lines.size(); i++)
+    for (int i=first; i<last; i++)
     {
         const GLText* tx = GLText::get(kDefaultFont, textSize, lines[i]);
         sz.x = max(sz.x, tx->getSize().x);
-        sz.y = lines.size() * tx->getSize().y;
+        sz.y = vis_lines * tx->getSize().y;
     }
-    size = sz + 2.f * kButtonPad;
-
-    if (lines.empty() || !active || alpha < epsilon)
-        return;
+    size = sz + 2.f * kButtonPad + f2x(scrollbar.size.x);
 
     DMesh::Handle h(theDMesh());
     h.mp.translateZ(2.f);
@@ -1067,19 +1102,19 @@ void ContextMenu::render(const ShaderState &ss)
     h.mp.translateZ(0.1f);
 
     float2 pos = position + flipY(kButtonPad);
-    const float textHeight = sz.y / lines.size();
+    const float textHeight = sz.y / vis_lines;
     if (hovered >= 0)
     {
-        const float2 hpos = pos - justY(hovered * textHeight);
+        const float2 hpos = position - f2y((hovered - first) * textHeight + 2.f * kButtonPad);
         h.mp.tri.color32(hoveredBGColor, alpha);
-        h.mp.tri.PushRectCorners(hpos, hpos + float2(sz.x, -textHeight));
+        h.mp.tri.PushRectCorners(hpos, hpos + float2(size.x - kButtonPad.x, -textHeight));
     }
 
     h.Draw(ss);
     h.clear();
     h.mp.line.translateZ(2.1f);
 
-    for (uint i=0; i<lines.size(); i++)
+    for (int i=first; i<last; i++)
     {
         pos.y -= textHeight;
         if (lines[i].empty()) {
@@ -1091,7 +1126,9 @@ void ContextMenu::render(const ShaderState &ss)
         }
     }
 
-    h.mp.line.Draw(ss, ShaderColor::instance());
+    if (lines.size() > scrollbar.visible)
+        scrollbar.render(h.mp);
+    h.Draw(ss);
 }
 
 
@@ -1158,17 +1195,19 @@ void BContextBase::setSelection(int index)
     selection = clamp(index, 0, menu.lines.size()-1);
     if (showSelection) {
         // FIXME bug, text is read in render thread!
-        text = lang_colon(title, menu.lines[selection]);
+        if (title.empty())
+            text = menu.lines[selection];
+        else
+            text = lang_colon(title, menu.lines[selection]);
     }
 }
 
-void BContextBase::renderContents(const ShaderState &ss)
+
+void BContextBase::renderContents1(const ShaderState &ss)
 {
-    Button::renderContents(ss);
     menu.alpha = alpha;
     menu.render(ss);
 }
-
 
 void OptionButtons::render(ShaderState *s_, const View& view)
 {
@@ -1241,7 +1280,7 @@ void OptionSlider::render(const ShaderState &s_)
         DMesh::Handle h(theDMesh());
         if (isBinary())
         {
-            const uint bgc = true ? bg : 0x0;
+            const uint bgc = bg;
             const uint fgc = hovered ? hoveredLineColor : defaultLineColor;
             PushButton(&h.mp.tri, &h.mp.line, position, sz, bgc, fgc, alpha);
             if (value) {
@@ -1342,6 +1381,9 @@ string OptionEditor::getTxt() const
         return (v <= 0.f) ? _("Off") : str_time_format_long(v);
     } else if (format == COUNT) {
         return (type == INT) ? str_format("%d", getValueInt()) : str_format("%.f", getValueFloat());
+    } else if (format == PERCENT) {
+        const int val = floor_int(100.f * getValueFloat());
+        return (val < 1.f) ? _("Off") : str_format("%d%%", val);
     } else if (slider.values == tooltip.size()) {
         return tooltip[clamp(getValueInt(), 0, tooltip.size()-1)];
     } else if (slider.values <= 4) {
@@ -1356,7 +1398,7 @@ string OptionEditor::getTxt() const
         } else {
             return _("On");
         }
-    } else if (start != 0.f) {
+    } else if (start != 0.f && (type == INT)) {
         return str_format("%d", getValueInt());
     } else {
         const int val = floor_int(100.f * getValueFloat());
@@ -1368,8 +1410,9 @@ float2 OptionEditor::render(const ShaderState &ss, float alpha)
 {
     slider.alpha = alpha;
     slider.render(ss);
-    return GLText::Put(ss, slider.position + justX(0.5f * slider.size.x + 2.f * kButtonPad.x),
-                       GLText::MID_LEFT,
+    float dir = right ? -1.f : 1.f;
+    return GLText::Put(ss, slider.position + justX(dir * (0.5f * slider.size.x + 2.f * kButtonPad.x)),
+                       right ? GLText::MID_RIGHT : GLText::MID_LEFT,
                        SetAlphaAXXX(slider.active ? kGUIText : kGUIInactive, alpha), 14, txt);
 }
 
@@ -1538,6 +1581,11 @@ MessageBoxWidget::MessageBoxWidget()
     okbutton.setReturnKeys();
 }
 
+MessageBoxBase::MessageBoxBase()
+{
+    okbutton.setText(_("OK"));
+}
+
 void MessageBoxBase::updateFade()
 {
     static const float kMessageBoxFadeTime = 0.15f;
@@ -1553,7 +1601,7 @@ void MessageBoxBase::render(const ShaderState &s1, const View& view)
 {
     const GLText *msg = GLText::get(messageFont, textSize, message);
         
-    size = max(0.5f * view.sizePoints,
+    size = max(0.25f * view.sizePoints,
                msg->getSize() + 6.f * kBoxPad +
                justY(GLText::getScaledSize(titleSize) + okbutton.size.y));
 
@@ -1639,7 +1687,7 @@ void ConfirmWidget::render(const ShaderState &ss, const View& view)
 {
     MessageBoxBase::render(ss, view);
 
-    const float2 bcr = position - justY(size / 2.f) + justY(kBoxPad) + 0.5f * okbutton.size.y;
+    const float2 bcr = position + justY(kBoxPad + 0.5f * okbutton.size - size / 2.f );
     okbutton.position = bcr + justX(okbutton.size + kBoxPad);
     okbutton.alpha = alpha2;
 
@@ -1659,6 +1707,11 @@ void ConfirmWidget::render(const ShaderState &ss, const View& view)
 
     okbutton.renderContents(ss);
     cancelbutton.renderContents(ss);
+
+    ShaderState s1 = ss;
+    s1.translateZ(1.f);
+    okbutton.renderTooltip(s1, view, okbutton.textColor);
+    cancelbutton.renderTooltip(s1, view, cancelbutton.textColor);
 }
 
 bool ConfirmWidget::HandleEvent(const Event* event, bool *selection)
@@ -1673,7 +1726,8 @@ bool ConfirmWidget::HandleEvent(const Event* event, bool *selection)
         active = false;
     }
     if ((cancelbutton.HandleEvent(event, &isActivate) && isActivate) ||
-        (event->type == Event::MOUSE_UP && !intersectPointRectangle(event->pos, position, size/2.f)))
+        (allow_dismiss && event->type == Event::MOUSE_UP && !intersectPointRectangle(event->pos, position, size/2.f))
+        )
     {
         if (selection)
             *selection = false;
@@ -1686,6 +1740,7 @@ bool ConfirmWidget::HandleEvent(const Event* event, bool *selection)
 
 ScrollMessageBox::ScrollMessageBox()
 {
+    okbutton.setText(_("OK"));
     title = _("Message");
     okbutton.setReturnKeys();
     message.sizeChars = int2(80, 30);
@@ -1747,6 +1802,7 @@ bool ScrollMessageBox::HandleEvent(const Event* event)
     {
         active = false;
     }
+
     // always handle when active
     return true;
 }
@@ -1802,8 +1858,8 @@ void ColorPicker::render(const ShaderState &ss)
         s1.color32(kGUIFg, alpha);
 
         setupHsvRect(verts, hueSlider.position, hueSlider.size/2.f, alpha, {
-                float3(0.f, 1.f, 1.f), float3(M_TAOf, 1.f, 1.f),
-                    float3(0.f, 1.f, 1.f), float3(M_TAOf, 1.f, 1.f) });
+                float3(0.f, 1.f, 1.f), float3(M_TAUf, 1.f, 1.f),
+                    float3(0.f, 1.f, 1.f), float3(M_TAUf, 1.f, 1.f) });
 
         DrawElements(ShaderHsv::instance(), ss, GL_TRIANGLES, verts, indices, arraySize(indices));
         s1.color32(hueSlider.getFGColor(), alpha);
@@ -1874,42 +1930,71 @@ bool ColorPicker::HandleEvent(const Event* event, bool *valueChanged)
     return handled;
 }
 
+static float2 getTextBoxPos(float2 point, float2 size, const View &view)
+{
+    for (int i=0; i<2; i++) {
+        if (point[i] + size[i] > view.sizePoints[i]) {
+            if (point[i] - size[i] > 0.f)
+                size[i] = -size[i];
+            else {
+                point[i] = view.sizePoints[i] - size[i];
+            }
+        }
+    }
+    return round(point + 0.5f * size);
+}
 
 void TextBox::Draw(const ShaderState& ss1, float2 point, const string& text) const
 {
     if ((fgColor&ALPHA_OPAQUE) == 0 || alpha < epsilon)
         return;
 
+    point = floor(point) + f2(0.5f);
+    
     ShaderState ss = ss1;
     const GLText* st = GLText::get(font, tSize, text);
-    const float2 boxSz = max(5.f + 0.5f * st->getSize(), box);
+    const float2 boxRad = max(5.f + 0.5f * st->getSize(), box);
 
-    float2 center = point;
-
-    if (view)
-    {
-        float2 corneroffset = rad + st->getSize();
-        for (int i=0; i<2; i++) {
-            if (point[i] + corneroffset[i] > view->sizePoints[i]) {
-                if (point[i] - corneroffset[i] > 0.f)
-                    corneroffset[i] = -corneroffset[i];
-                else {
-                    point[i] = view->sizePoints[i] - corneroffset[i];
-                }
-            }
-        }
-        center = round(point + 0.5f * corneroffset);
-    }
+    float2 center = view ? getTextBoxPos(point, rad + st->getSize(), *view) : point;
 
     ss.translate(center);
     ss.color32(bgColor, alpha);
     ss.translateZ(1.f);
-    ShaderUColor::instance().DrawRect(ss, boxSz);
+    ShaderUColor::instance().DrawRect(ss, boxRad);
     ss.color32(fgColor, alpha);
     ss.translateZ(0.1f);
-    ShaderUColor::instance().DrawLineRect(ss, boxSz);
+    ShaderUColor::instance().DrawLineRect(ss, boxRad);
     ss.translate(round(-0.5f * st->getSize()));
     st->render(&ss);
+}
+
+void TextBox::DrawSub(const ShaderState& ss1, float2 point, const string& text, const string &text2, float text2size) const
+{
+    if ((fgColor&ALPHA_OPAQUE) == 0 || alpha < epsilon)
+        return;
+
+    point = floor(point) + f2(0.5f);
+
+    ShaderState ss = ss1;
+    const GLText* st = GLText::get(font, tSize, text);
+    const GLText* st2 = GLText::get(font, text2size, text2);
+    
+    float2 boxRad = max(5.f + 0.5f * st->getSize(), box);
+    boxRad.x = max(boxRad.x, 5.f + 0.5f * st2->getSize().x);
+    boxRad.y += st2->getSize().y/2.f;
+
+    ss.translate(point);
+    ss.color32(bgColor, alpha);
+    ss.translateZ(1.f);
+    ShaderUColor::instance().DrawRect(ss, boxRad);
+    ss.color32(fgColor, alpha);
+    ss.translateZ(0.1f);
+    ShaderUColor::instance().DrawLineRect(ss, boxRad);
+    float2 a = round(-0.5f * st->getSize() + justY(0.5f * st2->getSize()));
+    ss.translate(a);
+    st->render(&ss);
+    ss.translate(round(f2(-0.5f, -1.f) * st2->getSize()) - a);
+    st2->render(&ss);
 }
 
 bool OverlayMessage::isVisible() const
@@ -1918,11 +2003,11 @@ bool OverlayMessage::isVisible() const
 }
 
 
-bool OverlayMessage::setMessage(const string& msg, uint clr)
+bool OverlayMessage::setMessage(string msg, uint clr)
 {
     std::lock_guard<std::mutex> l(mutex);
     bool changed = (msg != message) || (globals.renderTime > startTime + totalTime);
-    message = msg;
+    message = move(msg);
     startTime = globals.renderTime;
     if (clr)
         color = clr;
@@ -2065,10 +2150,12 @@ float2 renderButtonText(const ShaderState &ss, float2 pos, float width,
     if (*fontSize <= 0.f)
         *fontSize = fmax;
     float2 tx = GLText::Put(ss, pos, align, font, color, *fontSize, text);
-    float ts = clamp(*fontSize * ((width - 2.f * kButtonPad.x) / tx.x), fmin, fmax);
+    float ts = clamp(*fontSize * (width / tx.x), fmin, fmax);
     if (fabsf(*fontSize - ts) >= 1.f)
+    {
+        tx *= (ts / *fontSize);
         *fontSize = ts;
-    // FIXME word wrap
+    }
     return tx;
 }
 
@@ -2217,6 +2304,20 @@ void Scrollbar::makeVisible(int row)
     }
 }
 
+void Scrollbar::setup(const WidgetBase *base, i2 dims, int widget_count)
+{
+    parent = base;
+    visible = dims.x * dims.y;
+    total = widget_count;
+    if (first >= total)
+        first = 0;
+    
+    alpha = base->alpha;
+    bool vis = (total > visible);
+    size.x = vis ? kScrollbarWidth : 0;
+    size.y = base->size.y - 2.f * kButtonPad.y;
+    position = base->position + f2x(base->size.x/2.f - (size.x/2.f + kButtonPad.x));
+}
 
 void ButtonWindowBase::render(const ShaderState &ss)
 {
@@ -2230,21 +2331,23 @@ void ButtonWindowBase::render(const ShaderState &ss)
 
     std::lock_guard<std::mutex> l(mutex);
 
-    scrollbar.total = (buttons.size() + (dims.x - 1)) / dims.x;
+    const int count = buttons.size();
+    scrollbar.total = (count + (dims.x - 1)) / dims.x;
     scrollbar.visible = dims.y;
     if (scrollbar.first >= scrollbar.total)
         scrollbar.first = 0;
 
     const int    first = scrollbar.first * dims.x;
-    const int    last  = min(scrollbar.last() * dims.x, (int)buttons.size());
-    const bool   sbvis = (first != 0 || last != buttons.size());
+    const int    last  = min(scrollbar.last() * dims.x, (int)count);
+    const bool   sbvis = (first != 0 || last != count);
     const float  sw    = sbvis ? kScrollbarWidth : 0.f;
     const float2 bsize = size - kButtonPad;
 
     ButtonBase  **pDrag = dragPtr;
     ButtonBase  *drag  = (pDrag ? *pDrag : NULL);
 
-    if (buttons.size())
+
+    if (count)
     {
         const float2 bs = float2((bsize.x - sw), bsize.y) / float2(dims);
         float2 pos = position - flipY(bsize/2.f) + justX(bs.x / 2.f);
@@ -2256,7 +2359,7 @@ void ButtonWindowBase::render(const ShaderState &ss)
             for (int j=0; j<dims.x; j++)
             {
                 const int idx = i * dims.x + j;
-                if (idx >= buttons.size())
+                if (idx >= count)
                     break;
                 ButtonBase *bu = buttons[idx];
                 ((bu == drag) ? dragPos : bu->position) = pos;
@@ -2273,7 +2376,7 @@ void ButtonWindowBase::render(const ShaderState &ss)
     h.Draw(ss);
     h.clear();
 
-    for (int i=0; i<buttons.size(); i++)
+    for (int i=0; i<count; i++)
     {
         ButtonBase *bu = buttons[i];
         if (bu == extDragPtr)
@@ -2282,6 +2385,8 @@ void ButtonWindowBase::render(const ShaderState &ss)
         if (bu->visible && bu != drag)
             bu->renderContents(ss);
     }
+    for (int i=first; i<last; i++)
+        buttons[i]->renderContents1(ss);
 
     if (sbvis)
     {
@@ -2449,6 +2554,7 @@ void ButtonWindowBase::computeDims(int2 mn, int2 mx)
     if (buttons.empty())
         return;
 
+    int iters = 16;
     float2 bsize;
     const float count = min(mx.x * mx.y, (int)buttons.size());
     int2 ds;
@@ -2458,7 +2564,8 @@ void ButtonWindowBase::computeDims(int2 mn, int2 mx)
         bsize = size / float2(ds);
         ds = clamp(ds, mn, mx);
     } while ((bsize.x > 2.f * bsize.y || ds.x * ds.y < count) &&
-             ds.x <= mx.x && ds.y >= mn.y);
+             ds.x <= mx.x && ds.y >= mn.y &&
+             --iters);
 
     dims = ds;
 }
@@ -2493,12 +2600,14 @@ void ButtonSelector::render(const ShaderState &ss)
 
     DMesh::Handle h(theDMesh());
 
+    const int count = buttons.size();
+
     for (int y=0; y<dims.y; y++)
     {
         for (int x=0; x<dims.x; x++)
         {
             const int idx = scrollbar.first*dims.x + y*dims.y + x;
-            if (idx >= buttons.size())
+            if (idx >= count)
                 break;
             ButtonBase &but = *buttons[idx];
             bl.setupPosSize(&but);
@@ -2511,7 +2620,7 @@ void ButtonSelector::render(const ShaderState &ss)
         bl.row();
     }
 
-    if (buttons.size() > dims.x * dims.y)
+    if (count > dims.x * dims.y)
     {
         scrollbar.alpha = alpha;
         scrollbar.position = position + justX(size/2.f);
@@ -2524,9 +2633,18 @@ void ButtonSelector::render(const ShaderState &ss)
     for (int y=0; y<dims.y; y++) {
         for (int x=0; x<dims.x; x++) {
             const int idx = scrollbar.first*dims.x + y*dims.y + x;
-            if (idx >= buttons.size())
+            if (idx >= count)
                 break;
             buttons[idx]->renderContents(ss);
+        }
+    }
+
+    for (int y=0; y<dims.y; y++) {
+        for (int x=0; x<dims.x; x++) {
+            const int idx = scrollbar.first*dims.x + y*dims.y + x;
+            if (idx >= count)
+                break;
+            buttons[idx]->renderContents1(ss);
         }
     }
 }

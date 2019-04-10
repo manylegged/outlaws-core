@@ -38,6 +38,10 @@ extern "C"
 #define NOINLINE
 #endif
 #endif
+    
+#ifndef DLLFACE
+#define DLLFACE
+#endif
 
 /////////////////////////////// Toggles ///////////////////////////////////////////////
 
@@ -79,7 +83,7 @@ void OLG_OnQuit(void);
 // called when an unhandled exception is caught and game is about to crash
 // also called by OL_Terminate. May be called several times
 // return 1 if we should continue handling, or 0 to abort (i.e. a crash is already in progress)
-int OLG_OnTerminate();
+int OLG_OnTerminate(const char* message);
 
 // called when the application window is closed
 // game should clean up and call OLG_DoQuit()
@@ -96,7 +100,7 @@ int OLG_InitGL(const char **error);
 void OLG_SetFullscreenPref(int enabled);
 
 // handle assertions. return 1
-NOINLINE int OLG_OnAssertFailed(const char* file, int line, const char* func,
+DLLFACE NOINLINE int OLG_OnAssertFailed(const char* file, int line, const char* func,
                                 const char* x, const char* format, ...)
     __printflike(5, 6) CLANG_ANALYZER_NORETURN;
 
@@ -143,9 +147,13 @@ void OL_ReportMessage(const char *str);
 
 // return 1 if log has already been opened
 int OL_IsLogOpen(void);
+void OL_OpenLog(void);
 
 // time since start of game in seconds
 double OL_GetCurrentTime(void);
+
+// Sleep
+void OL_Sleep(double seconds);
 
 // get logged in username
 const char* OL_GetUserName(void);
@@ -155,6 +163,8 @@ const char* OL_GetPlatformDateInfo(void);
 
 // open default web browser to selected url
 int OL_OpenWebBrowser(const char* url);
+
+int OL_OpenFolder(const char* url);
 
 // quit gracefully, return 1 if already trying to quit
 int OL_DoQuit(void);
@@ -271,7 +281,6 @@ int OL_RemoveFile(const char* fname);
 int OL_FileDirectoryPathExists(const char* fname);
 int OL_DirectoryExists(const char* path);
 
-
 #if __APPLE__
 const int OL_IsSandboxed(void);
 const char* OL_SandboxSaveFile(const char* filename, const char* ext);
@@ -285,6 +294,7 @@ const char* OL_SandboxOpenFile(void); /* always .lua or .lua.gz! */
 inline const char** OL_ListDirectory(const std::string &path) { return OL_ListDirectory(path.c_str()); }
 inline int OL_RemoveFileOrDirectory(const std::string &dirname) { return OL_RemoveFileOrDirectory(dirname.c_str()); }
 inline const char *OL_PathForFile(const std::string &fname, const char *mode) { return OL_PathForFile(fname.c_str(), mode); }
+inline struct OutlawImage OL_LoadImage(const std::string &fname) { return OL_LoadImage(fname.c_str()); }
 #endif
 
 
